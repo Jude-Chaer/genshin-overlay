@@ -61,5 +61,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = "Unzip anywhere and run genshin-overlay.exe. It asks for admin because the game runs as admin. Press `` ` `` in game for the menu. On the first start it downloads the map data (about 26 MB)."
+          $notes = "Unzip anywhere and run genshin-overlay.exe. Press Alt+`` ` `` in game for the menu. On the first start it downloads the map data (about 26 MB)."
           gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes $notes --target "${{ github.sha }}"

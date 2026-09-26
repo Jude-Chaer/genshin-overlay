@@ -1,5 +1,4 @@
 #include <windows.h>
-#include <shellapi.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <string>
@@ -7,6 +6,7 @@
 #include "overlay.hpp"
 #include "extensions.hpp"
 #include "helpers.hpp"
+#include "settings.hpp"
 #include "map_data.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
@@ -40,31 +40,6 @@ static int locateImage(const std::string& imagePath) {
     return 0;
 }
 
-// The game runs as admin, and Windows won't let a normal program read the
-// keyboard while an admin window has focus, so the overlay asks for admin too.
-// --locate and --make-index don't need it, they return before this.
-// --no-admin skips it for testing outside the game.
-static bool isElevated() {
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
-    TOKEN_ELEVATION elevation = {};
-    DWORD size = 0;
-    bool elevated = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) && elevation.TokenIsElevated;
-    CloseHandle(token);
-    return elevated;
-}
-
-static bool relaunchAsAdmin() {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    SHELLEXECUTEINFOW info = {};
-    info.cbSize = sizeof(info);
-    info.lpVerb = L"runas";
-    info.lpFile = path;
-    info.nShow = SW_SHOWNORMAL;
-    return ShellExecuteExW(&info) != FALSE;
-}
-
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--locate") {
         return locateImage(argv[2]);
@@ -74,10 +49,13 @@ int main(int argc, char** argv) {
         return MapData::makeIndex(argv[2]);
     }
 
+    // Admin is optional, see Settings::runAsAdmin. If the prompt is declined we
+    // just carry on without it. --no-admin skips it for testing.
+    Settings::Load();
     bool noAdmin = argc >= 2 && std::string(argv[1]) == "--no-admin";
-    if (!noAdmin && !isElevated()) {
-        if (relaunchAsAdmin()) return 0;
-        std::cerr << "Running without admin, keys won't work while the game has focus" << std::endl;
+    if (Settings::runAsAdmin && !noAdmin && !Helpers::isElevated()) {
+        if (Helpers::relaunchAsAdmin()) return 0;
+        std::cerr << "Not running as admin, the map closes about a second after the game's map" << std::endl;
     }
 
     if (!glfwInit()) {

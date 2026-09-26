@@ -101,6 +101,7 @@
     <ClCompile Include="src\map_tracking.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -115,6 +116,7 @@
     <ClInclude Include="src\map_tracking.hpp" />
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
   </ItemGroup>
   <ItemGroup>

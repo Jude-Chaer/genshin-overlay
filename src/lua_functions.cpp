@@ -39,6 +39,12 @@ namespace LuaFunctions {
             "None", Keybindings::KeybindFlags_None,
             "ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
         );
+        luaState["KeybindModifiers"] = luaState.create_table_with(
+            "None", Keybindings::KeybindModifiers_None,
+            "Alt", Keybindings::KeybindModifiers_Alt,
+            "Ctrl", Keybindings::KeybindModifiers_Ctrl,
+            "Shift", Keybindings::KeybindModifiers_Shift
+        );
 
         // key names for RegisterKeybind, like Keys.F5 or Keys.Grave
         sol::table keys = luaState.create_table();
@@ -79,14 +85,15 @@ namespace LuaFunctions {
         return !Overlay::menuOpen;
     }
 
-    void RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags) {
+    // RegisterKeybind(key, function, flags, modifiers), modifiers is optional, like KeybindModifiers.Alt
+    void RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers) {
         // remember which extension made it, so GetSetting works inside the callback
         Extensions::Extension* owner = Extensions::currentExtension;
         Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
             Extensions::runForExtension(owner, [&callbackFunction]() {
                 callLua(callbackFunction);
             });
-        }, flags);
+        }, flags, modifiers.value_or(Keybindings::KeybindModifiers_None));
     }
 
     void DeleteKeybind(int glfwKey) {

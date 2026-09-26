@@ -1,6 +1,7 @@
 #include "helpers.hpp"
 #include <SOIL2/SOIL2.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <iostream>
 
 namespace Helpers {
@@ -40,5 +41,26 @@ namespace Helpers {
             return std::filesystem::current_path();
         }
         return std::filesystem::path(buffer).parent_path();
+    }
+
+    bool isElevated() {
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+        TOKEN_ELEVATION elevation = {};
+        DWORD size = 0;
+        bool elevated = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) && elevation.TokenIsElevated;
+        CloseHandle(token);
+        return elevated;
+    }
+
+    bool relaunchAsAdmin() {
+        wchar_t path[MAX_PATH];
+        GetModuleFileNameW(nullptr, path, MAX_PATH);
+        SHELLEXECUTEINFOW info = {};
+        info.cbSize = sizeof(info);
+        info.lpVerb = L"runas";
+        info.lpFile = path;
+        info.nShow = SW_SHOWNORMAL;
+        return ShellExecuteExW(&info) != FALSE;
     }
 }

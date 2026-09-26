@@ -1,6 +1,7 @@
 #include "map_tracking.hpp"
 #include "capture.hpp"
 #include "map_data.hpp"
+#include "helpers.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -15,8 +16,8 @@
 // up frames, it just lowers how often the view updates.
 //
 // Closing the map is noticed two ways. Pressing M or Esc hides the view right
-// away. Anything else (the X button, a controller) is noticed when the
-// screenshots stop matching, which takes about a second.
+// away, when running as admin. Anything else (the X button, a controller) is
+// noticed when the screenshots stop matching, which takes about a second.
 
 namespace MapTracking {
     static constexpr auto TICK_INTERVAL = std::chrono::milliseconds(120);
@@ -154,8 +155,13 @@ namespace MapTracking {
 
     // M and Esc open and close the map, no need to wait for the screenshots to
     // notice. The controller, the X button and so on still go through them.
-    // GetAsyncKeyState only sees the game's keys because we run as admin like the game.
+    // We have to watch these keys without taking them from the game, and Windows
+    // only lets us see an admin window's keys when we run as admin too. So this
+    // only works with the admin setting on, otherwise the screenshots catch it.
     static void checkMapKeys() {
+        static bool elevated = Helpers::isElevated();
+        if (!elevated) return;
+
         bool down = (GetAsyncKeyState('M') & 0x8000) || (GetAsyncKeyState(VK_ESCAPE) & 0x8000);
         bool pressed = down && !mapKeyWasDown;
         mapKeyWasDown = down;

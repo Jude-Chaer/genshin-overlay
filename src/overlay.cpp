@@ -6,6 +6,8 @@
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
 #include "stats.hpp"
+#include "settings.hpp"
+#include "capture.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -84,10 +86,14 @@ namespace Overlay {
         ImGui_ImplGlfw_InitForOpenGL(Overlay::Window, true);
         ImGui_ImplOpenGL3_Init(glsl_version);
 
-        // ` toggles the menu, so it has to work while the menu is closed too
+        // Alt+` toggles the menu, so it has to work while the menu is closed too.
+        // A plain ` didn't reach us while the game had focus (without admin),
+        // Alt+` does. Holding Alt also frees the cursor in game, so the menu can
+        // be clicked right away.
+        Keybindings::Init(Overlay::Window);
         Keybindings::CreateKeybind(GLFW_KEY_GRAVE_ACCENT, []() {
             Overlay::SetMenuOpen(!Overlay::menuOpen);
-        }, Keybindings::KeybindFlags_ProcessWhileHidden);
+        }, Keybindings::KeybindFlags_ProcessWhileHidden, Keybindings::KeybindModifiers_Alt);
 
         startTime = glfwGetTime();
         return true;
@@ -104,8 +110,13 @@ namespace Overlay {
         glfwTerminate();
     }
 
+    static void keepOnTop(bool force);
+
     void SetMenuOpen(bool open) {
         Overlay::menuOpen = open;
+        keepOnTop(true);
+        // extension keybinds only hold their keys while the menu is open
+        Keybindings::RefreshRegistrations();
     }
 
     // The window never has focus and is usually click-through, so it can't see
@@ -119,6 +130,26 @@ namespace Overlay {
         Overlay::IO->AddMousePosEvent((float)(cursor.x - windowX), (float)(cursor.y - windowY));
     }
 
+    // Being "topmost" isn't enough on its own: when the fullscreen game comes to
+    // the front, Windows can put it above windows that were made topmost
+    // earlier. Without admin that's what happens, so we put ourselves back on
+    // top when the game comes to the front and every half second after that.
+    static void keepOnTop(bool force) {
+        static double lastRaise = 0.0;
+        static bool gameWasInFront = false;
+
+        HWND game = Capture::findGameWindow();
+        bool gameInFront = game && GetForegroundWindow() == game;
+        bool justCameToFront = gameInFront && !gameWasInFront;
+        gameWasInFront = gameInFront;
+
+        double now = glfwGetTime();
+        if (!force && !justCameToFront && !(gameInFront && now - lastRaise > 0.5)) return;
+        lastRaise = now;
+
+        SetWindowPos(glfwGetWin32Window(Overlay::Window), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+
     // Only take the mouse while it's over the menu, everywhere else clicks go to the game.
     // The window covers the whole screen, so without this an open menu would swallow
     // every click. WantCaptureMouse is ImGui saying the cursor is over one of its windows.
@@ -128,6 +159,8 @@ namespace Overlay {
         if (capture == mouseCaptured) return;
         mouseCaptured = capture;
         glfwSetWindowAttrib(Overlay::Window, GLFW_MOUSE_PASSTHROUGH, capture ? GLFW_FALSE : GLFW_TRUE);
+        // changing the window style can drop it below the game
+        keepOnTop(true);
     }
 
     // what the tracker sees right now, mainly for testing until markers are drawn
@@ -180,7 +213,7 @@ namespace Overlay {
         ImGui::SetNextWindowBgAlpha(0.8f * alpha);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
         ImGui::Begin("##startup", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
-        ImGui::Text("Genshin Overlay is running. Press ` for the menu.");
+        ImGui::Text("Genshin Overlay is running. Press Alt+` for the menu.");
         ImGui::End();
         ImGui::PopStyleVar();
     }
@@ -191,11 +224,37 @@ namespace Overlay {
 
         bool open = true;
         ImGui::Begin("Genshin Overlay", &open);
-        ImGui::TextDisabled("Press ` to close this menu");
+        ImGui::TextDisabled("Press Alt+` to close this menu");
         ImGui::Separator();
 
         if (ImGui::CollapsingHeader("Map", ImGuiTreeNodeFlags_DefaultOpen)) {
             DrawMapStatus();
+
+            // Seeing M and Esc while the game has focus needs admin, because the
+            // game runs as admin. Without it closing the map is noticed from the
+            // screenshots instead, about a second later.
+            bool instantClose = Settings::runAsAdmin;
+            if (ImGui::Checkbox("Close instantly on M and Esc (needs admin)", &instantClose)) {
+                Settings::runAsAdmin = instantClose;
+                Settings::Save();
+                if (instantClose && !Helpers::isElevated()) {
+                    // Let go of Alt+` first, a key can only be registered by one
+                    // program and the new one needs it. Take it back if the prompt is declined.
+                    Keybindings::SetEnabled(false);
+                    if (Helpers::relaunchAsAdmin()) {
+                        // Hide right away. Closing can take a few seconds when a
+                        // match or tile download is still running.
+                        glfwHideWindow(Overlay::Window);
+                        glfwSetWindowShouldClose(Overlay::Window, true);
+                    }
+                    else {
+                        Keybindings::SetEnabled(true);
+                    }
+                }
+            }
+            if (!instantClose && Helpers::isElevated()) {
+                ImGui::TextDisabled("Starts without admin next time");
+            }
         }
 
         if (ImGui::CollapsingHeader("Usage")) {
@@ -221,6 +280,7 @@ namespace Overlay {
         while (!glfwWindowShouldClose(Overlay::Window)) {
             glfwPollEvents();
             Keybindings::ProcessKeybindings();
+            keepOnTop(false);
             // sends the tracker a new screenshot when it's ready for one
             MapTracking::Tick(glfwGetWin32Window(Overlay::Window));
 
