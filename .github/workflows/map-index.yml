@@ -31,6 +31,8 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
+          # the runner's vcpkg can be older than the baseline in vcpkg.json
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --quiet origin master
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
           msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
