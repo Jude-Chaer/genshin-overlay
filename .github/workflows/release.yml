@@ -1,0 +1,65 @@
+# Builds the app and publishes a release with a zip of it.
+# Push a tag like v0.1.0, or run it from the Actions tab and type the version.
+# The map data isn't in the zip, the app downloads it on first start.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, like v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # same cache as the map index workflow, so OpenCV isn't built again
+      - name: Cache vcpkg libraries
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        run: |
+          # the runner's vcpkg can be older than the baseline in vcpkg.json
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --quiet origin master
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
+          msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
+          $folder = "genshin-overlay"
+          New-Item -ItemType Directory $folder | Out-Null
+          Copy-Item build\Release\genshin-overlay.exe $folder
+          Copy-Item -Recurse extensions $folder
+          Copy-Item README.md $folder
+          $zip = "genshin-overlay-$version.zip"
+          Compress-Archive -Path $folder -DestinationPath $zip
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "Unzip anywhere and run genshin-overlay.exe. It asks for admin because the game runs as admin. Press `` ` `` in game for the menu. On the first start it downloads the map data (about 26 MB)."
+          gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes $notes --target "${{ github.sha }}"
