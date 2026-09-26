@@ -536,17 +536,17 @@ namespace MapLocator {
         }
     }
 
-    Result Index::Match(const cv::Mat& bgr, double cx, double cy, bool fast) {
+    Result Index::Match(const cv::Mat& bgr, double cx, double cy, bool fast, bool searchNearLast) {
         if (!IsReady()) return Result();
         try {
-            return MatchImpl(bgr, cx, cy, fast);
+            return MatchImpl(bgr, cx, cy, fast, searchNearLast);
         }
         catch (...) {
             return Result();
         }
     }
 
-    Result Index::MatchImpl(const cv::Mat& screen, double cx, double cy, bool fast) {
+    Result Index::MatchImpl(const cv::Mat& screen, double cx, double cy, bool fast, bool searchNearLast) {
         int w = screen.cols, h = screen.rows;
         if (w < 64 || h < 64) return Result();
 
@@ -622,7 +622,7 @@ namespace MapLocator {
         }
 
         // still nothing: try only the keypoints near the last fix
-        if (strongest() < MIN_INLIERS && m_hasLast) {
+        if (strongest() < MIN_INLIERS && m_hasLast && searchNearLast) {
             std::vector<int> subset;
             for (int i = 0; i < (int)m_points.size(); i++) {
                 if (m_pieces[m_pieceOf[i]].mapId != m_last.mapId) continue;
@@ -688,7 +688,17 @@ namespace MapLocator {
     }
 
 
+    // while following, every 8th tick is a full resolution match to keep it accurate
     static constexpr int FULL_EVERY = 8;
+    // Starting to follow needs more than staying on it (MIN_INLIERS). Most frames
+    // with no fix are normal gameplay, and they must never pass as the map.
+    static constexpr int FIRST_FIX_INLIERS = 25;
+    // after this many misses the map is taken as closed and we go back to quick looks
+    static constexpr int MISSES_BEFORE_LOST = 2;
+    // A fast miss is only rechecked at full resolution if the fast look still
+    // found this many matching points. A floor the half resolution pass missed
+    // leaves a few, a gameplay frame leaves almost none.
+    static constexpr int RECHECK_INLIERS = 6;
     static constexpr double STILL_DIFF = 1.5;  // mean brightness change of a still frame
     static constexpr int THUMB_W = 48, THUMB_H = 22;
 
@@ -701,6 +711,7 @@ namespace MapLocator {
         m_hasFix = false;
         m_claimed = false;
         m_ticksSinceFull = 0;
+        m_misses = 0;
     }
 
     bool Tracker::Decide(const Result& result, bool fromFull, Result& out) {
@@ -746,13 +757,39 @@ namespace MapLocator {
             return step;
         }
 
-        // skip frames that didn't change, unless a floor change is waiting to be confirmed
+        // Skip frames that didn't change, unless a floor change is waiting to be confirmed.
+        // If the last frame had no map, an unchanged one has no map either, so it
+        // counts as a miss. Otherwise standing still after closing the map would
+        // never reach MISSES_BEFORE_LOST and the old position would stay forever.
         if (!m_lastThumb.empty() && !m_claimed && cv::norm(thumb, m_lastThumb, cv::NORM_L1) / (THUMB_W * THUMB_H) < STILL_DIFF) {
+            if (m_lastMissed) {
+                if (m_hasFix && ++m_misses >= MISSES_BEFORE_LOST) {
+                    Reset();
+                }
+                return step;
+            }
             step.kind = TrackStep::Still;
             return step;
         }
 
-        bool fast = m_hasFix && !m_claimed && m_ticksSinceFull < FULL_EVERY;
+        // Nothing followed yet: one quick half resolution look, without the slow
+        // extra passes. Most of these frames are gameplay, and they need to fail fast.
+        if (!m_hasFix) {
+            m_lastThumb = thumb;
+            Result result = index.Match(bgr, cx, cy, true, false);
+            m_lastMissed = !result.found || result.inliers < FIRST_FIX_INLIERS;
+            if (m_lastMissed) return step;
+
+            m_hasFix = true;
+            m_fix = result;
+            m_misses = 0;
+            m_ticksSinceFull = 0;
+            step.kind = TrackStep::Apply;
+            step.result = result;
+            return step;
+        }
+
+        bool fast = !m_claimed && m_ticksSinceFull < FULL_EVERY;
         if (fast) {
             m_ticksSinceFull++;
         }
@@ -762,15 +799,18 @@ namespace MapLocator {
 
         auto full = [&]() {
             m_ticksSinceFull = 0;
-            return index.Match(bgr, cx, cy, false);
+            return index.Match(bgr, cx, cy, false, false);
         };
 
-        // a fast miss, or a fast match on another floor, gets checked again at full resolution
-        Result result = index.Match(bgr, cx, cy, fast);
+        // A fast miss, or a fast match on another floor, gets checked again at full
+        // resolution. Only when the fast look saw at least a trace of the map though:
+        // after the map closes it sees next to nothing, and a full check on a 4K
+        // gameplay frame takes over a second.
+        Result result = index.Match(bgr, cx, cy, fast, false);
         Result shown;
         bool ok;
         if (!result.found) {
-            ok = fast && Decide(full(), true, shown);
+            ok = fast && m_misses == 0 && result.inliers >= RECHECK_INLIERS && Decide(full(), true, shown);
         }
         else if (!fast) {
             ok = Decide(result, true, shown);
@@ -780,12 +820,17 @@ namespace MapLocator {
         }
 
         m_lastThumb = thumb;
+        m_lastMissed = !ok;
         if (!ok) {
             m_claimed = false;
+            // the map was probably closed, go back to quick looks so gameplay frames stay cheap
+            if (++m_misses >= MISSES_BEFORE_LOST) {
+                Reset();
+            }
             return step;
         }
 
-        m_hasFix = true;
+        m_misses = 0;
         m_fix = shown;
         step.kind = TrackStep::Apply;
         step.result = shown;

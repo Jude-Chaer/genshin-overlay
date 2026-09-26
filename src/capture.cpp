@@ -1,5 +1,6 @@
 #include "capture.hpp"
 #include <dwmapi.h>
+#include <iostream>
 #include <opencv2/imgproc.hpp>
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
@@ -34,7 +35,17 @@ namespace Capture {
 
         // DwmFlush waits for a new frame so the affinity change is on screen first
         bool excluded = exclude && SetWindowDisplayAffinity(exclude, WDA_EXCLUDEFROMCAPTURE);
-        if (excluded) DwmFlush();
+        if (excluded) {
+            DwmFlush();
+        }
+        else if (exclude) {
+            // the tracker would see our own drawings, say so once
+            static bool warned = false;
+            if (!warned) {
+                std::cerr << "Couldn't hide the overlay from the screenshot (error " << GetLastError() << ")" << std::endl;
+                warned = true;
+            }
+        }
 
         HDC screenDC = GetDC(nullptr);
         HDC memoryDC = CreateCompatibleDC(screenDC);

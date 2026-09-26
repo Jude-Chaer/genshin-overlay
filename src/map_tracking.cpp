@@ -8,10 +8,20 @@
 #include <mutex>
 #include <thread>
 
+// How it fits together: Tick runs on the main thread every frame. About every
+// 120ms it takes a screenshot of the game and hands it to the worker thread,
+// which runs the Tracker on it and updates the view. A new screenshot is only
+// taken once the worker is done with the last one, so a slow match never piles
+// up frames, it just lowers how often the view updates.
+//
+// Closing the map is noticed two ways. Pressing M or Esc hides the view right
+// away. Anything else (the X button, a controller) is noticed when the
+// screenshots stop matching, which takes about a second.
+
 namespace MapTracking {
     static constexpr auto TICK_INTERVAL = std::chrono::milliseconds(120);
-    // a few misses in a row before hiding, so one blurry frame doesn't make it flicker
-    static constexpr int MISSES_BEFORE_HIDE = 3;
+    // two misses in a row before hiding, so one blurry frame while dragging doesn't make it flicker
+    static constexpr int MISSES_BEFORE_HIDE = 2;
 
     static std::atomic<Status> status{ Status::NoData };
     static std::atomic<bool> stopping{ false };
@@ -28,14 +38,25 @@ namespace MapTracking {
     static bool resetTracker = false;
     static cv::Mat frame;
     static RECT frameRect = {};
+    static std::chrono::steady_clock::time_point frameTime;
     static MapView view;
+    static std::chrono::steady_clock::time_point lastUpdate;
     static int misses = 0;
 
+    static std::atomic<float> lastStepMs{ 0.0f };
     static std::string downloadStage;
     static std::atomic<int> downloadPercent{ 0 };
 
     static std::chrono::steady_clock::time_point lastCapture;
     static HWND lastGameWindow = nullptr;
+
+    // After M or Esc closes the map, the game takes about half a second to fade
+    // it out. A screenshot from that half second still shows the map and would
+    // bring the view right back, so for a little longer than that we don't take
+    // screenshots, and throw away any taken before (their match can finish later).
+    static constexpr auto IGNORE_AFTER_CLOSE = std::chrono::milliseconds(800);
+    static std::chrono::steady_clock::time_point ignoreUntil;
+    static bool mapKeyWasDown = false;
 
     // loads the index once, then matches whatever frame Tick hands over
     static void workerLoop(std::filesystem::path dataFolder) {
@@ -68,6 +89,7 @@ namespace MapTracking {
 
             cv::Mat current = frame;
             RECT rect = frameRect;
+            auto takenAt = frameTime;
             frame.release();
             frameWaiting = false;
             busy = true;
@@ -79,14 +101,22 @@ namespace MapTracking {
 
             double cx = current.cols / 2.0;
             double cy = current.rows / 2.0;
+            auto started = std::chrono::steady_clock::now();
             MapLocator::TrackStep step = tracker.Step(index, current, cx, cy);
+            lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - started).count();
 
             lock.lock();
             busy = false;
-            if (step.kind == MapLocator::TrackStep::Apply) {
+            // taken while the map was still fading out, checked by when the
+            // screenshot was taken, not when the match finished
+            if (takenAt < ignoreUntil) {
+                resetTracker = true;
+            }
+            else if (step.kind == MapLocator::TrackStep::Apply) {
                 view.visible = true;
                 view.result = step.result;
                 view.gameRect = rect;
+                lastUpdate = std::chrono::steady_clock::now();
                 misses = 0;
             }
             else if (step.kind == MapLocator::TrackStep::Miss) {
@@ -122,11 +152,31 @@ namespace MapTracking {
         misses = 0;
     }
 
+    // M and Esc open and close the map, no need to wait for the screenshots to
+    // notice. The controller, the X button and so on still go through them.
+    // GetAsyncKeyState only sees the game's keys because we run as admin like the game.
+    static void checkMapKeys() {
+        bool down = (GetAsyncKeyState('M') & 0x8000) || (GetAsyncKeyState(VK_ESCAPE) & 0x8000);
+        bool pressed = down && !mapKeyWasDown;
+        mapKeyWasDown = down;
+        if (!pressed) return;
+
+        std::lock_guard<std::mutex> lock(mutex);
+        if (view.visible) {
+            view.visible = false;
+            resetTracker = true;
+            misses = 0;
+            ignoreUntil = std::chrono::steady_clock::now() + IGNORE_AFTER_CLOSE;
+        }
+        else {
+            // the map is probably opening, look now instead of at the next tick.
+            // If it's still mid animation that look misses and the next tick catches it.
+            lastCapture = {};
+        }
+    }
+
     void Tick(HWND overlayWindow) {
         if (status != Status::Ready) return;
-
-        auto now = std::chrono::steady_clock::now();
-        if (now - lastCapture < TICK_INTERVAL) return;
 
         // only capture while the game, or our own menu, is in front
         HWND game = Capture::findGameWindow();
@@ -135,6 +185,17 @@ namespace MapTracking {
             hide();
             return;
         }
+
+        // every frame, a quick tap would slip between two screenshots
+        checkMapKeys();
+
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastCapture < TICK_INTERVAL) return;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (now < ignoreUntil) return;
+        }
+
         if (game != lastGameWindow) {
             lastGameWindow = game;
             std::lock_guard<std::mutex> lock(mutex);
@@ -158,6 +219,7 @@ namespace MapTracking {
             std::lock_guard<std::mutex> lock(mutex);
             frame = screenshot;
             frameRect = rect;
+            frameTime = now;
             frameWaiting = true;
         }
         wake.notify_one();
@@ -165,6 +227,10 @@ namespace MapTracking {
 
     Status GetStatus() {
         return status;
+    }
+
+    float GetLastStepMs() {
+        return lastStepMs;
     }
 
     std::string GetDownloadStage(int& percent) {
@@ -175,7 +241,9 @@ namespace MapTracking {
 
     MapView GetView() {
         std::lock_guard<std::mutex> lock(mutex);
-        return view;
+        MapView copy = view;
+        copy.secondsSinceUpdate = std::chrono::duration<double>(std::chrono::steady_clock::now() - lastUpdate).count();
+        return copy;
     }
 
     const char* GetMapName(int mapId) {

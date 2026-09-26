@@ -17,6 +17,7 @@ namespace MapTracking {
         bool visible = false;
         MapLocator::Result result;
         RECT gameRect = {};  // screen coords, the result's lat/lng is at its center
+        double secondsSinceUpdate = 0.0;
     };
 
     // gets the map data into dataFolder if needed, then loads it, all on a worker thread
@@ -28,5 +29,7 @@ namespace MapTracking {
     // what the download is doing, while the status is Downloading
     extern std::string GetDownloadStage(int& percent);
     extern MapView GetView();
+    // how long the last screenshot took to match
+    extern float GetLastStepMs();
     extern const char* GetMapName(int mapId);
 }

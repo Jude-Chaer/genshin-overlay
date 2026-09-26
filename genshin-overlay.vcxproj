@@ -60,7 +60,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;winhttp.lib;bcrypt.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;winhttp.lib;bcrypt.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\extensions" "$(OutDir)extensions" &gt;nul</Command>
@@ -97,9 +97,11 @@
     <ClCompile Include="src\lua_functions.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\map_data.cpp" />
+    <ClCompile Include="src\map_tiles.cpp" />
     <ClCompile Include="src\map_tracking.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\stats.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\capture.hpp" />
@@ -109,12 +111,15 @@
     <ClInclude Include="src\locator\map_locator.hpp" />
     <ClInclude Include="src\lua_functions.hpp" />
     <ClInclude Include="src\map_data.hpp" />
+    <ClInclude Include="src\map_tiles.hpp" />
     <ClInclude Include="src\map_tracking.hpp" />
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\stats.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extensions\example\main.lua" />
+    <None Include="extensions\map\main.lua" />
     <None Include="tools\publish_map_index.bat" />
     <None Include="vcpkg.json" />
   </ItemGroup>

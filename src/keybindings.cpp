@@ -1,22 +1,19 @@
 #include <windows.h>
 #include "keybindings.hpp"
 #include "overlay.hpp"
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
+#include "capture.hpp"
 #include <algorithm>
-#include <iostream>
 
-// Keys go through RegisterHotKey instead of glfwGetKey, so they still work
-// while the game has focus (the game runs as admin, which blocks most other ways).
+// Keys are read with GetAsyncKeyState every frame instead of glfwGetKey, since
+// the overlay never has focus. The game still gets the key too.
+// This only works while the game has focus because we run as admin: the game
+// does, and Windows hides an admin window's keys from normal programs.
+// RegisterHotKey didn't work in game either.
 
 namespace Keybindings {
     std::vector<std::unique_ptr<Keybind>> keybinds;
 
-    static HWND hotkeyWindow = nullptr;
-    static WNDPROC originalWndProc = nullptr;
-    static int nextHotkeyId = 1;
-
-    // Lua and the rest of the code use GLFW key codes, RegisterHotKey wants Windows ones
+    // Lua and the rest of the code use GLFW key codes, GetAsyncKeyState wants Windows ones
     static UINT GlfwKeyToVirtualKey(int key) {
         if ((key >= GLFW_KEY_0 && key <= GLFW_KEY_9) || (key >= GLFW_KEY_A && key <= GLFW_KEY_Z)) {
             return (UINT)key;
@@ -59,77 +56,30 @@ namespace Keybindings {
         }
     }
 
-    // GLFW ignores WM_HOTKEY, so we put our own window proc in front of it
-    static LRESULT CALLBACK HotkeyWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-        if (msg == WM_HOTKEY) {
-            for (auto& keybind : keybinds) {
-                if (keybind->GetId() == (int)wParam) {
-                    keybind->Press();
-                }
-            }
-            return 0;
-        }
-        return CallWindowProcW(originalWndProc, hwnd, msg, wParam, lParam);
-    }
-
-    void Init(GLFWwindow* window) {
-        hotkeyWindow = glfwGetWin32Window(window);
-        originalWndProc = (WNDPROC)SetWindowLongPtrW(hotkeyWindow, GWLP_WNDPROC, (LONG_PTR)HotkeyWndProc);
-        RefreshRegistrations();
-    }
-
     void Shutdown() {
-        for (auto& keybind : keybinds) {
-            if (keybind->IsRegistered()) {
-                UnregisterHotKey(hotkeyWindow, keybind->GetId());
-            }
-        }
         keybinds.clear();
-
-        if (hotkeyWindow && originalWndProc) {
-            SetWindowLongPtrW(hotkeyWindow, GWLP_WNDPROC, (LONG_PTR)originalWndProc);
-        }
-        hotkeyWindow = nullptr;
-        originalWndProc = nullptr;
-    }
-
-    // A registered hotkey is swallowed before the game sees it, so keys are only
-    // held while the menu is open, unless they're flagged ProcessWhileHidden.
-    void RefreshRegistrations() {
-        if (!hotkeyWindow) return;
-
-        for (auto& keybind : keybinds) {
-            bool wanted = Overlay::menuOpen || keybind->HasFlag(KeybindFlags_ProcessWhileHidden);
-            if (wanted == keybind->IsRegistered()) continue;
-
-            if (wanted) {
-                UINT virtualKey = GlfwKeyToVirtualKey(keybind->GetKey());
-                if (virtualKey == 0 || !RegisterHotKey(hotkeyWindow, keybind->GetId(), MOD_NOREPEAT, virtualKey)) {
-                    std::cerr << "Could not register key " << keybind->GetKey() << std::endl;
-                    continue;
-                }
-                keybind->SetRegistered(true);
-            }
-            else {
-                UnregisterHotKey(hotkeyWindow, keybind->GetId());
-                keybind->SetRegistered(false);
-            }
-        }
     }
 
     void CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags) {
         if (DoesKeybindExist(glfwKey) != nullptr) {
             return;
         }
-        keybinds.push_back(std::make_unique<Keybind>(nextHotkeyId++, glfwKey, callbackFunction, flags));
-        RefreshRegistrations();
+        keybinds.push_back(std::make_unique<Keybind>(glfwKey, callbackFunction, flags));
     }
 
-    // runs the callbacks for keys pressed since the last frame
+    // runs the callbacks for keys that went down since the last frame
     void ProcessKeybindings() {
+        // only react while the game is in front, so typing ` somewhere else does nothing.
+        // With no game running they always work, which helps when testing.
+        HWND game = Capture::findGameWindow();
+        bool listening = !game || GetForegroundWindow() == game;
+
         std::vector<int> pressed;
         for (auto& keybind : keybinds) {
-            if (keybind->ConsumePress()) {
+            UINT virtualKey = GlfwKeyToVirtualKey(keybind->GetKey());
+            bool down = listening && virtualKey != 0 && (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+            if (!keybind->Update(down)) continue;
+            if (Overlay::menuOpen || keybind->HasFlag(KeybindFlags_ProcessWhileHidden)) {
                 pressed.push_back(keybind->GetKey());
             }
         }
@@ -147,11 +97,6 @@ namespace Keybindings {
     }
 
     void DeleteKeybind(int glfwKey) {
-        Keybind* keybind = DoesKeybindExist(glfwKey);
-        if (keybind && keybind->IsRegistered()) {
-            UnregisterHotKey(hotkeyWindow, keybind->GetId());
-        }
-
         keybinds.erase(std::remove_if(keybinds.begin(), keybinds.end(),
             [glfwKey](const std::unique_ptr<Keybind>& keybind) {
                 return keybind->GetKey() == glfwKey;

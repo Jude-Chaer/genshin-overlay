@@ -51,8 +51,9 @@ namespace MapLocator {
         bool Load(const std::filesystem::path& manifest, const std::atomic<bool>* cancel = nullptr, int maxThreads = 12);
         bool IsReady() const { return !m_descriptors.empty() && m_kd != nullptr; }
 
-        // fast skips the full resolution pass, used while tracking
-        Result Match(const cv::Mat& bgr, double cx, double cy, bool fast = false);
+        // fast skips the full resolution pass, used while tracking.
+        // searchNearLast retries around the last position when nothing else matched, which is slow.
+        Result Match(const cv::Mat& bgr, double cx, double cy, bool fast = false, bool searchNearLast = true);
 
     private:
         struct Piece {
@@ -74,7 +75,7 @@ namespace MapLocator {
             uint64_t signature, const std::atomic<bool>* cancel, int maxThreads);
         bool ReadCache(const std::filesystem::path& cachePath, uint64_t signature);
         void WriteCache(const std::filesystem::path& cachePath, uint64_t signature);
-        Result MatchImpl(const cv::Mat& bgr, double cx, double cy, bool fast);
+        Result MatchImpl(const cv::Mat& bgr, double cx, double cy, bool fast, bool searchNearLast);
         void Knn(const cv::Mat& query, std::vector<std::vector<cv::DMatch>>& out) const;
         void TryMatch(const std::vector<cv::Point2f>& queryPoints, const std::vector<std::vector<cv::DMatch>>& knn,
             const std::vector<int>* subset, Fit& surface, Fit& floor);
@@ -91,8 +92,9 @@ namespace MapLocator {
         Result m_last;
     };
 
-    // Follows the map frame by frame. Once there's a fix it matches at half
-    // resolution and only does a full match every few ticks. Switching to
+    // Follows the map frame by frame. Without a fix it only takes a quick look,
+    // since most frames are gameplay and not the map. Once there's a fix it
+    // matches at half resolution with a full match every few ticks. Switching to
     // another map or floor needs two full matches in a row that agree.
     class Tracker {
     public:
@@ -108,6 +110,8 @@ namespace MapLocator {
         bool m_claimed = false;
         Result m_claim;
         int m_ticksSinceFull = 0;
+        int m_misses = 0;
+        bool m_lastMissed = false;
     };
 
 }

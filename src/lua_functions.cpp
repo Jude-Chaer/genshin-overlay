@@ -1,7 +1,10 @@
+#include <windows.h>
 #include "lua_functions.hpp"
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "overlay.hpp"
+#include "map_tiles.hpp"
+#include "map_tracking.hpp"
 #include <imgui.h>
 #include <iostream>
 
@@ -25,6 +28,13 @@ namespace LuaFunctions {
         luaState.set_function("DefineExtensionSetting", DefineExtensionSetting);
         luaState.set_function("GetSetting", GetExtensionSetting);
         luaState.set_function("LoadTexture", LoadTextureFromFileLua);
+        luaState.set_function("GetMapView", GetMapView);
+        luaState.set_function("GetMapGrid", GetMapGrid);
+        luaState.set_function("GetMapTile", GetMapTile);
+        luaState.set_function("GetMapFloor", GetMapFloor);
+        luaState.set_function("DrawImage", DrawImage);
+        luaState.set_function("PushClipRect", PushClipRect);
+        luaState.set_function("PopClipRect", PopClipRect);
         luaState["KeybindFlags"] = luaState.create_table_with(
             "None", Keybindings::KeybindFlags_None,
             "ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -143,5 +153,86 @@ namespace LuaFunctions {
         int width = 0, height = 0;
         GLuint tex = Helpers::loadTextureFromFile(path, width, height);
         return { tex, width, height };
+    }
+
+    // Where the in-game map is looking, or nil when it isn't open. Positions are
+    // in overlay pixels, the same ones DrawImage uses. lat/lng is the map
+    // position at centerX, centerY.
+    sol::object GetMapView(sol::this_state state) {
+        MapTracking::MapView view = MapTracking::GetView();
+        if (!view.visible) return sol::lua_nil;
+
+        int windowX = 0, windowY = 0;
+        glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+        float left = (float)(view.gameRect.left - windowX);
+        float top = (float)(view.gameRect.top - windowY);
+        float right = (float)(view.gameRect.right - windowX);
+        float bottom = (float)(view.gameRect.bottom - windowY);
+
+        sol::state_view lua(state);
+        return sol::make_object(state, lua.create_table_with(
+            "mapId", view.result.mapId,
+            "groupId", view.result.groupId,
+            "floorId", view.result.floorId,
+            "lat", view.result.lat,
+            "lng", view.result.lng,
+            "unitsPerPixel", view.result.unitsPerPixel,
+            "centerX", (left + right) / 2.0f,
+            "centerY", (top + bottom) / 2.0f,
+            "left", left,
+            "top", top,
+            "right", right,
+            "bottom", bottom
+        ));
+    }
+
+    // how a map's tiles are laid out: tile x covers map units x * tileSize - originX and up
+    sol::object GetMapGrid(int mapId, sol::this_state state) {
+        MapTiles::Grid grid;
+        if (!MapTiles::GetGrid(mapId, grid)) return sol::lua_nil;
+
+        sol::state_view lua(state);
+        return sol::make_object(state, lua.create_table_with(
+            "cols", grid.cols,
+            "rows", grid.rows,
+            "tileSize", grid.tileSize,
+            "originX", grid.originX,
+            "originY", grid.originY
+        ));
+    }
+
+    GLuint GetMapTile(int mapId, int x, int y, int size) {
+        return MapTiles::GetTile(mapId, x, y, size);
+    }
+
+    // an underground floor's image and the box of map units it covers, nil while it loads
+    sol::object GetMapFloor(int groupId, int floorId, sol::this_state state) {
+        MapTiles::Floor floor;
+        if (!MapTiles::GetFloor(groupId, floorId, floor)) return sol::lua_nil;
+
+        sol::state_view lua(state);
+        return sol::make_object(state, lua.create_table_with(
+            "texture", floor.texture,
+            "left", floor.left,
+            "top", floor.top,
+            "right", floor.right,
+            "bottom", floor.bottom
+        ));
+    }
+
+    // draws behind every ImGui window, straight onto the overlay
+    void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
+        if (textureID == 0) return;
+        int a = (int)(alpha.value_or(1.0f) * 255.0f);
+        ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)textureID, ImVec2(x0, y0), ImVec2(x1, y1),
+            ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+    }
+
+    void PushClipRect(float x0, float y0, float x1, float y1) {
+        ImGui::GetBackgroundDrawList()->PushClipRect(ImVec2(x0, y0), ImVec2(x1, y1), true);
+    }
+
+    void PopClipRect() {
+        ImGui::GetBackgroundDrawList()->PopClipRect();
     }
 }

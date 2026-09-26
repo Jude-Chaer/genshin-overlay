@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <shellapi.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <string>
@@ -7,6 +8,7 @@
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "map_data.hpp"
+#include "map_tiles.hpp"
 #include "map_tracking.hpp"
 #include "locator/map_locator.hpp"
 
@@ -38,6 +40,31 @@ static int locateImage(const std::string& imagePath) {
     return 0;
 }
 
+// The game runs as admin, and Windows won't let a normal program read the
+// keyboard while an admin window has focus, so the overlay asks for admin too.
+// --locate and --make-index don't need it, they return before this.
+// --no-admin skips it for testing outside the game.
+static bool isElevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation = {};
+    DWORD size = 0;
+    bool elevated = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) && elevation.TokenIsElevated;
+    CloseHandle(token);
+    return elevated;
+}
+
+static bool relaunchAsAdmin() {
+    wchar_t path[MAX_PATH];
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    SHELLEXECUTEINFOW info = {};
+    info.cbSize = sizeof(info);
+    info.lpVerb = L"runas";
+    info.lpFile = path;
+    info.nShow = SW_SHOWNORMAL;
+    return ShellExecuteExW(&info) != FALSE;
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--locate") {
         return locateImage(argv[2]);
@@ -45,6 +72,12 @@ int main(int argc, char** argv) {
     // genshin-overlay.exe --make-index <folder>, used by the map-index workflow
     if (argc >= 3 && std::string(argv[1]) == "--make-index") {
         return MapData::makeIndex(argv[2]);
+    }
+
+    bool noAdmin = argc >= 2 && std::string(argv[1]) == "--no-admin";
+    if (!noAdmin && !isElevated()) {
+        if (relaunchAsAdmin()) return 0;
+        std::cerr << "Running without admin, keys won't work while the game has focus" << std::endl;
     }
 
     if (!glfwInit()) {
@@ -58,10 +91,12 @@ int main(int argc, char** argv) {
     }
 
     MapTracking::Start(Helpers::exeDirectory() / "map_data");
+    MapTiles::Init(Helpers::exeDirectory() / "map_data");
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
     MapTracking::Stop();
+    MapTiles::Shutdown();
     Overlay::Shutdown();
 
     return 0;

@@ -3,7 +3,9 @@
 #include "keybindings.hpp"
 #include "extensions.hpp"
 #include "helpers.hpp"
+#include "map_tiles.hpp"
 #include "map_tracking.hpp"
+#include "stats.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -18,8 +20,8 @@ namespace Overlay {
     const GLFWvidmode* monitorVideoMode = nullptr;
     bool menuOpen = false;
 
-    static HWND previousForeground = nullptr;
     static std::string iniPath;
+    static double startTime = 0.0;
 
     bool Init() {
         Overlay::mainMonitor = glfwGetPrimaryMonitor();
@@ -47,9 +49,13 @@ namespace Overlay {
         glfwGetMonitorPos(Overlay::mainMonitor, &monitorX, &monitorY);
         glfwSetWindowPos(Overlay::Window, monitorX, monitorY);
 
-        // no taskbar button or alt-tab entry
+        // No taskbar button, and never take focus. Taking focus from the game made
+        // the two fight over it (the cursor kept flashing), and clicks on the menu
+        // still work without focus.
         HWND hwnd = glfwGetWin32Window(Overlay::Window);
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_TOOLWINDOW);
+        LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        exStyle = (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
         glfwShowWindow(Overlay::Window);
 
         glfwMakeContextCurrent(Overlay::Window);
@@ -79,11 +85,11 @@ namespace Overlay {
         ImGui_ImplOpenGL3_Init(glsl_version);
 
         // ` toggles the menu, so it has to work while the menu is closed too
-        Keybindings::Init(Overlay::Window);
         Keybindings::CreateKeybind(GLFW_KEY_GRAVE_ACCENT, []() {
             Overlay::SetMenuOpen(!Overlay::menuOpen);
         }, Keybindings::KeybindFlags_ProcessWhileHidden);
 
+        startTime = glfwGetTime();
         return true;
     }
 
@@ -99,25 +105,29 @@ namespace Overlay {
     }
 
     void SetMenuOpen(bool open) {
-        if (Overlay::menuOpen == open) return;
         Overlay::menuOpen = open;
+    }
 
-        // with the menu open the overlay takes the mouse, closed it goes to the game
-        HWND hwnd = glfwGetWin32Window(Overlay::Window);
-        glfwSetWindowAttrib(Overlay::Window, GLFW_MOUSE_PASSTHROUGH, open ? GLFW_FALSE : GLFW_TRUE);
+    // The window never has focus and is usually click-through, so it can't see
+    // the mouse by itself. We give ImGui the cursor position every frame, that's
+    // also how we know when the cursor is over the menu.
+    static void feedMousePosition() {
+        POINT cursor;
+        GetCursorPos(&cursor);
+        int windowX = 0, windowY = 0;
+        glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+        Overlay::IO->AddMousePosEvent((float)(cursor.x - windowX), (float)(cursor.y - windowY));
+    }
 
-        // take focus while the menu is open, then give it back to the game
-        if (open) {
-            previousForeground = GetForegroundWindow();
-            SetForegroundWindow(hwnd);
-        }
-        else if (previousForeground && IsWindow(previousForeground)) {
-            SetForegroundWindow(previousForeground);
-            previousForeground = nullptr;
-        }
-
-        // extension keybinds only hold their keys while the menu is open
-        Keybindings::RefreshRegistrations();
+    // Only take the mouse while it's over the menu, everywhere else clicks go to the game.
+    // The window covers the whole screen, so without this an open menu would swallow
+    // every click. WantCaptureMouse is ImGui saying the cursor is over one of its windows.
+    static bool mouseCaptured = false;
+    static void updateClickThrough() {
+        bool capture = Overlay::menuOpen && Overlay::IO->WantCaptureMouse;
+        if (capture == mouseCaptured) return;
+        mouseCaptured = capture;
+        glfwSetWindowAttrib(Overlay::Window, GLFW_MOUSE_PASSTHROUGH, capture ? GLFW_FALSE : GLFW_TRUE);
     }
 
     // what the tracker sees right now, mainly for testing until markers are drawn
@@ -157,6 +167,22 @@ namespace Overlay {
         }
         ImGui::Text("Center: %.0f, %.0f", r.lng, r.lat);
         ImGui::Text("Zoom: %.2f units/px  (%d inliers)", r.unitsPerPixel, r.inliers);
+        ImGui::TextDisabled("updated %.1f s ago", view.secondsSinceUpdate);
+    }
+
+    // a short note at the top of the screen after starting, so you know it's running
+    static void DrawStartupHint() {
+        double elapsed = glfwGetTime() - startTime;
+        if (elapsed > 6.0) return;
+
+        float alpha = elapsed > 5.0 ? (float)(6.0 - elapsed) : 1.0f;
+        ImGui::SetNextWindowPos(ImVec2(Overlay::IO->DisplaySize.x * 0.5f, 40.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.8f * alpha);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+        ImGui::Begin("##startup", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
+        ImGui::Text("Genshin Overlay is running. Press ` for the menu.");
+        ImGui::End();
+        ImGui::PopStyleVar();
     }
 
     static void DrawMenu() {
@@ -170,6 +196,10 @@ namespace Overlay {
 
         if (ImGui::CollapsingHeader("Map", ImGuiTreeNodeFlags_DefaultOpen)) {
             DrawMapStatus();
+        }
+
+        if (ImGui::CollapsingHeader("Usage")) {
+            Stats::Draw();
         }
 
         if (ImGui::CollapsingHeader("Extensions", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -196,9 +226,13 @@ namespace Overlay {
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
+            feedMousePosition();
             ImGui::NewFrame();
+            updateClickThrough();
 
             Extensions::frameUpdateExtensions();
+            DrawStartupHint();
+            Stats::Update();
             if (Overlay::menuOpen) {
                 DrawMenu();
             }
@@ -214,6 +248,7 @@ namespace Overlay {
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             glfwSwapBuffers(Overlay::Window);
+            MapTiles::EndFrame();
         }
     }
 }

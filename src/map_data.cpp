@@ -276,6 +276,15 @@ namespace MapData {
             if (!writeFile(manifestPath, plan.manifest)) return false;
         }
 
+        // where each underground floor image comes from, for drawing them later
+        std::string overlayUrls;
+        for (const auto& file : plan.files) {
+            if (file.path.rfind("overlays/", 0) == 0) {
+                overlayUrls += file.path + "\t" + file.url + "\n";
+            }
+        }
+        writeFile(folder / "overlay_urls.tsv", overlayUrls);
+
         if (MapLocator::IndexMatchesManifest(folder / "index.bin", plan.manifest)) return true;
         if (downloadPrebuiltIndex(folder, plan, progress)) return true;
 
