@@ -1,0 +1,24 @@
+{
+  "name": "genshin-overlay",
+  "version-string": "0.1.0",
+  "builtin-baseline": "c4ee5a52d77493324f8dd58747e9d9611202ed0e",
+  "dependencies": [
+    "glew",
+    "glfw3",
+    {
+      "name": "imgui",
+      "features": [ "glfw-binding", "opengl3-binding" ]
+    },
+    "lua",
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": [ "calib3d", "intrinsics", "png", "thread", "webp" ]
+    },
+    "sol2",
+    "soil2"
+  ],
+  "overrides": [
+    { "name": "lua", "version": "5.4.8" }
+  ]
+}

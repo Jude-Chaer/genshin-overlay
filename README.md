@@ -39,8 +39,21 @@ Early development. Nothing to download yet.
 
 ## Building
 
-Windows only. Needs Visual Studio 2022 and [vcpkg](https://github.com/microsoft/vcpkg).
-Dependencies are listed in `vcpkg.json` and install on the first build.
+Windows only.
+
+1. Install Visual Studio 2022 with the "Desktop development with C++" workload. It comes with
+   vcpkg.
+2. Once, from a Developer PowerShell: `vcpkg integrate install`
+3. Open `genshin-overlay.sln` and build `Release | x64`. The first build installs everything in
+   `vcpkg.json` by itself. OpenCV takes a while the first time, after that it's quick.
+4. Put the map data (`manifest.tsv` and `index.bin`) in `build\Release\map_data`.
+5. Run `build\Release\genshin-overlay.exe` and press `` ` `` to open the menu.
+
+To test the map matching without the game, run it on a screenshot of the in-game map:
+
+```
+genshin-overlay.exe --locate screenshot.png
+```
 
 ## Credits
 
