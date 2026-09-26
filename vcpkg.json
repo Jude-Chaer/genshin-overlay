@@ -10,13 +10,15 @@
       "features": [ "glfw-binding", "opengl3-binding" ]
     },
     "lua",
+    "nlohmann-json",
     {
       "name": "opencv4",
       "default-features": false,
       "features": [ "calib3d", "intrinsics", "png", "thread", "webp" ]
     },
     "sol2",
-    "soil2"
+    "soil2",
+    "zlib"
   ],
   "overrides": [
     { "name": "lua", "version": "5.4.8" }

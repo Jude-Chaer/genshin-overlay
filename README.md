@@ -46,8 +46,8 @@ Windows only.
 2. Once, from a Developer PowerShell: `vcpkg integrate install`
 3. Open `genshin-overlay.sln` and build `Release | x64`. The first build installs everything in
    `vcpkg.json` by itself. OpenCV takes a while the first time, after that it's quick.
-4. Put the map data (`manifest.tsv` and `index.bin`) in `build\Release\map_data`.
-5. Run `build\Release\genshin-overlay.exe` and press `` ` `` to open the menu.
+4. Run `build\Release\genshin-overlay.exe` and press `` ` `` to open the menu. On the first start
+   it downloads the map data into `map_data` next to the exe (about 26 MB).
 
 To test the map matching without the game, run it on a screenshot of the in-game map:
 

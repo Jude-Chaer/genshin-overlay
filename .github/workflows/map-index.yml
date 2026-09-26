@@ -1,0 +1,58 @@
+# Builds the map index from HoYoLAB's current map and publishes it on the
+# "map-index" release. The app downloads it instead of ~120 MB of map images.
+# If the published index is already current, nothing is uploaded.
+
+name: Map index
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # OpenCV takes a long time to build, keep the installed libraries between runs
+      - name: Cache vcpkg libraries
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
+          msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+
+      - name: Make the index
+        id: index
+        shell: pwsh
+        run: |
+          & build\Release\genshin-overlay.exe --make-index map_index
+          if ($LASTEXITCODE -eq 3) { "changed=false" >> $env:GITHUB_OUTPUT; exit 0 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "changed=true" >> $env:GITHUB_OUTPUT
+
+      - name: Upload
+        if: steps.index.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view map-index 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create map-index --prerelease --latest=false --title "Map index" --notes "Map data for the overlay, downloaded by the app. Not an app release."
+          }
+          # the index first, then the file that points to it
+          gh release upload map-index map_index\out\map-index.bin.gz --clobber
+          gh release upload map-index map_index\out\map-index.json --clobber

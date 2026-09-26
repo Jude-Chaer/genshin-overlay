@@ -79,14 +79,27 @@ namespace MapLocator {
         }
     }
 
-    // FNV-1a 64 of the manifest, stored in index.bin to spot a stale cache
-    static uint64_t fnv1a(const std::vector<uchar>& data) {
+    static uint64_t fnv1a(const uchar* data, size_t size) {
         uint64_t hash = 14695981039346656037ULL;
-        for (uchar c : data) {
-            hash ^= c;
+        for (size_t i = 0; i < size; i++) {
+            hash ^= data[i];
             hash *= 1099511628211ULL;
         }
         return hash;
+    }
+
+    uint64_t ManifestSignature(const std::string& manifest) {
+        return fnv1a((const uchar*)manifest.data(), manifest.size());
+    }
+
+    bool IndexMatchesManifest(const fs::path& indexPath, const std::string& manifest) {
+        std::ifstream file(indexPath, std::ios::binary);
+        uint32_t magic = 0, version = 0;
+        uint64_t signature = 0;
+        file.read((char*)&magic, 4);
+        file.read((char*)&version, 4);
+        file.read((char*)&signature, 8);
+        return file && magic == INDEX_MAGIC && version == INDEX_VERSION && signature == ManifestSignature(manifest);
     }
 
     static std::vector<std::string> split(const std::string& s, char separator) {
@@ -285,7 +298,7 @@ namespace MapLocator {
 
         std::vector<uchar> bytes;
         if (!readFileBytes(manifest, bytes)) return false;
-        uint64_t signature = fnv1a(bytes);
+        uint64_t signature = fnv1a(bytes.data(), bytes.size());
         fs::path cache = manifest.parent_path() / "index.bin";
         if (!ReadCache(cache, signature) && !Build(manifest, bytes, cache, signature, cancel, maxThreads)) {
             return false;

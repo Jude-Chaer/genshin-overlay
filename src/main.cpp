@@ -6,6 +6,7 @@
 #include "overlay.hpp"
 #include "extensions.hpp"
 #include "helpers.hpp"
+#include "map_data.hpp"
 #include "map_tracking.hpp"
 #include "locator/map_locator.hpp"
 
@@ -41,6 +42,10 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--locate") {
         return locateImage(argv[2]);
     }
+    // genshin-overlay.exe --make-index <folder>, used by the map-index workflow
+    if (argc >= 3 && std::string(argv[1]) == "--make-index") {
+        return MapData::makeIndex(argv[2]);
+    }
 
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
@@ -52,7 +57,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    MapTracking::Start(Helpers::exeDirectory() / "map_data" / "manifest.tsv");
+    MapTracking::Start(Helpers::exeDirectory() / "map_data");
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();

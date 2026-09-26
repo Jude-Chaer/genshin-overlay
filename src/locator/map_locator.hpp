@@ -2,6 +2,7 @@
 #include <atomic>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <vector>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
@@ -33,6 +34,11 @@ namespace MapLocator {
         Kind kind = Miss;
         Result result;
     };
+
+    // FNV-1a 64 of the manifest text, index.bin stores it to know what it was built from
+    uint64_t ManifestSignature(const std::string& manifest);
+    // true if index.bin at this path was built from this manifest
+    bool IndexMatchesManifest(const std::filesystem::path& indexPath, const std::string& manifest);
 
     class Index {
     public:

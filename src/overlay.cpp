@@ -124,8 +124,15 @@ namespace Overlay {
     static void DrawMapStatus() {
         switch (MapTracking::GetStatus()) {
         case MapTracking::Status::NoData:
-            ImGui::TextWrapped("No map data. Put manifest.tsv and index.bin in the map_data folder next to the exe.");
+            ImGui::TextWrapped("Couldn't get the map data. Check your internet connection and restart.");
             return;
+        case MapTracking::Status::Downloading: {
+            int percent = 0;
+            std::string stage = MapTracking::GetDownloadStage(percent);
+            ImGui::Text("%s", stage.c_str());
+            ImGui::ProgressBar(percent / 100.0f);
+            return;
+        }
         case MapTracking::Status::Loading:
             ImGui::Text("Loading map data...");
             return;

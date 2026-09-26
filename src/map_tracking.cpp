@@ -1,5 +1,6 @@
 #include "map_tracking.hpp"
 #include "capture.hpp"
+#include "map_data.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -30,12 +31,28 @@ namespace MapTracking {
     static MapView view;
     static int misses = 0;
 
+    static std::string downloadStage;
+    static std::atomic<int> downloadPercent{ 0 };
+
     static std::chrono::steady_clock::time_point lastCapture;
     static HWND lastGameWindow = nullptr;
 
     // loads the index once, then matches whatever frame Tick hands over
-    static void workerLoop(std::filesystem::path manifestPath) {
+    static void workerLoop(std::filesystem::path dataFolder) {
+        status = Status::Downloading;
+        bool ready = MapData::ensure(dataFolder, [](const char* stage, int percent) {
+            std::lock_guard<std::mutex> lock(mutex);
+            downloadStage = stage;
+            downloadPercent = percent;
+        }, &stopping);
+        if (stopping) return;
+        if (!ready) {
+            status = Status::NoData;
+            return;
+        }
+
         status = Status::Loading;
+        std::filesystem::path manifestPath = dataFolder / "manifest.tsv";
         bool loaded = index.Load(manifestPath, &stopping);
         if (stopping) return;
         status = loaded ? Status::Ready : Status::Failed;
@@ -80,14 +97,10 @@ namespace MapTracking {
         }
     }
 
-    void Start(const std::filesystem::path& manifestPath) {
+    void Start(const std::filesystem::path& dataFolder) {
         if (worker.joinable()) return;
-        if (!std::filesystem::exists(manifestPath)) {
-            status = Status::NoData;
-            return;
-        }
         stopping = false;
-        worker = std::thread(workerLoop, manifestPath);
+        worker = std::thread(workerLoop, dataFolder);
     }
 
     void Stop() {
@@ -152,6 +165,12 @@ namespace MapTracking {
 
     Status GetStatus() {
         return status;
+    }
+
+    std::string GetDownloadStage(int& percent) {
+        std::lock_guard<std::mutex> lock(mutex);
+        percent = downloadPercent;
+        return downloadStage;
     }
 
     MapView GetView() {
