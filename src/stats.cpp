@@ -11,6 +11,7 @@ namespace Stats {
 
     static float cpuHistory[HISTORY] = {};
     static float ramHistory[HISTORY] = {};
+    static float committedHistory[HISTORY] = {};
     static float matchHistory[HISTORY] = {};
     static int next = 0;
     static bool filled = false;
@@ -42,12 +43,17 @@ namespace Stats {
             GetSystemInfo(&info);
             double cpu = (double)(cpuTime - lastCpuTime) / wallTime / info.dwNumberOfProcessors * 100.0;
 
-            PROCESS_MEMORY_COUNTERS_EX memory = {};
+            PROCESS_MEMORY_COUNTERS_EX2 memory = {};
             GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&memory, sizeof(memory));
 
             cpuHistory[next] = (float)cpu;
-            // private bytes, the memory that's only ours (the Memory column in Task Manager)
-            ramHistory[next] = memory.PrivateUsage / (1024.0f * 1024.0f);
+            // Two different numbers. RAM is what's in memory right now and only ours,
+            // the same as the Memory column in Task Manager. Windows moves some of it
+            // out when we're idle and the game needs the space, so it can drop a lot.
+            // Committed is everything we've asked Windows for, in RAM or not, a lot
+            // of it is the graphics driver.
+            ramHistory[next] = memory.PrivateWorkingSetSize / (1024.0f * 1024.0f);
+            committedHistory[next] = memory.PrivateUsage / (1024.0f * 1024.0f);
             matchHistory[next] = MapTracking::GetLastStepMs();
             next = (next + 1) % HISTORY;
             if (next == 0) filled = true;
@@ -78,6 +84,7 @@ namespace Stats {
     void Draw() {
         graph("CPU", cpuHistory, "%.1f %%", 5.0f);
         graph("RAM", ramHistory, "%.0f MB", 50.0f);
+        graph("Committed", committedHistory, "%.0f MB", 50.0f);
         graph("Match", matchHistory, "%.0f ms", 100.0f);
     }
 }

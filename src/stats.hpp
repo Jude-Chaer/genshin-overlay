@@ -1,6 +1,6 @@
 #pragma once
 
-// Graphs of the overlay's own CPU and RAM use, and how long the map matching
+// Graphs of the overlay's own CPU and memory use, and how long the map matching
 // takes, shown in the menu. Samples twice a second and keeps the last minute.
 
 namespace Stats {
