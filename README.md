@@ -30,12 +30,36 @@ The overlay only reads the screen. It never touches the game's memory or files.
 
 Early development. Nothing to download yet.
 
-- [ ] Overlay window and keybinds
-- [ ] Game capture
-- [ ] Map matching and tracking
-- [ ] Markers and the marker menu
-- [ ] Lua extensions
-- [ ] Boss HP and health
+#### Progress so far:
+- Lua Extensions
+  - [ ] Proper keybinding and input access for extensions
+  - [ ] Ability to enable/disable extensions
+  - [ ] Import functions as `.zips`
+  - [ ] Extension Browser/Website for accessibility
+  - [ ] Permissions system to give extensions i/o access (and other if needed) 
+  - [ ] Bundling assets with extensions
+- Overlay window
+  - [ ] More intuitive design 
+  - [ ] Fleshed out settings menu
+  - [ ] Theme system (low priority)
+  - [ ] Potentially find workaround to Genshin eating inputs
+
+
+If the systems above are implemented well, the primary extensions to make are listed below:
+
+
+- Boss HP and health
+  - [ ] % overlay for boss bars & player health bars
+  - [ ] Potentially have themes for this?
+- Interactive Map Integration
+  - [ ] Quick and precise reading of map (Lower resolution screenshots)
+  - [ ] System that translates movement of Genshin map through estimation of map movement in game (Corrected once map settles)
+  - [ ] Ability to select resources to be displayed over the map
+  - [ ] Continually update with versions when the interactive map does
+  - [ ] Read minimap and overlay resources on that as well
+  - [ ] Very potentially get the comments for each resource from the interactive map
+- Resource tracker
+  - [ ] Ability to track certain resources a player has gotten for automatic importing to character building sites
 
 ## Building
 
