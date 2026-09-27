@@ -59,6 +59,6 @@ genshin-overlay.exe --locate screenshot.png
 
 Started by [Mippy](https://github.com/Mipppy), who came up with the idea and built the first
 versions ([a_test](https://github.com/Mipppy/a_test), [na](https://github.com/Mipppy/na)).
-Map matching by [Jude](https://github.com/Jude-Chaer).
+Map matching by [Jude](https://github.com/Jude-Chaer). 
 
 Not affiliated with HoYoverse. Genshin Impact and its map art belong to HoYoverse.
