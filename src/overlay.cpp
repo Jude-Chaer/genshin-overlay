@@ -220,55 +220,208 @@ namespace Overlay {
 
     static void DrawMenu() {
         ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(420, 520), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
 
         bool open = true;
-        ImGui::Begin("Genshin Overlay", &open);
-        ImGui::TextDisabled("Press Alt+` to close this menu");
-        ImGui::Separator();
 
-        if (ImGui::CollapsingHeader("Map", ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawMapStatus();
+        ImGui::Begin(
+            "Genshin Overlay",
+            &open,
+            ImGuiWindowFlags_NoCollapse
+        );
 
-            // Seeing M and Esc while the game has focus needs admin, because the
-            // game runs as admin. Without it closing the map is noticed from the
-            // screenshots instead, about a second later.
-            bool instantClose = Settings::runAsAdmin;
-            if (ImGui::Checkbox("Close instantly on M and Esc (needs admin)", &instantClose)) {
-                Settings::runAsAdmin = instantClose;
-                Settings::Save();
-                if (instantClose && !Helpers::isElevated()) {
-                    // Let go of Alt+` first, a key can only be registered by one
-                    // program and the new one needs it. Take it back if the prompt is declined.
-                    Keybindings::SetEnabled(false);
-                    if (Helpers::relaunchAsAdmin()) {
-                        // Hide right away. Closing can take a few seconds when a
-                        // match or tile download is still running.
-                        glfwHideWindow(Overlay::Window);
-                        glfwSetWindowShouldClose(Overlay::Window, true);
-                    }
-                    else {
-                        Keybindings::SetEnabled(true);
+
+
+        // 0 = Home
+        // 1 = Settings
+        // 2 = Usage
+        // 3+ = extensions
+        static int activeTab = 0;
+
+        static float sidebarWidth = 150.0f;
+
+        constexpr float sidebarMinWidth = 100.0f;
+        constexpr float sidebarMaxWidth = 300.0f;
+        constexpr float splitterWidth = 5.0f;
+        constexpr float quitButtonWidth = 80.0f;
+
+
+        ImVec2 contentSize = ImGui::GetContentRegionAvail();
+
+        ImGui::BeginChild(
+            "Sidebar",
+            ImVec2(sidebarWidth, contentSize.y),
+            true,
+            ImGuiWindowFlags_NoScrollbar
+        );
+
+        auto DrawTab = [&](const char* label, int tabIndex) {
+            bool selected = activeTab == tabIndex;
+
+            ImVec2 size(
+                ImGui::GetContentRegionAvail().x,
+                65.0f
+            );
+
+            if (selected) {
+                ImGui::PushStyleColor(
+                    ImGuiCol_Button,
+                    ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered)
+                );
+            }
+
+            if (ImGui::Button(label, size)) {
+                activeTab = tabIndex;
+            }
+
+            if (selected) {
+                ImGui::PopStyleColor();
+            }
+            };
+
+        DrawTab("Home", 0);
+        DrawTab("Settings", 1);
+        DrawTab("Usage", 2);
+
+        if (!Extensions::registeredExtensions.empty()) {
+            ImGui::Separator();
+        }
+
+        for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+            auto& ext = Extensions::registeredExtensions[i];
+
+            DrawTab(
+                ext->name.c_str(),
+                static_cast<int>(i) + 3
+            );
+        }
+
+        ImGui::EndChild();
+
+
+        ImGui::SameLine(0.0f, 0.0f);
+
+        ImGui::InvisibleButton(
+            "##SidebarSplitter",
+            ImVec2(splitterWidth, contentSize.y)
+        );
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+
+        if (ImGui::IsItemActive()) {
+            sidebarWidth += ImGui::GetIO().MouseDelta.x;
+
+            sidebarWidth = std::clamp(
+                sidebarWidth,
+                sidebarMinWidth,
+                sidebarMaxWidth
+            );
+        }
+
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        ImVec2 splitterMin = ImGui::GetItemRectMin();
+        ImVec2 splitterMax = ImGui::GetItemRectMax();
+
+        drawList->AddRectFilled(
+            splitterMin,
+            splitterMax,
+            ImGui::GetColorU32(ImGuiCol_Border)
+        );
+
+        ImGui::SameLine(0.0f, 0.0f);
+
+        ImGui::BeginChild(
+            "MainContent",
+            ImVec2(0, contentSize.y),
+            true,
+            ImGuiWindowFlags_AlwaysVerticalScrollbar
+        );
+        
+        switch (activeTab) {
+        case 0:
+
+            ImGui::TextDisabled("Press Alt+` to hide");
+
+
+            ImGui::SameLine();
+
+            ImGui::SetCursorPosX(
+                ImGui::GetWindowContentRegionMax().x - quitButtonWidth
+            );
+
+            if (ImGui::Button("Shutdown", ImVec2(quitButtonWidth, 0))) {
+                glfwSetWindowShouldClose(Overlay::Window, true);
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::CollapsingHeader(
+                "Map",
+                ImGuiTreeNodeFlags_DefaultOpen
+            )) {
+                DrawMapStatus();
+
+                bool instantClose = Settings::runAsAdmin;
+
+                if (ImGui::Checkbox(
+                    "Close instantly on M and Esc (needs admin)",
+                    &instantClose
+                )) {
+                    Settings::runAsAdmin = instantClose;
+                    Settings::Save();
+
+                    if (instantClose && !Helpers::isElevated()) {
+                        Keybindings::SetEnabled(false);
+
+                        if (Helpers::relaunchAsAdmin()) {
+                            glfwHideWindow(Overlay::Window);
+                            glfwSetWindowShouldClose(
+                                Overlay::Window,
+                                true
+                            );
+                        }
+                        else {
+                            Keybindings::SetEnabled(true);
+                        }
                     }
                 }
-            }
-            if (!instantClose && Helpers::isElevated()) {
-                ImGui::TextDisabled("Starts without admin next time");
-            }
-        }
 
-        if (ImGui::CollapsingHeader("Usage")) {
+                if (!instantClose && Helpers::isElevated()) {
+                    ImGui::TextDisabled(
+                        "Starts without admin next time"
+                    );
+                }
+            }
+
+            break;
+
+        case 1:
+            ImGui::Text("Settings");
+            ImGui::Separator();
+
+            break;
+
+        case 2:
+            ImGui::Text("Usage");
+            ImGui::Separator();
+
             Stats::Draw();
+
+            break;
+
+        default:
+            Extensions::drawExtensionMenus(
+                activeTab - 3
+            );
+
+            break;
         }
 
-        if (ImGui::CollapsingHeader("Extensions", ImGuiTreeNodeFlags_DefaultOpen)) {
-            Extensions::drawExtensionMenus();
-        }
+        ImGui::EndChild();
 
-        ImGui::Separator();
-        if (ImGui::Button("Quit")) {
-            glfwSetWindowShouldClose(Overlay::Window, true);
-        }
         ImGui::End();
 
         if (!open) {

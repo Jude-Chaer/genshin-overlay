@@ -53,7 +53,7 @@ namespace Extensions {
     extern void initExtensions();
     extern void destroyExtensions();
     extern void frameUpdateExtensions();
-    extern void drawExtensionMenus();
+    extern void drawExtensionMenus(int extensionIndex);
     extern void findAndLoadExtensions();
     extern void configureSettings();
     extern void loadLuaExtension(const std::filesystem::path& scriptPath, const std::filesystem::path& folderPath);

@@ -71,34 +71,68 @@ namespace Extensions {
     }
 
     // one section per extension: icon, info, settings, then its own Menu()
-    void drawExtensionMenus() {
-        if (registeredExtensions.empty()) {
-            ImGui::TextDisabled("No extensions found");
+    void drawExtensionMenus(int extensionIndex) {
+        if (extensionIndex < 0 ||
+            extensionIndex >= static_cast<int>(registeredExtensions.size())) {
+            ImGui::TextDisabled("Extension not found");
             return;
         }
 
-        for (auto& ext : registeredExtensions) {
-            ImGui::PushID(ext.get());
-            if (ImGui::TreeNode(ext->name.c_str())) {
-                if (ext->extensionImage != 0) {
-                    float size = (float)Extension::extensionImageDisplaySize;
-                    ImGui::Image((ImTextureID)(intptr_t)ext->extensionImage, ImVec2(size, size));
-                    ImGui::SameLine();
-                }
-                ImGui::BeginGroup();
-                ImGui::TextWrapped("%s", ext->description.c_str());
-                ImGui::TextDisabled("%s  v%s", ext->author.c_str(), ext->version.c_str());
-                ImGui::EndGroup();
+        auto& ext = registeredExtensions[extensionIndex];
 
-                for (const auto& id : ext->settingsOrder) {
-                    drawSetting(ext->settings[id]);
-                }
+        ImGui::PushID(ext.get());
 
-                runForExtension(ext.get(), ext->menuFunction);
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
+        if (ext->extensionImage != 0) {
+            float size =
+                static_cast<float>(
+                    Extension::extensionImageDisplaySize
+                    );
+
+            ImGui::Image(
+                (ImTextureID)(intptr_t)ext->extensionImage,
+                ImVec2(size, size)
+            );
+
+            ImGui::SameLine();
         }
+
+        ImGui::BeginGroup();
+
+        ImGui::Text(
+            "%s",
+            ext->name.c_str()
+        );
+
+        ImGui::TextWrapped(
+            "%s",
+            ext->description.c_str()
+        );
+
+        ImGui::TextDisabled(
+            "%s  v%s",
+            ext->author.c_str(),
+            ext->version.c_str()
+        );
+
+        ImGui::EndGroup();
+
+        ImGui::Separator();
+
+
+        for (const auto& id : ext->settingsOrder) {
+            auto it = ext->settings.find(id);
+
+            if (it != ext->settings.end()) {
+                drawSetting(it->second);
+            }
+        }
+
+        runForExtension(
+            ext.get(),
+            ext->menuFunction
+        );
+
+        ImGui::PopID();
     }
 
     void configureSettings() {
