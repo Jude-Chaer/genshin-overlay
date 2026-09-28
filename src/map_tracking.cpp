@@ -8,6 +8,8 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 // How it fits together: Tick runs on the main thread every frame. About every
 // 120ms it takes a screenshot of the game and hands it to the worker thread,
@@ -58,6 +60,19 @@ namespace MapTracking {
     static constexpr auto IGNORE_AFTER_CLOSE = std::chrono::milliseconds(800);
     static std::chrono::steady_clock::time_point ignoreUntil;
     static bool mapKeyWasDown = false;
+
+    // Zoombar Detector thread.
+    static std::atomic<bool> mapOpen{ false };
+    static std::atomic<bool> detectorStopping{ false };
+
+    static std::thread detectorWorker;
+    static std::mutex detectorMutex;
+    static std::condition_variable detectorWake;
+
+    static HWND detectorGameWindow = nullptr;
+
+    static constexpr auto DETECTOR_INTERVAL =
+        std::chrono::milliseconds(50);
 
     // loads the index once, then matches whatever frame Tick hands over
     static void workerLoop(std::filesystem::path dataFolder) {
@@ -131,7 +146,9 @@ namespace MapTracking {
     void Start(const std::filesystem::path& dataFolder) {
         if (worker.joinable()) return;
         stopping = false;
+        detectorStopping = false;
         worker = std::thread(workerLoop, dataFolder);
+		detectorWorker = std::thread(zoombarDetectorLoop);  
     }
 
     void Stop() {
@@ -139,8 +156,17 @@ namespace MapTracking {
             std::lock_guard<std::mutex> lock(mutex);
             stopping = true;
         }
+
+        detectorStopping = true;
+
         wake.notify_all();
-        if (worker.joinable()) worker.join();
+        detectorWake.notify_all();
+
+        if (detectorWorker.joinable())
+            detectorWorker.join();
+
+        if (worker.joinable())
+            worker.join();
     }
 
     // game closed or in the background: forget the map until it's back
@@ -191,6 +217,10 @@ namespace MapTracking {
             hide();
             return;
         }
+
+		std::cout << mapOpen.load(std::memory_order_acquire) << std::endl;
+        if (!mapOpen.load(std::memory_order_acquire))
+            return;
 
         // every frame, a quick tap would slip between two screenshots
         checkMapKeys();
@@ -258,6 +288,179 @@ namespace MapTracking {
         case 7: return "Enkanomiya";
         case 9: return "The Chasm: Underground Mines";
         default: return "Other map";
+        }
+    }
+
+    bool getZoomBarRect(HWND game, RECT& out)
+    {
+        RECT client;
+        if (!Capture::getClientRectOnScreen(game, client))
+            return false;
+
+        int w = client.right - client.left;
+        int h = client.bottom - client.top;
+
+        double scale = h / 1125.0;
+
+        out.left = client.left;
+        out.top = client.top + (LONG)(430 * scale);
+        out.right = client.left + (LONG)(90 * scale);
+        out.bottom = client.top + (LONG)(690 * scale);
+
+        return out.right > out.left && out.bottom > out.top;
+    }
+
+    bool detectZoomBar(const cv::Mat& image)
+    {
+        if (image.empty())
+            return false;
+
+        cv::Mat gray;
+
+        if (image.channels() == 4)
+            cv::cvtColor(image, gray, cv::COLOR_BGRA2GRAY);
+        else if (image.channels() == 3)
+            cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+        else
+            gray = image;
+        cv::Mat bright;
+        cv::threshold(gray, bright, 170, 255, cv::THRESH_BINARY);
+
+        cv::morphologyEx(
+            bright,
+            bright,
+            cv::MORPH_OPEN,
+            cv::getStructuringElement(cv::MORPH_RECT, cv::Size(2, 2))
+        );
+
+        std::vector<std::vector<cv::Point>> contours;
+
+        cv::findContours(
+            bright,
+            contours,
+            cv::RETR_EXTERNAL,
+            cv::CHAIN_APPROX_SIMPLE
+        );
+
+        std::vector<Diamond> diamonds;
+
+        for (const auto& contour : contours)
+        {
+            double area = cv::contourArea(contour);
+
+            if (area < 600.0 || area > 2500.0)
+                continue;
+
+            cv::RotatedRect rect = cv::minAreaRect(contour);
+
+            float w = rect.size.width;
+            float h = rect.size.height;
+
+            if (w <= 0.0f || h <= 0.0f)
+                continue;
+
+            float ratio = std::max(w, h) / std::min(w, h);
+
+            if (ratio > 1.35f)
+                continue;
+
+            if (w < 20.0f || w > 70.0f ||
+                h < 20.0f || h > 70.0f)
+                continue;
+
+            diamonds.push_back({
+                rect.center,
+                w,
+                h,
+                rect
+                });
+        }
+
+        if (diamonds.size() < 2)
+            return false;
+
+        for (size_t i = 0; i < diamonds.size(); ++i)
+        {
+            for (size_t j = i + 1; j < diamonds.size(); ++j)
+            {
+                const auto& a = diamonds[i];
+                const auto& b = diamonds[j];
+
+                float dx = std::abs(a.center.x - b.center.x);
+                float dy = std::abs(a.center.y - b.center.y);
+
+                if (dx > std::max(a.width, b.width) * 0.5f)
+                    continue;
+
+                if (dy < std::max(a.height, b.height) * 1.5f)
+                    continue;
+
+                if (dy > std::max(a.height, b.height) * 20.0f)
+                    continue;
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void zoombarDetectorLoop()
+    {
+        bool previousOpen = false;
+
+        while (!detectorStopping) {
+            HWND game = Capture::findGameWindow();
+
+            if (!game || IsIconic(game)) {
+                if (previousOpen) {
+                    previousOpen = false;
+                    mapOpen = false;
+
+                    std::lock_guard<std::mutex> lock(mutex);
+                    view.visible = false;
+                    resetTracker = true;
+                    misses = 0;
+                }
+
+                std::this_thread::sleep_for(DETECTOR_INTERVAL);
+                continue;
+            }
+
+            RECT zoomRect;
+
+            if (!getZoomBarRect(game, zoomRect)) {
+                std::this_thread::sleep_for(DETECTOR_INTERVAL);
+                continue;
+            }
+
+            cv::Mat zoomScreenshot;
+
+            if (Capture::grabScreen(zoomRect, nullptr, zoomScreenshot)) {
+                bool open = detectZoomBar(zoomScreenshot);
+
+                if (open != previousOpen) {
+                    previousOpen = open;
+                    mapOpen = open;
+
+                    if (open) {
+                        std::lock_guard<std::mutex> lock(mutex);
+
+                        resetTracker = true;
+                        misses = 0;
+                        lastCapture = {};
+                    }
+                    else {
+                        std::lock_guard<std::mutex> lock(mutex);
+
+                        view.visible = false;
+                        resetTracker = true;
+                        misses = 0;
+                    }
+                }
+            }
+
+            std::this_thread::sleep_for(DETECTOR_INTERVAL);
         }
     }
 }

@@ -20,6 +20,14 @@ namespace MapTracking {
         double secondsSinceUpdate = 0.0;
     };
 
+    struct Diamond
+    {
+        cv::Point2f center;
+        float width;
+        float height;
+        cv::RotatedRect rect;
+    };
+
     // gets the map data into dataFolder if needed, then loads it, all on a worker thread
     extern void Start(const std::filesystem::path& dataFolder);
     extern void Stop();
@@ -32,4 +40,11 @@ namespace MapTracking {
     // how long the last screenshot took to match
     extern float GetLastStepMs();
     extern const char* GetMapName(int mapId);
+
+    // Separate thread that watches for whether or not the map is open by scanning for zoom bar
+    extern bool getZoomBarRect(HWND game, RECT& out);
+    extern bool detectZoomBar(const cv::Mat& image);
+    extern void zoombarDetectorLoop();
+
+
 }
