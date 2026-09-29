@@ -174,6 +174,8 @@ namespace MapTracking {
 
         if (worker.joinable())
             worker.join();
+
+        Capture::closeGameCapture();
     }
 
     // game closed or in the background: forget the map until it's back
@@ -255,7 +257,7 @@ namespace MapTracking {
 
         cv::Mat screenshot;
         lastCapture = now;
-        if (!Capture::grabScreen(rect, overlayWindow, screenshot)) return;
+        if (!Capture::grabGame(game, rect, screenshot)) return;
 
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -405,7 +407,7 @@ namespace MapTracking {
 
             cv::Mat zoomScreenshot;
 
-            if (Capture::grabScreen(detectorRectCache, nullptr, zoomScreenshot)) {
+            if (Capture::grabGame(detectorGameWindowCache, detectorRectCache, zoomScreenshot)) {
                 bool open = detectZoomBar(zoomScreenshot);
                 if (open != previousOpen) {
                     previousOpen = open;
