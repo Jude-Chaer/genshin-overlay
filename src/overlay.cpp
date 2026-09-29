@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <dwmapi.h>
 #include "overlay.hpp"
 #include "keybindings.hpp"
 #include "extensions.hpp"
@@ -61,7 +62,9 @@ namespace Overlay {
         glfwShowWindow(Overlay::Window);
 
         glfwMakeContextCurrent(Overlay::Window);
-        glfwSwapInterval(1);
+        // No vsync from the driver, its wait for the screen spun a whole core
+        // the entire time we draw. DwmFlush after each frame waits instead.
+        glfwSwapInterval(0);
 
         if (glewInit() != GLEW_OK) {
             std::cerr << "Failed to initialize GLEW" << std::endl;
@@ -432,12 +435,30 @@ namespace Overlay {
     }
 
     void MainLoop() {
+        bool drewLastFrame = true;
         while (!glfwWindowShouldClose(Overlay::Window)) {
             glfwPollEvents();
             Keybindings::ProcessKeybindings();
             keepOnTop(false);
             // sends the tracker a new screenshot when it's ready for one
             MapTracking::Tick(glfwGetWin32Window(Overlay::Window));
+            Stats::Update();
+
+            // map and menu closed: nothing to show, so don't draw at all
+            bool showing = Overlay::menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;
+            if (!showing) {
+                updateClickThrough();
+                if (drewLastFrame) {
+                    // an empty frame so the last one doesn't stay on screen
+                    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                    glfwSwapBuffers(Overlay::Window);
+                    drewLastFrame = false;
+                }
+                glfwWaitEventsTimeout(0.05);
+                continue;
+            }
+            drewLastFrame = true;
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
@@ -447,7 +468,6 @@ namespace Overlay {
 
             Extensions::frameUpdateExtensions();
             DrawStartupHint();
-            Stats::Update();
             if (Overlay::menuOpen) {
                 DrawMenu();
             }
@@ -463,6 +483,8 @@ namespace Overlay {
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             glfwSwapBuffers(Overlay::Window);
+            // sleeps until Windows put the frame on screen, once per refresh
+            DwmFlush();
             MapTiles::EndFrame();
         }
     }
