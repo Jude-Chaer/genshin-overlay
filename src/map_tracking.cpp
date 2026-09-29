@@ -456,6 +456,8 @@ namespace MapTracking {
                         view.visible = false;
                         resetTracker = true;
                         misses = 0;
+                        // a match still running would bring the view back
+                        ignoreUntil = std::chrono::steady_clock::now();
                     }
                 }
             }
