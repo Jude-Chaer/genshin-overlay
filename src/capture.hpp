@@ -12,4 +12,5 @@ namespace Capture {
     // Safe to call from several threads, they share one capture.
     extern bool grabGame(HWND game, const RECT& rect, cv::Mat& out);
     extern void closeGameCapture();
+    extern bool isCapturing();
 }

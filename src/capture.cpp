@@ -1,4 +1,5 @@
 #include "capture.hpp"
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <mutex>
@@ -54,6 +55,7 @@ namespace Capture {
     static winrt::Windows::Graphics::SizeInt32 latestSize{};
     static ComPtr<ID3D11Texture2D> staging;
     static std::chrono::steady_clock::time_point retryAt;
+    static std::atomic<bool> capturing{ false };
 
     static void closeSession() {
         try {
@@ -66,6 +68,7 @@ namespace Capture {
         item = nullptr;
         latest.Reset();
         capturedWindow = nullptr;
+        capturing = false;
     }
 
     static bool createDevice() {
@@ -102,6 +105,7 @@ namespace Capture {
             try { session.IsBorderRequired(false); } catch (...) {}
             session.StartCapture();
             capturedWindow = game;
+            capturing = true;
             return true;
         }
         catch (...) {
@@ -213,6 +217,10 @@ namespace Capture {
             closeSession();
             return false;
         }
+    }
+
+    bool isCapturing() {
+        return capturing;
     }
 
     void closeGameCapture() {
