@@ -186,6 +186,8 @@ namespace Overlay {
             break;
         }
 
+        ImGui::TextDisabled(Capture::isCapturing() ? "Capture: WGC" : "Capture: not working");
+
         MapTracking::MapView view = MapTracking::GetView();
         if (!view.visible) {
             ImGui::Text("Waiting for the in-game map (M)");
