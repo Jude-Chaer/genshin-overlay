@@ -7,7 +7,9 @@ namespace Capture {
     extern HWND findGameWindow();
     extern bool getClientRectOnScreen(HWND window, RECT& out);
 
-    // Screenshot of a part of the screen as BGR. exclude is hidden from the
-    // screenshot only (our own overlay), the user still sees it.
-    extern bool grabScreen(const RECT& rect, HWND exclude, cv::Mat& out);
+    // Part of the game window as BGR, rect in screen coords. Uses Windows Graphics
+    // Capture, which sees only the game, so nothing on top of it gets in.
+    // Safe to call from several threads, they share one capture.
+    extern bool grabGame(HWND game, const RECT& rect, cv::Mat& out);
+    extern void closeGameCapture();
 }
