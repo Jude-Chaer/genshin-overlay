@@ -69,7 +69,13 @@ namespace MapTracking {
     static std::mutex detectorMutex;
     static std::condition_variable detectorWake;
 
-    static HWND detectorGameWindow = nullptr;
+    static HWND detectorGameWindowCache;
+    static RECT detectorRectCache;
+    static std::once_flag zoomTemplateOnce;
+    static cv::Mat zoomTemplate;
+
+
+  
 
     static constexpr auto DETECTOR_INTERVAL =
         std::chrono::milliseconds(50);
@@ -218,7 +224,6 @@ namespace MapTracking {
             return;
         }
 
-		std::cout << mapOpen.load(std::memory_order_acquire) << std::endl;
         if (!mapOpen.load(std::memory_order_acquire))
             return;
 
@@ -302,17 +307,31 @@ namespace MapTracking {
 
         double scale = h / 1125.0;
 
-        out.left = client.left;
-        out.top = client.top + (LONG)(430 * scale);
-        out.right = client.left + (LONG)(90 * scale);
-        out.bottom = client.top + (LONG)(690 * scale);
+        out.left = client.left + (LONG)(37.5 * scale);
+        out.top = client.top + (LONG)(450 * scale);
+        out.right = client.left + (LONG)(62.5 * scale);
+        out.bottom = client.top + (LONG)(475 * scale);
 
         return out.right > out.left && out.bottom > out.top;
     }
 
+    void loadZoomTemplate()
+    {
+        zoomTemplate = cv::imread(
+            "zoombar_template.png",
+            cv::IMREAD_GRAYSCALE
+        );
+        std::cout << zoomTemplate << std::endl;
+        if (zoomTemplate.empty()) {
+            std::cerr << "Failed to load zoombar_template.png\n";
+        }
+	}
+
     bool detectZoomBar(const cv::Mat& image)
     {
-        if (image.empty())
+        std::call_once(zoomTemplateOnce, loadZoomTemplate);
+
+        if (image.empty() || zoomTemplate.empty())
             return false;
 
         cv::Mat gray;
@@ -323,96 +342,37 @@ namespace MapTracking {
             cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
         else
             gray = image;
-        cv::Mat bright;
-        cv::threshold(gray, bright, 170, 255, cv::THRESH_BINARY);
 
-        cv::morphologyEx(
-            bright,
-            bright,
-            cv::MORPH_OPEN,
-            cv::getStructuringElement(cv::MORPH_RECT, cv::Size(2, 2))
-        );
-
-        std::vector<std::vector<cv::Point>> contours;
-
-        cv::findContours(
-            bright,
-            contours,
-            cv::RETR_EXTERNAL,
-            cv::CHAIN_APPROX_SIMPLE
-        );
-
-        std::vector<Diamond> diamonds;
-
-        for (const auto& contour : contours)
-        {
-            double area = cv::contourArea(contour);
-
-            if (area < 600.0 || area > 2500.0)
-                continue;
-
-            cv::RotatedRect rect = cv::minAreaRect(contour);
-
-            float w = rect.size.width;
-            float h = rect.size.height;
-
-            if (w <= 0.0f || h <= 0.0f)
-                continue;
-
-            float ratio = std::max(w, h) / std::min(w, h);
-
-            if (ratio > 1.35f)
-                continue;
-
-            if (w < 20.0f || w > 70.0f ||
-                h < 20.0f || h > 70.0f)
-                continue;
-
-            diamonds.push_back({
-                rect.center,
-                w,
-                h,
-                rect
-                });
-        }
-
-        if (diamonds.size() < 2)
+        if (gray.cols < zoomTemplate.cols ||
+            gray.rows < zoomTemplate.rows)
             return false;
 
-        for (size_t i = 0; i < diamonds.size(); ++i)
-        {
-            for (size_t j = i + 1; j < diamonds.size(); ++j)
-            {
-                const auto& a = diamonds[i];
-                const auto& b = diamonds[j];
+        cv::Mat result;
 
-                float dx = std::abs(a.center.x - b.center.x);
-                float dy = std::abs(a.center.y - b.center.y);
+        cv::matchTemplate(
+            gray,
+            zoomTemplate,
+            result,
+            cv::TM_CCOEFF_NORMED
+        );
 
-                if (dx > std::max(a.width, b.width) * 0.5f)
-                    continue;
+        double maxVal;
+        cv::minMaxLoc(result, nullptr, &maxVal, nullptr, nullptr);
 
-                if (dy < std::max(a.height, b.height) * 1.5f)
-                    continue;
-
-                if (dy > std::max(a.height, b.height) * 20.0f)
-                    continue;
-
-                return true;
-            }
-        }
-
-        return false;
+        constexpr double kMatchThreshold = 0.60;
+		std::cout << "Zoom bar match value: " << maxVal << std::endl;
+        return maxVal >= kMatchThreshold;
     }
+
 
     void zoombarDetectorLoop()
     {
         bool previousOpen = false;
+        getZoomBarRect(Capture::findGameWindow(), detectorRectCache);
 
         while (!detectorStopping) {
-            HWND game = Capture::findGameWindow();
 
-            if (!game || IsIconic(game)) {
+            if (IsIconic(Capture::findGameWindow())) {
                 if (previousOpen) {
                     previousOpen = false;
                     mapOpen = false;
@@ -427,22 +387,14 @@ namespace MapTracking {
                 continue;
             }
 
-            RECT zoomRect;
-
-            if (!getZoomBarRect(game, zoomRect)) {
-                std::this_thread::sleep_for(DETECTOR_INTERVAL);
-                continue;
-            }
-
             cv::Mat zoomScreenshot;
 
-            if (Capture::grabScreen(zoomRect, nullptr, zoomScreenshot)) {
+            if (Capture::grabScreen(detectorRectCache, nullptr, zoomScreenshot)) {
                 bool open = detectZoomBar(zoomScreenshot);
-
                 if (open != previousOpen) {
                     previousOpen = open;
                     mapOpen = open;
-
+                    std::cout << "3" << std::endl;
                     if (open) {
                         std::lock_guard<std::mutex> lock(mutex);
 

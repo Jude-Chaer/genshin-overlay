@@ -44,6 +44,7 @@ namespace MapTracking {
     // Separate thread that watches for whether or not the map is open by scanning for zoom bar
     extern bool getZoomBarRect(HWND game, RECT& out);
     extern bool detectZoomBar(const cv::Mat& image);
+	extern void loadZoomTemplate();
     extern void zoombarDetectorLoop();
 
 
