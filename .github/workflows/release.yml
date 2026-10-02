@@ -1,6 +1,8 @@
 # Builds the app and publishes a release with a zip of it.
 # Push a tag like v0.1.0, or run it from the Actions tab and type the version.
 # The map data isn't in the zip, the app downloads it on first start.
+# A version with a dash in it, like v0.2.0-beta.1, is published as a pre-release
+# with BETA.md as its notes.
 
 name: Release
 
@@ -11,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, like v0.1.0"
+        description: "Version to release, like v0.1.0 or v0.2.0-beta.1"
         required: true
 
 permissions:
@@ -51,10 +53,15 @@ jobs:
           Copy-Item build\Release\genshin-overlay.exe $folder
           Copy-Item -Recurse extensions $folder
           Copy-Item README.md $folder
+          # the zoom bar detector looks for it next to the exe
+          Copy-Item zoombar_template.png $folder
+          $beta = $version -like "*-*"
+          if ($beta) { Copy-Item BETA.md $folder }
           $zip = "genshin-overlay-$version.zip"
           Compress-Archive -Path $folder -DestinationPath $zip
           "version=$version" >> $env:GITHUB_OUTPUT
           "zip=$zip" >> $env:GITHUB_OUTPUT
+          "beta=$beta" >> $env:GITHUB_OUTPUT
 
       - name: Publish
         shell: pwsh
@@ -62,4 +69,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $notes = "Unzip anywhere and run genshin-overlay.exe. Press Alt+`` ` `` in game for the menu. On the first start it downloads the map data (about 26 MB)."
-          gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes $notes --target "${{ github.sha }}"
+          if ("${{ steps.package.outputs.beta }}" -eq "True") {
+            gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes-file BETA.md --prerelease --target "${{ github.sha }}"
+          }
+          else {
+            gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes $notes --target "${{ github.sha }}"
+          }
