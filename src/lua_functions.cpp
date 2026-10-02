@@ -35,6 +35,8 @@ namespace LuaFunctions {
         luaState.set_function("DrawImage", DrawImage);
         luaState.set_function("PushClipRect", PushClipRect);
         luaState.set_function("PopClipRect", PopClipRect);
+        luaState.set_function("Net_Get", NetGet);
+        luaState.set_function("Net_Post", NetPost);
         luaState["KeybindFlags"] = luaState.create_table_with(
             "None", Keybindings::KeybindFlags_None,
             "ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -160,6 +162,36 @@ namespace LuaFunctions {
         int width = 0, height = 0;
         GLuint tex = Helpers::loadTextureFromFile(path, width, height);
         return { tex, width, height };
+    }
+
+    sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab)
+    {
+        sol::state_view lua(state);
+        Net::Response response;
+
+        if (!Net::get(url, response, hoyolab.value_or(false)))
+            return sol::nil;
+
+        sol::table result = lua.create_table();
+        result["status"] = response.status;
+        result["body"] = response.body;
+
+        return result;
+    }
+
+    sol::object NetPost(const std::string& url,const std::string& data,sol::this_state state,sol::optional<bool> hoyolab)
+    {
+        sol::state_view lua(state);
+        Net::Response response;
+
+        if (!Net::post(url, data, response, hoyolab.value_or(false)))
+            return sol::nil;
+
+        sol::table result = lua.create_table();
+        result["status"] = response.status;
+        result["body"] = response.body;
+
+        return result;
     }
 
     // Where the in-game map is looking, or nil when it isn't open. Positions are

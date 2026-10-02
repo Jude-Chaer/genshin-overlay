@@ -4,6 +4,7 @@
 #include <string>
 #include <tuple>
 #include "keybindings.hpp"
+#include "net.hpp"
 
 namespace LuaFunctions {
     void registerLuaFunctions(sol::state& luaState);
@@ -17,7 +18,6 @@ namespace LuaFunctions {
     void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue);
     sol::object GetExtensionSetting(const std::string& id, sol::this_state state);
     std::tuple<GLuint, int, int> LoadTextureFromFileLua(const std::string& path);
-
     sol::object GetMapView(sol::this_state state);
     sol::object GetMapGrid(int mapId, sol::this_state state);
     GLuint GetMapTile(int mapId, int x, int y, int size);
@@ -25,4 +25,6 @@ namespace LuaFunctions {
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     void PushClipRect(float x0, float y0, float x1, float y1);
     void PopClipRect();
+    sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab);
+	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab);
 }
