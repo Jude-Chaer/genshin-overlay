@@ -35,19 +35,44 @@ namespace Settings {
         findSmallFirst = settings.value("findSmallFirst", true);
     }
 
-    void Save() {
-        nlohmann::json settings = {
-            { "runAsAdmin", runAsAdmin },
-            { "lineUpWithMap", lineUpWithMap },
-            { "ignoreSea", ignoreSea },
-            { "steadyZoom", steadyZoom },
-            { "guessAhead", guessAhead },
-            { "lookAgainStill", lookAgainStill },
-            { "followOnThread", followOnThread },
-            { "shrinkOnGpu", shrinkOnGpu },
-            { "findSmallFirst", findSmallFirst },
-        };
+    static nlohmann::json read() {
+        std::ifstream file(settingsPath());
+        if (!file) return nlohmann::json::object();
+        nlohmann::json settings = nlohmann::json::parse(file, nullptr, false);
+        if (settings.is_discarded() || !settings.is_object()) return nlohmann::json::object();
+        return settings;
+    }
+
+    static void write(const nlohmann::json& settings) {
         std::ofstream file(settingsPath(), std::ios::trunc);
         file << settings.dump(2);
+    }
+
+    // extension settings are in the same file, don't wipe them
+    void Save() {
+        nlohmann::json settings = read();
+        settings["runAsAdmin"] = runAsAdmin;
+        settings["lineUpWithMap"] = lineUpWithMap;
+        settings["ignoreSea"] = ignoreSea;
+        settings["steadyZoom"] = steadyZoom;
+        settings["guessAhead"] = guessAhead;
+        settings["lookAgainStill"] = lookAgainStill;
+        settings["followOnThread"] = followOnThread;
+        settings["shrinkOnGpu"] = shrinkOnGpu;
+        settings["findSmallFirst"] = findSmallFirst;
+        write(settings);
+    }
+
+    nlohmann::json LoadExtensions() {
+        nlohmann::json settings = read();
+        auto it = settings.find("extensions");
+        if (it == settings.end() || !it->is_object()) return nlohmann::json::object();
+        return *it;
+    }
+
+    void SaveExtensions(const nlohmann::json& extensions) {
+        nlohmann::json settings = read();
+        settings["extensions"] = extensions;
+        write(settings);
     }
 }

@@ -14,7 +14,8 @@ namespace LuaFunctions {
     bool IsProgramHidden();
     void RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers);
     void DeleteKeybind(int glfwKey);
-    void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue);
+    void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue,
+        sol::optional<float> min, sol::optional<float> max);
     sol::object GetExtensionSetting(const std::string& id, sol::this_state state);
     std::tuple<GLuint, int, int> LoadTextureFromFileLua(const std::string& path);
 

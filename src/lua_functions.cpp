@@ -103,7 +103,9 @@ namespace LuaFunctions {
     void DefineExtensionSetting(const std::string& id,
         const std::string& label,
         const std::string& type,
-        sol::object defaultValue)
+        sol::object defaultValue,
+        sol::optional<float> min,
+        sol::optional<float> max)
     {
         auto extPtr = Extensions::currentExtension;
         if (!extPtr) {
@@ -139,6 +141,10 @@ namespace LuaFunctions {
             return;
         }
 
+        if (min && max) {
+            s.min = *min;
+            s.max = *max;
+        }
         s.value = s.defaultValue;
         extPtr->settings[id] = s;
         extPtr->settingsOrder.push_back(id);

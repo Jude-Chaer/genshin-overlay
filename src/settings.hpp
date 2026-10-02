@@ -1,4 +1,5 @@
 #pragma once
+#include <nlohmann/json.hpp>
 
 // The app's own settings, saved in settings.json next to the exe.
 
@@ -27,4 +28,8 @@ namespace Settings {
 
     extern void Load();
     extern void Save();
+
+    // extension settings live in the same file, under "extensions"
+    extern nlohmann::json LoadExtensions();
+    extern void SaveExtensions(const nlohmann::json& extensions);
 }
