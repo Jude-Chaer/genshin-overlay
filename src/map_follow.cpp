@@ -331,6 +331,8 @@ namespace MapFollow {
     // GLIDE seconds. Bigger ones jump, sliding in they'd look like the map moving.
     static constexpr double GLIDE_MAX = 0.03;
     static constexpr double GLIDE = 0.2;
+    // share of each tile check's fix that is taken, they come every frame and are a bit noisy
+    static constexpr double CHECK_PART = 0.25;
 
     // how much the patches of two frames differ, in gray levels
     static double differ(const Patches& a, const Patches& b) {
@@ -524,6 +526,22 @@ namespace MapFollow {
         fix(m_keyView);
         fix(m_rest);
         return true;
+    }
+
+    void Follower::Checked(int id, const MapLocator::Result& result) {
+        // standing still SIFT lands it, fixing it every frame just shakes it
+        if (!m_anchored || !m_moving) return;
+        // SIFT may have found another floor or map since that frame, the
+        // check would put the old one back
+        if (result.mapId != m_view.mapId || result.groupId != m_view.groupId) return;
+        auto at = std::find_if(m_past.begin(), m_past.end(), [&](const Past& past) { return past.id == id; });
+        if (at == m_past.end()) return;
+        const MapLocator::Result& was = at->view;
+        MapLocator::Result part = result;
+        part.lng = was.lng + (result.lng - was.lng) * CHECK_PART;
+        part.lat = was.lat + (result.lat - was.lat) * CHECK_PART;
+        part.unitsPerPixel = was.unitsPerPixel * std::pow(result.unitsPerPixel / was.unitsPerPixel, CHECK_PART);
+        fixFrom(id, part);
     }
 
     void Follower::Matched(int id, const MapLocator::Result& result, double seconds) {

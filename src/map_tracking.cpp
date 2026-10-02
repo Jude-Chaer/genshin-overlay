@@ -2,6 +2,7 @@
 #include "capture.hpp"
 #include "map_data.hpp"
 #include "map_follow.hpp"
+#include "map_check.hpp"
 #include "settings.hpp"
 #include "helpers.hpp"
 #include <atomic>
@@ -14,15 +15,16 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 
-// How it fits together. Three threads:
+// How it fits together. Four threads:
 //   zoom bar detector  says if the in-game map is open
 //   follow thread      while it's open, wakes up for every frame the game
 //                      draws, grabs a few patches of it and compares them
 //                      (MapFollow), which moves the view
 //   worker             SIFT, slow. Finds the map, finds it again when the
 //                      compare lost it, and lands it exactly once it stops.
-// SIFT answers for the frame it was given. The follower knows how the map
-// moved since, so its answer fixes the view without waiting.
+//   tile check         MapCheck, keeps the view lined up while it moves
+// SIFT and the tile check answer for the frame they were given. The follower
+// knows how the map moved since, so their answers fix the view without waiting.
 // The draw loop only reads the view, through GetView.
 //
 // Closing the map is noticed two ways. Pressing M or Esc hides the view right
@@ -169,8 +171,9 @@ namespace MapTracking {
         answered.notify_all();
     }
 
-    // One step of following: takes back SIFT's answer, grabs the newest frame
-    // for the follower, and hands SIFT a whole grab when the follower wants one.
+    // One step of following: takes back SIFT's and the tile check's answers,
+    // grabs the newest frame for the follower, and hands SIFT a whole grab
+    // when the follower wants one.
     static void follow(HWND game, const RECT& rect, std::chrono::steady_clock::time_point now) {
         std::unique_lock<std::mutex> lock(mutex);
         if (resetTracker) {
@@ -189,6 +192,9 @@ namespace MapTracking {
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
             follower.Matched(sentId, match, seconds);
         }
+        int checkedId = 0;
+        MapLocator::Result checked;
+        if (MapCheck::Take(checkedId, checked) && Settings::lineUpWithMap) follower.Checked(checkedId, checked);
 
         bool settle = canSend && follower.WantsSettle(seconds);
         bool look = canSend && !settle && follower.WantsLook(seconds);
@@ -210,6 +216,9 @@ namespace MapTracking {
             int frames = lastGameFrame.number ? (int)std::min<uint64_t>(gameFrame.number - lastGameFrame.number, 100) : 1;
             lastGameFrame = gameFrame;
             follower.Frame(++frameId, patches, wide, rect, gameFrame.seconds, frames);
+            if (follower.Visible() && Settings::lineUpWithMap) {
+                MapCheck::Check(frameId, patches, rect, follower.View());
+            }
         }
 
         if (settle || look) {

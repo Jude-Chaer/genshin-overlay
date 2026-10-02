@@ -8,6 +8,8 @@ namespace Settings {
     extern bool runAsAdmin;
 
     // Switches for parts of the map following, in the menu under Advanced.
+    // the map's tiles keep the follower lined up while the map moves
+    extern bool lineUpWithMap;
     // patches that only see open water don't count when following
     extern bool ignoreSea;
     // the map is drawn where it will be when the picture shows up, not where it was seen

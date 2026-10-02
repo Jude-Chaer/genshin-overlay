@@ -5,6 +5,7 @@
 
 namespace Settings {
     bool runAsAdmin = false;
+    bool lineUpWithMap = true;
     bool ignoreSea = true;
     bool steadyZoom = true;
     bool guessAhead = true;
@@ -23,6 +24,7 @@ namespace Settings {
         nlohmann::json settings = nlohmann::json::parse(file, nullptr, false);
         if (settings.is_discarded()) return;
         runAsAdmin = settings.value("runAsAdmin", false);
+        lineUpWithMap = settings.value("lineUpWithMap", true);
         ignoreSea = settings.value("ignoreSea", true);
         steadyZoom = settings.value("steadyZoom", true);
         guessAhead = settings.value("guessAhead", true);
@@ -34,6 +36,7 @@ namespace Settings {
     void Save() {
         nlohmann::json settings = {
             { "runAsAdmin", runAsAdmin },
+            { "lineUpWithMap", lineUpWithMap },
             { "ignoreSea", ignoreSea },
             { "steadyZoom", steadyZoom },
             { "guessAhead", guessAhead },

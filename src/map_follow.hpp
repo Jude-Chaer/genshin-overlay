@@ -58,8 +58,8 @@ namespace MapFollow {
     extern MapLocator::Result moveView(const MapLocator::Result& view, const Motion& motion);
 
     // Keeps where the map is. Frame moves the view by what the compare saw.
-    // SIFT answers later and for an older frame: the view was off by that much
-    // on that frame, so every view since is shifted the same.
+    // SIFT and the tile check answer later and for an older frame: the view was
+    // off by that much on that frame, so every view since is shifted the same.
     //
     // Not thread safe. MapTracking uses one on the follow thread and hands a
     // copy to the draw loop.
@@ -67,12 +67,15 @@ namespace MapFollow {
     public:
         void Reset();
 
-        // Call for every new frame of the game, in order. Matched names the
-        // frame by id. Seconds is when the game drew it, frames how many it
-        // drew since the last call.
+        // Call for every new frame of the game, in order. Matched and Checked
+        // name the frame by id. Seconds is when the game drew it, frames how
+        // many it drew since the last call.
         void Frame(int id, const Patches& patches, const cv::Mat& wide, const RECT& game, double seconds, int frames = 1);
         // SIFT found the map on that frame. Seconds is now.
         void Matched(int id, const MapLocator::Result& result, double seconds);
+        // The tile check says where the map was on that frame. Only part of
+        // the way is taken, see CHECK_PART.
+        void Checked(int id, const MapLocator::Result& result);
 
         // SIFT found the map and the compare has followed it since
         bool Visible() const { return m_anchored; }

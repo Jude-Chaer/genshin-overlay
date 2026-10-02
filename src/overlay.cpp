@@ -405,6 +405,13 @@ namespace Overlay {
                 ImGui::TextDisabled("How the map is followed while it moves");
 
                 if (ImGui::Checkbox(
+                    "Line up with the map tiles",
+                    &Settings::lineUpWithMap
+                )) {
+                    Settings::Save();
+                }
+
+                if (ImGui::Checkbox(
                     "Ignore open water",
                     &Settings::ignoreSea
                 )) {

@@ -96,6 +96,7 @@
     <ClCompile Include="src\locator\map_locator.cpp" />
     <ClCompile Include="src\lua_functions.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\map_check.cpp" />
     <ClCompile Include="src\map_data.cpp" />
     <ClCompile Include="src\map_follow.cpp" />
     <ClCompile Include="src\map_tiles.cpp" />
@@ -112,6 +113,7 @@
     <ClInclude Include="src\keybindings.hpp" />
     <ClInclude Include="src\locator\map_locator.hpp" />
     <ClInclude Include="src\lua_functions.hpp" />
+    <ClInclude Include="src\map_check.hpp" />
     <ClInclude Include="src\map_data.hpp" />
     <ClInclude Include="src\map_follow.hpp" />
     <ClInclude Include="src\map_tiles.hpp" />
