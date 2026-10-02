@@ -54,6 +54,14 @@ namespace Capture {
     static winrt::Windows::Graphics::SizeInt32 poolSize{};
     static HWND capturedWindow = nullptr;
     static ComPtr<ID3D11Texture2D> latest;
+    // While light, latest is the frame Windows handed over, held until the
+    // next one comes. Otherwise it's our own copy (33 MB at 4K) and
+    // latestIsOurs is set.
+    static bool light = true;
+    static wgc::Direct3D11CaptureFrame held{ nullptr };
+    static bool latestIsOurs = false;
+    // how often Windows hands over a frame while light
+    static constexpr auto LIGHT_EVERY = std::chrono::milliseconds(50);
     static winrt::Windows::Graphics::SizeInt32 latestSize{};
     static ComPtr<ID3D11Texture2D> staging;
     // the whole game and its halves (mip levels), made on the GPU
@@ -75,6 +83,7 @@ namespace Capture {
 
     static void closeSession() {
         try {
+            if (held) held.Close();
             if (session) session.Close();
             if (pool) pool.Close();
         }
@@ -82,7 +91,9 @@ namespace Capture {
         session = nullptr;
         pool = nullptr;
         item = nullptr;
+        held = nullptr;
         latest.Reset();
+        latestIsOurs = false;
         capturedWindow = nullptr;
         capturing = false;
     }
@@ -106,6 +117,11 @@ namespace Capture {
         return true;
     }
 
+    // missing before Windows 11 24H2, frames then come as the game draws them
+    static void setFrameRate() {
+        try { session.MinUpdateInterval(light ? LIGHT_EVERY : std::chrono::milliseconds(1)); } catch (...) {}
+    }
+
     static bool openSession(HWND game) {
         try {
             if (!device && !createDevice()) return false;
@@ -120,6 +136,7 @@ namespace Capture {
             // both are missing on older Windows 10
             try { session.IsCursorCaptureEnabled(false); } catch (...) {}
             try { session.IsBorderRequired(false); } catch (...) {}
+            setFrameRate();
             session.StartCapture();
             capturedWindow = game;
             capturing = true;
@@ -147,26 +164,43 @@ namespace Capture {
         ComPtr<ID3D11Texture2D> texture;
         winrt::check_hresult(access->GetInterface(IID_PPV_ARGS(&texture)));
 
-        D3D11_TEXTURE2D_DESC desc = {};
-        texture->GetDesc(&desc);
-        D3D11_TEXTURE2D_DESC have = {};
-        if (latest) latest->GetDesc(&have);
-        if (!latest || have.Width != desc.Width || have.Height != desc.Height) {
-            desc.Usage = D3D11_USAGE_DEFAULT;
-            desc.BindFlags = 0;
-            desc.CPUAccessFlags = 0;
-            desc.MiscFlags = 0;
-            latest.Reset();
-            winrt::check_hresult(device->CreateTexture2D(&desc, nullptr, &latest));
-        }
-        context->CopyResource(latest.Get(), texture.Get());
-        latestSize = size;
+        if (!latestIsOurs) latest.Reset();
+        if (held) held.Close();
+        held = nullptr;
         // same clock as steady_clock, both count from the performance counter
         latestSeconds = std::chrono::duration<double>(frame.SystemRelativeTime()).count();
-        frame.Close();
+        latestSize = size;
+        if (light) {
+            latest = texture;
+            latestIsOurs = false;
+            held = frame;
+        }
+        else {
+            D3D11_TEXTURE2D_DESC desc = {};
+            texture->GetDesc(&desc);
+            D3D11_TEXTURE2D_DESC have = {};
+            if (latest) latest->GetDesc(&have);
+            if (!latest || have.Width != desc.Width || have.Height != desc.Height) {
+                desc.Usage = D3D11_USAGE_DEFAULT;
+                desc.BindFlags = 0;
+                desc.CPUAccessFlags = 0;
+                desc.MiscFlags = 0;
+                latest.Reset();
+                winrt::check_hresult(device->CreateTexture2D(&desc, nullptr, &latest));
+                latestIsOurs = true;
+            }
+            context->CopyResource(latest.Get(), texture.Get());
+            frame.Close();
+        }
 
         // the window was resized, the next frames come at the new size
         if (size.Width != poolSize.Width || size.Height != poolSize.Height) {
+            // a held frame is of the old size, the next grab has a new one
+            if (held) {
+                latest.Reset();
+                held.Close();
+                held = nullptr;
+            }
             poolSize = size;
             pool.Recreate(captureDevice, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
         }
@@ -485,6 +519,24 @@ namespace Capture {
 
     bool isCapturing() {
         return capturing;
+    }
+
+    void setLight(bool on) {
+        std::lock_guard<std::mutex> lock(gameMutex);
+        if (light == on) return;
+        light = on;
+        if (session) setFrameRate();
+        if (!light) return;
+        // nothing of the map is needed until it opens again
+        if (latestIsOurs) latest.Reset();
+        latestIsOurs = false;
+        staging.Reset();
+        smallStaging.Reset();
+        halvesView.Reset();
+        halves.Reset();
+        allStaging.Reset();
+        partHalvesView.Reset();
+        partHalves.Reset();
     }
 
     void waitForGameFrame(int milliseconds) {

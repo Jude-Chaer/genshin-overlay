@@ -545,6 +545,7 @@ namespace MapTracking {
                 if (previousOpen) {
                     previousOpen = false;
                     mapOpen = false;
+                    Capture::setLight(true);
 
                     std::lock_guard<std::mutex> lock(mutex);
                     view.visible = false;
@@ -561,6 +562,8 @@ namespace MapTracking {
                 if (open != previousOpen) {
                     previousOpen = open;
                     mapOpen = open;
+                    Capture::setLight(!open);
+
                     if (open) {
                         std::lock_guard<std::mutex> lock(mutex);
 

@@ -27,6 +27,10 @@ namespace Capture {
     // one that was grabbed.
     extern bool grabGameGray(HWND game, const std::vector<RECT>& rects, std::vector<cv::Mat>& out, Frame& frame,
         const RECT& whole, int maxWidth, cv::Mat& shrunk, int shrink = 0, int atLeast = 0);
+    // Light is for while the map is closed and only the zoom bar is read:
+    // Windows hands over a frame every 50 ms at most and no copy of the game
+    // is kept. The capture starts out light.
+    extern void setLight(bool light);
     // sleeps until the game hands over a new frame, or that long at most
     extern void waitForGameFrame(int milliseconds);
     extern void closeGameCapture();
