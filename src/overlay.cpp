@@ -401,6 +401,52 @@ namespace Overlay {
                 }
             }
 
+            if (ImGui::CollapsingHeader("Advanced")) {
+                ImGui::TextDisabled("How the map is followed while it moves");
+
+                if (ImGui::Checkbox(
+                    "Ignore open water",
+                    &Settings::ignoreSea
+                )) {
+                    Settings::Save();
+                }
+
+                if (ImGui::Checkbox(
+                    "Draw ahead of the map while it moves",
+                    &Settings::guessAhead
+                )) {
+                    Settings::Save();
+                }
+
+                if (ImGui::Checkbox(
+                    "Don't draw ahead while zooming",
+                    &Settings::steadyZoom
+                )) {
+                    Settings::Save();
+                }
+
+                if (ImGui::Checkbox(
+                    "Look again when a still map changes (floors)",
+                    &Settings::lookAgainStill
+                )) {
+                    Settings::Save();
+                }
+
+                if (ImGui::Checkbox(
+                    "Follow on its own thread",
+                    &Settings::followOnThread
+                )) {
+                    Settings::Save();
+                }
+
+                if (ImGui::Checkbox(
+                    "Shrink the patches on the graphics card",
+                    &Settings::shrinkOnGpu
+                )) {
+                    Settings::Save();
+                }
+            }
+
             break;
 
         case 1:
@@ -455,7 +501,10 @@ namespace Overlay {
                     glfwSwapBuffers(Overlay::Window);
                     drewLastFrame = false;
                 }
-                glfwWaitEventsTimeout(0.05);
+                // The map is open but not found yet: nothing to draw, but the
+                // tracker still has to keep up with the game's frames.
+                if (MapTracking::IsMapOpen()) DwmFlush();
+                else glfwWaitEventsTimeout(0.05);
                 continue;
             }
             drewLastFrame = true;
@@ -483,8 +532,9 @@ namespace Overlay {
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             glfwSwapBuffers(Overlay::Window);
-            // sleeps until Windows put the frame on screen, once per refresh
-            DwmFlush();
+            // sleeps until Windows put the frame on screen, once per refresh,
+            // or until the map's next answer is there
+            MapTracking::WaitForDraw();
             MapTiles::EndFrame();
         }
     }

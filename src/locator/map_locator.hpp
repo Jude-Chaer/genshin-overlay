@@ -25,16 +25,6 @@ namespace MapLocator {
         int inliers = 0;
     };
 
-    struct TrackStep {
-        enum Kind {
-            Still,  // frame didn't change
-            Miss,   // no map on screen
-            Apply,  // new position in result
-        };
-        Kind kind = Miss;
-        Result result;
-    };
-
     // FNV-1a 64 of the manifest text, index.bin stores it to know what it was built from
     uint64_t ManifestSignature(const std::string& manifest);
     // true if index.bin at this path was built from this manifest
@@ -90,28 +80,6 @@ namespace MapLocator {
 
         bool m_hasLast = false;
         Result m_last;
-    };
-
-    // Follows the map frame by frame. Without a fix it only takes a quick look,
-    // since most frames are gameplay and not the map. Once there's a fix it
-    // matches at half resolution with a full match every few ticks. Switching to
-    // another map or floor needs two full matches in a row that agree.
-    class Tracker {
-    public:
-        void Reset();
-        TrackStep Step(Index& index, const cv::Mat& bgr, double cx, double cy);
-
-    private:
-        bool Decide(const Result& result, bool fromFull, Result& out);
-
-        cv::Mat m_lastThumb;
-        bool m_hasFix = false;
-        Result m_fix;
-        bool m_claimed = false;
-        Result m_claim;
-        int m_ticksSinceFull = 0;
-        int m_misses = 0;
-        bool m_lastMissed = false;
     };
 
 }
