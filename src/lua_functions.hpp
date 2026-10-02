@@ -20,6 +20,7 @@ namespace LuaFunctions {
     std::tuple<GLuint, int, int> LoadTextureFromFileLua(const std::string& path);
 
     sol::object GetMapView(sol::this_state state);
+    void FollowMapWhileMoving();
     sol::object GetMapGrid(int mapId, sol::this_state state);
     GLuint GetMapTile(int mapId, int x, int y, int size);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);

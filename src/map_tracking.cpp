@@ -32,6 +32,15 @@
 // noticed by the zoom bar going away.
 
 namespace MapTracking {
+    // The map is followed exactly while FollowWhileMoving was called this
+    // recently, loosely otherwise.
+    static constexpr auto FOLLOW_ASKED_FOR = std::chrono::milliseconds(500);
+    // when it was last called, steady_clock ticks
+    static std::atomic<std::chrono::steady_clock::rep> followAskedAt{ 0 };
+    // follow thread only
+    static bool followExact = false;
+    // the last GetView had a map in it
+    static std::atomic<bool> viewGiven{ false };
     // Finding the map needs this many matching points. Following it takes
     // any match SIFT calls found.
     static constexpr int FIRST_FIX_INLIERS = 15;
@@ -197,6 +206,17 @@ namespace MapTracking {
         MapLocator::Result checked;
         if (MapCheck::Take(checkedId, checked) && Settings::lineUpWithMap) follower.Checked(checkedId, checked);
 
+        // Extensions only run while there's a view, so while there's none
+        // nobody can ask and what was asked for last still goes.
+        bool asked = now - std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(followAskedAt.load())) < FOLLOW_ASKED_FOR;
+        if (asked || viewGiven) followExact = asked;
+        follower.Loose(!followExact);
+        if (!follower.WantsGrab(seconds)) {
+            // SIFT's answer may have just come back
+            publish(lock, rect, now);
+            return;
+        }
+
         bool settle = canSend && follower.WantsSettle(seconds);
         bool look = canSend && !settle && follower.WantsLook(seconds);
         Capture::Frame gameFrame = lastGameFrame;
@@ -213,11 +233,13 @@ namespace MapTracking {
             // the game didn't draw a new frame yet
             return;
         }
+        follower.Grabbed(seconds);
         if (!patches.empty()) {
             int frames = lastGameFrame.number ? (int)std::min<uint64_t>(gameFrame.number - lastGameFrame.number, 100) : 1;
             lastGameFrame = gameFrame;
             follower.Frame(++frameId, patches, wide, rect, gameFrame.seconds, frames);
-            if (follower.Visible() && Settings::lineUpWithMap) {
+            // loosely it's hidden while it moves, nothing to line up
+            if (followExact && follower.Visible() && Settings::lineUpWithMap) {
                 MapCheck::Check(frameId, patches, rect, follower.View());
             }
         }
@@ -375,6 +397,10 @@ namespace MapTracking {
         return mapOpen.load(std::memory_order_acquire);
     }
 
+    void FollowWhileMoving() {
+        followAskedAt = std::chrono::steady_clock::now().time_since_epoch().count();
+    }
+
     float GetLastStepMs() {
         return lastStepMs;
     }
@@ -437,7 +463,10 @@ namespace MapTracking {
             // game's frame drawn now does, so the view is for then.
             double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
             copy.result = shown.Ahead(Settings::followOnThread ? shownAt(seconds) : seconds + refreshSeconds());
+            copy.moving = !shown.Landed(seconds);
+            if (shown.Hidden(seconds)) copy.visible = false;
         }
+        viewGiven = copy.visible;
         return copy;
     }
 

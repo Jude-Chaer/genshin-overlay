@@ -91,13 +91,23 @@ namespace MapFollow {
         // The map isn't found and it's time for SIFT to look. Call Looking
         // when a frame was sent to it.
         bool WantsLook(double seconds) const;
-        void Looking(double seconds) { m_lookedAt = seconds; }
+        void Looking(double seconds);
         // look on the next frame instead of waiting
         void LookNow() { m_lookedAt = 0.0; }
         // The map just stopped, one SIFT lands it exactly. Call Settling when
         // a frame was sent to it.
         bool WantsSettle(double seconds) const;
         void Settling() { m_settled = true; }
+
+        // Loose is for when nothing is drawn while the map moves. The view is
+        // hidden until the map landed, the patches are only compared every
+        // LOOSE_EVERY, and SIFT waits until the map stands still.
+        void Loose(bool loose) { m_loose = loose; }
+        bool Hidden(double seconds) const { return m_loose && !Landed(seconds); }
+        // False while loose and the last grab is new enough. Call Grabbed
+        // after every grab.
+        bool WantsGrab(double seconds) const;
+        void Grabbed(double seconds) { m_grabbedAt = seconds; }
 
     private:
         // a frame that went through Frame, and the view on it
@@ -157,5 +167,12 @@ namespace MapFollow {
         // view was off in map units, it fades out from m_glideAt (-1 for none).
         double m_glideLng = 0.0, m_glideLat = 0.0, m_glideZoom = 1.0;
         double m_glideAt = -1.0;
+
+        bool m_loose = false;
+        double m_grabbedAt = 0.0;
+        // loose: SIFT already looked since the map stood still
+        bool m_lookedStill = false;
+        // moves slower than LOOSE_SLOW
+        bool m_slow = false;
     };
 }

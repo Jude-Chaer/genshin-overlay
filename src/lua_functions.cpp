@@ -29,6 +29,7 @@ namespace LuaFunctions {
         luaState.set_function("GetSetting", GetExtensionSetting);
         luaState.set_function("LoadTexture", LoadTextureFromFileLua);
         luaState.set_function("GetMapView", GetMapView);
+        luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
         luaState.set_function("GetMapGrid", GetMapGrid);
         luaState.set_function("GetMapTile", GetMapTile);
         luaState.set_function("GetMapFloor", GetMapFloor);
@@ -170,7 +171,8 @@ namespace LuaFunctions {
 
     // Where the in-game map is looking, or nil when it isn't open. Positions are
     // in overlay pixels, the same ones DrawImage uses. lat/lng is the map
-    // position at centerX, centerY.
+    // position at centerX, centerY. moving is true while the map moves, and
+    // after it stops until it's lined up exactly.
     sol::object GetMapView(sol::this_state state) {
         MapTracking::MapView view = MapTracking::GetView();
         if (!view.visible) return sol::lua_nil;
@@ -195,8 +197,16 @@ namespace LuaFunctions {
             "left", left,
             "top", top,
             "right", right,
-            "bottom", bottom
+            "bottom", bottom,
+            "moving", view.moving
         ));
+    }
+
+    // Call every Update if you draw while the map moves. Otherwise GetMapView
+    // gives nil while it moves: it's only followed loosely then, which is
+    // cheaper, and found exactly when it stops.
+    void FollowMapWhileMoving() {
+        MapTracking::FollowWhileMoving();
     }
 
     // how a map's tiles are laid out: tile x covers map units x * tileSize - originX and up

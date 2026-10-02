@@ -310,6 +310,16 @@ namespace MapFollow {
     static constexpr double LAND_WAIT = 0.6;
     // seconds between SIFT's looks while the map isn't found
     static constexpr double LOOK_INTERVAL = 0.12;
+    // Loose, the patches are only compared every LOOSE_EVERY seconds. When
+    // the compare loses the map SIFT waits until it stands still, and if it
+    // didn't find it there it only tries again every LOOSE_LOOK seconds.
+    static constexpr double LOOSE_EVERY = 0.05;
+    static constexpr double LOOSE_LOOK = 1.0;
+    // Loose, but slower than this (a share of the game's height and of the zoom
+    // in a second) it may stop any moment, so every frame is compared to catch
+    // the stop right away.
+    static constexpr double LOOSE_SLOW = 0.05;
+    static constexpr double LOOSE_SLOW_ZOOM = 0.1;
     // the speed is measured over this many seconds, one frame to the next is too jumpy
     static constexpr double SPEED_OVER = 0.05;
     // Every compare is off by a bit, adding them up frame after frame drifts
@@ -417,6 +427,7 @@ namespace MapFollow {
             m_anchored = false;
             m_moving = true;
             m_landed = false;
+            m_lookedStill = false;
             if (m_view.unitsPerPixel <= 0.0) m_view.unitsPerPixel = 1.0;
         }
 
@@ -434,6 +445,9 @@ namespace MapFollow {
         m_past.push_back({ id, m_chain, seconds, m_view });
         if (m_past.size() > PAST_KEPT) m_past.pop_front();
         m_perSecond = {};
+        m_slow = found && back && seconds > backSeconds
+            && pixelsApart(m_view, backView) / height < LOOSE_SLOW * (seconds - backSeconds)
+            && zoomApart(m_view, backView) < LOOSE_SLOW_ZOOM * (seconds - backSeconds);
         if (!found) return;
 
         if (const Past* then = pastBefore(seconds - STILL_FOR)) {
@@ -466,6 +480,7 @@ namespace MapFollow {
                 }
                 m_moving = true;
                 m_landed = false;
+                m_lookedStill = false;
             }
         }
         // Once SIFT put it down it stays put. Over the sea the fog is animated and
@@ -600,6 +615,22 @@ namespace MapFollow {
     }
 
     bool Follower::WantsLook(double seconds) const {
-        return !m_anchored && seconds - m_lookedAt >= LOOK_INTERVAL;
+        if (m_anchored) return false;
+        if (!m_loose) return seconds - m_lookedAt >= LOOK_INTERVAL;
+        if (m_moving) return false;
+        return seconds - m_lookedAt >= (m_lookedStill ? LOOSE_LOOK : LOOK_INTERVAL);
+    }
+
+    void Follower::Looking(double seconds) {
+        m_lookedAt = seconds;
+        if (m_loose) {
+            // it stands still, so what this finds is where it landed, no second SIFT
+            m_settled = true;
+            m_lookedStill = true;
+        }
+    }
+
+    bool Follower::WantsGrab(double seconds) const {
+        return !m_loose || (m_moving && m_slow) || seconds - m_grabbedAt >= LOOSE_EVERY;
     }
 }

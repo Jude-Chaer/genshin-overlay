@@ -518,8 +518,8 @@ namespace Overlay {
                     glfwSwapBuffers(Overlay::Window);
                     drewLastFrame = false;
                 }
-                // The map is open but not found yet: nothing to draw, but the
-                // tracker still has to keep up with the game's frames.
+                // The map is open but hidden or not found yet: nothing to draw,
+                // but the tracker still has to keep up with the game's frames.
                 if (MapTracking::IsMapOpen()) DwmFlush();
                 else glfwWaitEventsTimeout(0.05);
                 continue;

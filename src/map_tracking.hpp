@@ -18,6 +18,8 @@ namespace MapTracking {
         MapLocator::Result result;
         RECT gameRect = {};  // screen coords, the result's lat/lng is at its center
         double secondsSinceUpdate = 0.0;
+        // moving, or stopped but SIFT didn't say exactly where yet
+        bool moving = false;
     };
 
     struct Diamond
@@ -36,6 +38,10 @@ namespace MapTracking {
     extern Status GetStatus();
     // the zoom bar is on screen, so the in-game map is open
     extern bool IsMapOpen();
+    // Call every frame while something draws the moving map. Without it
+    // there's no view while the map moves, it's only followed loosely and
+    // found exactly once it stops.
+    extern void FollowWhileMoving();
     // what the download is doing, while the status is Downloading
     extern std::string GetDownloadStage(int& percent);
     // where the map is when what's drawn now shows up
