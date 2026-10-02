@@ -73,6 +73,7 @@ namespace MapTracking {
     static RECT detectorRectCache;
     static std::once_flag zoomTemplateOnce;
     static cv::Mat zoomTemplate;
+    static cv::Mat detectorGreyscaleMatCache;
 
 
   
@@ -302,7 +303,6 @@ namespace MapTracking {
         if (!Capture::getClientRectOnScreen(game, client))
             return false;
 
-        int w = client.right - client.left;
         int h = client.bottom - client.top;
 
         double scale = h / 1125.0;
@@ -321,7 +321,6 @@ namespace MapTracking {
             "zoombar_template.png",
             cv::IMREAD_GRAYSCALE
         );
-        std::cout << zoomTemplate << std::endl;
         if (zoomTemplate.empty()) {
             std::cerr << "Failed to load zoombar_template.png\n";
         }
@@ -329,28 +328,27 @@ namespace MapTracking {
 
     bool detectZoomBar(const cv::Mat& image)
     {
+        auto start = std::chrono::steady_clock::now();
         std::call_once(zoomTemplateOnce, loadZoomTemplate);
 
         if (image.empty() || zoomTemplate.empty())
-            return false;
-
-        cv::Mat gray;
+           return false;
 
         if (image.channels() == 4)
-            cv::cvtColor(image, gray, cv::COLOR_BGRA2GRAY);
+            cv::cvtColor(image, detectorGreyscaleMatCache, cv::COLOR_BGRA2GRAY);
         else if (image.channels() == 3)
-            cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+            cv::cvtColor(image, detectorGreyscaleMatCache, cv::COLOR_BGR2GRAY);
         else
-            gray = image;
+            detectorGreyscaleMatCache = image;
 
-        if (gray.cols < zoomTemplate.cols ||
-            gray.rows < zoomTemplate.rows)
+        if (detectorGreyscaleMatCache.cols < zoomTemplate.cols ||
+            detectorGreyscaleMatCache.rows < zoomTemplate.rows)
             return false;
 
         cv::Mat result;
 
         cv::matchTemplate(
-            gray,
+            detectorGreyscaleMatCache,
             zoomTemplate,
             result,
             cv::TM_CCOEFF_NORMED
@@ -360,7 +358,6 @@ namespace MapTracking {
         cv::minMaxLoc(result, nullptr, &maxVal, nullptr, nullptr);
 
         constexpr double kMatchThreshold = 0.60;
-		std::cout << "Zoom bar match value: " << maxVal << std::endl;
         return maxVal >= kMatchThreshold;
     }
 
@@ -368,11 +365,31 @@ namespace MapTracking {
     void zoombarDetectorLoop()
     {
         bool previousOpen = false;
-        getZoomBarRect(Capture::findGameWindow(), detectorRectCache);
+		detectorGameWindowCache = Capture::findGameWindow();
+        getZoomBarRect(detectorGameWindowCache, detectorRectCache);
 
         while (!detectorStopping) {
+			// Refresh the game window and zoom bar rect if the window is closed or moved
+            if (!IsWindow(detectorGameWindowCache)) {
+                detectorGameWindowCache = Capture::findGameWindow();
 
-            if (IsIconic(Capture::findGameWindow())) {
+                if (!detectorGameWindowCache) {
+                    std::this_thread::sleep_for(DETECTOR_INTERVAL);
+                    continue;
+                }
+            }
+            if (!getZoomBarRect(detectorGameWindowCache, detectorRectCache)) {
+                detectorGameWindowCache = Capture::findGameWindow();
+
+                if (!detectorGameWindowCache ||
+                    !getZoomBarRect(detectorGameWindowCache, detectorRectCache)) {
+                    std::this_thread::sleep_for(DETECTOR_INTERVAL);
+                    continue;
+                }
+            }
+
+
+            if (IsIconic(detectorGameWindowCache)) {
                 if (previousOpen) {
                     previousOpen = false;
                     mapOpen = false;
@@ -382,7 +399,6 @@ namespace MapTracking {
                     resetTracker = true;
                     misses = 0;
                 }
-
                 std::this_thread::sleep_for(DETECTOR_INTERVAL);
                 continue;
             }
@@ -394,7 +410,6 @@ namespace MapTracking {
                 if (open != previousOpen) {
                     previousOpen = open;
                     mapOpen = open;
-                    std::cout << "3" << std::endl;
                     if (open) {
                         std::lock_guard<std::mutex> lock(mutex);
 
