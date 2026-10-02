@@ -12,6 +12,7 @@ namespace Settings {
     bool lookAgainStill = true;
     bool followOnThread = true;
     bool shrinkOnGpu = true;
+    bool findSmallFirst = true;
 
     static std::filesystem::path settingsPath() {
         return Helpers::exeDirectory() / "settings.json";
@@ -31,6 +32,7 @@ namespace Settings {
         lookAgainStill = settings.value("lookAgainStill", true);
         followOnThread = settings.value("followOnThread", true);
         shrinkOnGpu = settings.value("shrinkOnGpu", true);
+        findSmallFirst = settings.value("findSmallFirst", true);
     }
 
     void Save() {
@@ -43,6 +45,7 @@ namespace Settings {
             { "lookAgainStill", lookAgainStill },
             { "followOnThread", followOnThread },
             { "shrinkOnGpu", shrinkOnGpu },
+            { "findSmallFirst", findSmallFirst },
         };
         std::ofstream file(settingsPath(), std::ios::trunc);
         file << settings.dump(2);

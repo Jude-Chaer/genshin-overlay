@@ -24,6 +24,7 @@ namespace MapLocator {
     static constexpr double REF_SCALE = 0.5;  // reference art is SIFT'd at half size
     static constexpr int QUERY_WIDTHS[] = { 1920, 960, 480 };
     static constexpr int FAST_QUERY_WIDTHS[] = { 960, 480 };
+    static constexpr int SMALL_FIRST_WIDTHS[] = { 480, 960 };
     static constexpr int STRONG_INLIERS = 60;
     static constexpr int MIN_INLIERS = 12;  // real locks got 66+, wrong ones never above 8
     static constexpr double RATIO = 0.8;
@@ -618,7 +619,7 @@ namespace MapLocator {
         auto strongest = [&]() { return (std::max)(surface.inliers, floor.inliers); };
 
         auto pass = [&](const cv::Mat& graySource, std::vector<Query>* keep) {
-            const int* widths = fast ? FAST_QUERY_WIDTHS : QUERY_WIDTHS;
+            const int* widths = fast ? (smallFirst ? SMALL_FIRST_WIDTHS : FAST_QUERY_WIDTHS) : QUERY_WIDTHS;
             size_t count = fast ? std::size(FAST_QUERY_WIDTHS) : std::size(QUERY_WIDTHS);
             for (size_t i = 0; i < count; i++) {
                 Query query;

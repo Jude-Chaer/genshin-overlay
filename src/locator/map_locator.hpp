@@ -45,6 +45,10 @@ namespace MapLocator {
         // searchNearLast retries around the last position when nothing else matched, which is slow.
         Result Match(const cv::Mat& bgr, double cx, double cy, bool fast = false, bool searchNearLast = true);
 
+        // With fast, Match tries the game 480 wide first and 960 only if that
+        // isn't a strong match. Quicker when 480 is enough, slower when it isn't.
+        bool smallFirst = false;
+
     private:
         struct Piece {
             int mapId = 0;

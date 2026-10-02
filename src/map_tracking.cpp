@@ -146,6 +146,7 @@ namespace MapTracking {
             double cx = current.cols / 2.0;
             double cy = current.rows / 2.0;
             auto started = std::chrono::steady_clock::now();
+            index.smallFirst = Settings::findSmallFirst;
             MapLocator::Result result = index.Match(current, cx, cy, true, false);
             lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - started).count();
 

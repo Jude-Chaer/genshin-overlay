@@ -455,6 +455,13 @@ namespace Overlay {
                 )) {
                     Settings::Save();
                 }
+
+                if (ImGui::Checkbox(
+                    "Find the map on a smaller picture first",
+                    &Settings::findSmallFirst
+                )) {
+                    Settings::Save();
+                }
             }
 
             break;

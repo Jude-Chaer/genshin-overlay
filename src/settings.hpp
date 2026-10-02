@@ -22,6 +22,8 @@ namespace Settings {
     extern bool followOnThread;
     // the patches are shrunk on the GPU before they're read back
     extern bool shrinkOnGpu;
+    // SIFT tries the game 480 wide first, and 960 only if that isn't a strong match
+    extern bool findSmallFirst;
 
     extern void Load();
     extern void Save();
