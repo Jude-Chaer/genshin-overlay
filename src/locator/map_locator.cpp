@@ -33,6 +33,10 @@ namespace MapLocator {
     static constexpr double LOCAL_RADIUS = 6000.0;
     static constexpr uint32_t INDEX_MAGIC = 0x494C5747;  // "GWLI"
     static constexpr uint32_t INDEX_VERSION = 2;
+    static cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
+    static cv::Mat m_matchMask;
+    static int m_maskWidth = 0;
+    static int m_maskHeight = 0;
 
     // Game UI to leave out of the match, in a 2000x1125 frame. Each rect is
     // anchored to the edge it sits on so other aspect ratios still line up.
@@ -551,22 +555,40 @@ namespace MapLocator {
         if (w < 64 || h < 64) return Result();
 
         // the game UI scales with the screen height
-        cv::Mat mask(h, w, CV_8U, cv::Scalar(255));
-        double s = h / 1125.0;
-        for (const auto& r : UI_RECTS) {
-            int x0, x1;
-            if (r.right) {
-                x0 = (int)(w - (2000 - r.x0) * s);
-                x1 = (int)(w - (2000 - r.x1) * s);
+        if (m_maskWidth != w || m_maskHeight != h) {
+            m_matchMask = cv::Mat(h, w, CV_8U, cv::Scalar(255));
+
+            double s = h / 1125.0;
+
+            for (const auto& r : UI_RECTS) {
+                int x0, x1;
+
+                if (r.right) {
+                    x0 = (int)(w - (2000 - r.x0) * s);
+                    x1 = (int)(w - (2000 - r.x1) * s);
+                }
+                else {
+                    x0 = (int)(r.x0 * s);
+                    x1 = (int)(r.x1 * s);
+                }
+
+                int y0 = (int)(r.y0 * s);
+                int y1 = (int)(r.y1 * s);
+
+                cv::Rect rect(
+                    cv::Point((std::max)(0, x0), (std::max)(0, y0)),
+                    cv::Point((std::min)(w, x1), (std::min)(h, y1))
+                );
+
+                if (rect.area() > 0)
+                    m_matchMask(rect).setTo(0);
             }
-            else {
-                x0 = (int)(r.x0 * s);
-                x1 = (int)(r.x1 * s);
-            }
-            int y0 = (int)(r.y0 * s), y1 = (int)(r.y1 * s);
-            cv::Rect rect(cv::Point((std::max)(0, x0), (std::max)(0, y0)), cv::Point((std::min)(w, x1), (std::min)(h, y1)));
-            if (rect.area() > 0) mask(rect).setTo(0);
+
+            m_maskWidth = w;
+            m_maskHeight = h;
         }
+
+        const cv::Mat& mask = m_matchMask;
 
         cv::Mat grayFull;
         cv::cvtColor(screen, grayFull, cv::COLOR_BGR2GRAY);
@@ -617,7 +639,7 @@ namespace MapLocator {
         std::vector<Query> contrast;
         if (strongest() < STRONG_INLIERS) {
             cv::Mat boosted;
-            cv::createCLAHE(3.0, cv::Size(8, 8))->apply(grayFull, boosted);
+            clahe->apply(grayFull, boosted);
             pass(boosted, &contrast);
         }
 
