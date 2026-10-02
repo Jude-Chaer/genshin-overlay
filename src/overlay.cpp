@@ -193,7 +193,10 @@ namespace Overlay {
 
         MapTracking::MapView view = MapTracking::GetView();
         if (!view.visible) {
-            ImGui::Text("Waiting for the in-game map (M)");
+            if (MapTracking::IsMapOpen())
+                ImGui::Text("Map is open, looking for where it is...");
+            else
+                ImGui::Text("Waiting for the in-game map (M)");
             return;
         }
 
