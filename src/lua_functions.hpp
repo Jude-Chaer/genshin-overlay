@@ -15,10 +15,12 @@ namespace LuaFunctions {
     bool IsProgramHidden();
     void RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers);
     void DeleteKeybind(int glfwKey);
-    void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue);
+    void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue,
+        sol::optional<float> min, sol::optional<float> max);
     sol::object GetExtensionSetting(const std::string& id, sol::this_state state);
     std::tuple<GLuint, int, int> LoadTextureFromFileLua(const std::string& path);
     sol::object GetMapView(sol::this_state state);
+    void FollowMapWhileMoving();
     sol::object GetMapGrid(int mapId, sol::this_state state);
     GLuint GetMapTile(int mapId, int x, int y, int size);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);

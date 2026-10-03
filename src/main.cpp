@@ -8,6 +8,7 @@
 #include "helpers.hpp"
 #include "settings.hpp"
 #include "map_data.hpp"
+#include "map_check.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
 #include "locator/map_locator.hpp"
@@ -70,10 +71,12 @@ int main(int argc, char** argv) {
 
     MapTracking::Start(Helpers::exeDirectory() / "map_data");
     MapTiles::Init(Helpers::exeDirectory() / "map_data");
+    MapCheck::Start(Helpers::exeDirectory() / "map_data");
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
     MapTracking::Stop();
+    MapCheck::Stop();
     MapTiles::Shutdown();
     Overlay::Shutdown();
 

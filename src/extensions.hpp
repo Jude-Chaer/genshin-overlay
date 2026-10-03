@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -34,6 +35,8 @@ namespace Extensions {
 
         std::variant<bool, int, float, std::string> defaultValue;
         std::variant<bool, int, float, std::string> value;
+        // a float with both of these set gets a slider
+        std::optional<float> min, max;
     };
 
     class Extension {

@@ -6,8 +6,9 @@ metadata = {
 }
 
 function RegisterSettings()
-    DefineExtensionSetting("enabled", "Show the map", "bool", true)
-    DefineExtensionSetting("opacity", "Opacity", "float", 0.5)
+    DefineExtensionSetting("showMap", "Show the map overlay", "bool", true)
+    DefineExtensionSetting("opacity", "Opacity", "float", 0.5, 0.0, 1.0)
+    DefineExtensionSetting("showWhileMoving", "Show the overlay while the map moves", "bool", true)
 end
 
 -- tiles are shrunk to about the size they're drawn at, so zooming out stays cheap
@@ -19,7 +20,9 @@ local function tileSizeFor(pixelsPerTile)
 end
 
 function Update()
-    if not GetSetting("enabled") then return end
+    if not GetSetting("showMap") then return end
+    -- the overlay trails a moving map a little, so by default it's hidden until the map stops
+    if GetSetting("showWhileMoving") then FollowMapWhileMoving() end
 
     local view = GetMapView()
     if not view then return end
