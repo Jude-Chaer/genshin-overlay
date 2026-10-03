@@ -5,9 +5,21 @@
 #include <tuple>
 #include "keybindings.hpp"
 #include "net.hpp"
+#include "extensions.hpp"
 
 namespace LuaFunctions {
     void registerLuaFunctions(sol::state& luaState);
+
+    const std::unordered_map<std::string, std::vector<Extensions::ExtensionPermissionTypes>> functionPermissions = {
+        { "LuaFunctions::ImGUI_Text", {} },
+        { "LuaFunctions::LoadTexture", { Extensions::ExtensionPermissionTypes::InternalReadfile } },
+        { "LuaFunctions::NetGet", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::NetPost", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::RegisterKeybind", { Extensions::ExtensionPermissionTypes::Keybinds } },
+        { "LuaFunctions::DrawImage", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
+    };
+
+    bool checkPermissions(const std::string& functionName);
 
     void ImGUI_Text(const std::string& str);
     void ImGUI_Button(const std::string& label, sol::protected_function callback);

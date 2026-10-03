@@ -28,6 +28,7 @@ namespace Extensions {
 		NetworkAccess,
 		DisplayOverlay,
         DisplayRead,
+        Keybinds
     };
 
     inline const std::unordered_map<ExtensionPermissionTypes, std::string> allPermissions = {
@@ -38,7 +39,8 @@ namespace Extensions {
         {ExtensionPermissionTypes::InternalWritefile, "Internal File Writing"},
         {ExtensionPermissionTypes::NetworkAccess, "Network Access"},
         {ExtensionPermissionTypes::DisplayOverlay, "Display Overlay"},
-        {ExtensionPermissionTypes::DisplayRead, "Display Read"}
+        {ExtensionPermissionTypes::DisplayRead, "Display Read"},
+		{ExtensionPermissionTypes::Keybinds, "Keybinds" }
     };
 
     struct ExtensionSetting {

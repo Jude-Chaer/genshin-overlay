@@ -9,6 +9,10 @@
 #include <imgui.h>
 #include <iostream>
 
+#define CHECK_PERMISSIONS() \
+    if (!LuaFunctions::checkPermissions(__FUNCTION__)) \
+        throw std::runtime_error("Extension does not have permission")
+
 
 namespace LuaFunctions {
     static void callLua(const sol::protected_function& function) {
@@ -177,6 +181,8 @@ namespace LuaFunctions {
 
     sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab)
     {
+        CHECK_PERMISSIONS();
+
         sol::state_view lua(state);
         Net::Response response;
 
@@ -192,6 +198,7 @@ namespace LuaFunctions {
 
     sol::object NetPost(const std::string& url,const std::string& data,sol::this_state state,sol::optional<bool> hoyolab)
     {
+        CHECK_PERMISSIONS();
         sol::state_view lua(state);
         Net::Response response;
 
@@ -428,5 +435,27 @@ namespace LuaFunctions {
             std::cerr << "JSON Decode Error: " << e.what() << std::endl;
             return sol::lua_nil;
         }
+    }
+
+    bool checkPermissions(const std::string& functionName) {
+        if (!Extensions::currentExtension)
+            return false;
+
+        auto it = functionPermissions.find(functionName);
+
+        if (it == functionPermissions.end()) {
+            return false;
+        }
+
+        for (auto permission : it->second) {
+
+            if (Extensions::currentExtension->extensionPermissions.find(permission) ==
+                Extensions::currentExtension->extensionPermissions.end())
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

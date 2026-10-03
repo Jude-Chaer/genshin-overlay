@@ -13,9 +13,18 @@ namespace Extensions {
     // Lua functions like DefineExtensionSetting need to know which extension called them
     void runForExtension(Extension* ext, const std::function<void()>& function) {
         if (!function) return;
+
         Extension* previous = currentExtension;
         currentExtension = ext;
-        function();
+
+        try {
+            function();
+        }
+        catch (...) {
+            currentExtension = previous;
+            throw;
+        }
+
         currentExtension = previous;
     }
 
@@ -254,48 +263,6 @@ namespace Extensions {
 
         LuaFunctions::registerLuaFunctions(*ext->luaState);
 
-        sol::environment env(
-            *ext->luaState,
-            sol::create,
-            ext->luaState->globals()
-        );
-
-        env["WORKING_DIR"] = folderPath.string() + "/";
-
-        sol::load_result script = ext->luaState->load_file(scriptPath.string());
-        if (!script.valid()) {
-            sol::error err = script;
-            std::cerr << "Failed to load " << scriptPath << ": " << err.what() << std::endl;
-            return;
-        }
-
-        sol::protected_function scriptFunction = script;
-        env.set_on(scriptFunction);
-
-        auto result = scriptFunction();
-        if (!result.valid()) {
-            sol::error err = result;
-            std::cerr << "Failed to run " << scriptPath << ": " << err.what() << std::endl;
-            return;
-        }
-
-        sol::optional<sol::table> meta = env["metadata"];
-        if (meta) {
-            ext->name = meta->get_or("name", ext->name);
-            ext->description = meta->get_or("description", std::string("No description."));
-            ext->author = meta->get_or("author", std::string("Unknown"));
-            ext->version = meta->get_or("version", std::string("1.0.0"));
-        }
-
-        std::filesystem::path iconPath = folderPath / "icon.png";
-        if (std::filesystem::exists(iconPath)) {
-            ext->extensionImage = Helpers::loadTextureFromFile(
-                iconPath.string(),
-                ext->extensionImageWidth,
-                ext->extensionImageHeight
-            );
-        }
-        
         std::vector<std::pair<std::string, std::string>> luaFileHashes;
         for (const auto& entry : std::filesystem::recursive_directory_iterator(folderPath)) {
             if (!entry.is_regular_file())
@@ -337,7 +304,56 @@ namespace Extensions {
         }
 
         ext->extensionHash = Helpers::hashString(combined);
-		loadExtensionPermissions(ext.get());
+        loadExtensionPermissions(ext.get());
+
+        sol::environment env(
+            *ext->luaState,
+            sol::create,
+            ext->luaState->globals()
+        );
+
+        env["WORKING_DIR"] = folderPath.string() + "/";
+
+        sol::load_result script = ext->luaState->load_file(scriptPath.string());
+        if (!script.valid()) {
+            sol::error err = script;
+            std::cerr << "Failed to load " << scriptPath << ": " << err.what() << std::endl;
+            return;
+        }
+
+        sol::protected_function scriptFunction = script;
+        env.set_on(scriptFunction);
+
+        sol::protected_function_result result;
+
+        runForExtension(ext.get(), [&]() {
+            result = scriptFunction();
+            });
+
+        if (!result.valid()) {
+            sol::error err = result;
+            std::cerr << "Failed to run " << scriptPath << ": " << err.what() << std::endl;
+            return;
+        }
+
+        sol::optional<sol::table> meta = env["metadata"];
+        if (meta) {
+            ext->name = meta->get_or("name", ext->name);
+            ext->description = meta->get_or("description", std::string("No description."));
+            ext->author = meta->get_or("author", std::string("Unknown"));
+            ext->version = meta->get_or("version", std::string("1.0.0"));
+        }
+
+        std::filesystem::path iconPath = folderPath / "icon.png";
+        if (std::filesystem::exists(iconPath)) {
+            ext->extensionImage = Helpers::loadTextureFromFile(
+                iconPath.string(),
+                ext->extensionImageWidth,
+                ext->extensionImageHeight
+            );
+        }
+        
+
         ext->initializeFunction = getLuaFunction(env, "Init", ext->name);
         ext->updateFunction = getLuaFunction(env, "Update", ext->name);
         ext->menuFunction = getLuaFunction(env, "Menu", ext->name);
