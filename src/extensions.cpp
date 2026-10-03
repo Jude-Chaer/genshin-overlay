@@ -8,7 +8,6 @@
 
 namespace Extensions {
     std::vector<std::unique_ptr<Extension>> registeredExtensions;
-    sol::state globalLuaState;
     Extension* currentExtension = nullptr;
 
     // Lua functions like DefineExtensionSetting need to know which extension called them
@@ -22,7 +21,6 @@ namespace Extensions {
 
     // settings are registered before Init so Init can already read them
     void initExtensions() {
-        createGlobalLuaState();
         findAndLoadExtensions();
         configureSettings();
 
@@ -223,6 +221,7 @@ namespace Extensions {
                 loadLuaExtension(scriptPath, dirEntry.path());
             }
         }
+        hashExtensions();
     }
 
     // wraps a Lua function so an error gets printed instead of taking the overlay down
@@ -244,11 +243,27 @@ namespace Extensions {
         ext->folder = folderPath;
         ext->name = folderPath.filename().string();
 
-        // each extension gets its own environment so their globals don't clash
-        sol::environment env(globalLuaState, sol::create, globalLuaState.globals());
+        ext->luaState = std::make_unique<sol::state>();
+
+        ext->luaState->open_libraries(
+            sol::lib::base,
+            sol::lib::package,
+            sol::lib::math,
+            sol::lib::string,
+            sol::lib::table
+        );
+
+        LuaFunctions::registerLuaFunctions(*ext->luaState);
+
+        sol::environment env(
+            *ext->luaState,
+            sol::create,
+            ext->luaState->globals()
+        );
+
         env["WORKING_DIR"] = folderPath.string() + "/";
 
-        sol::load_result script = globalLuaState.load_file(scriptPath.string());
+        sol::load_result script = ext->luaState->load_file(scriptPath.string());
         if (!script.valid()) {
             sol::error err = script;
             std::cerr << "Failed to load " << scriptPath << ": " << err.what() << std::endl;
@@ -257,6 +272,7 @@ namespace Extensions {
 
         sol::protected_function scriptFunction = script;
         env.set_on(scriptFunction);
+
         auto result = scriptFunction();
         if (!result.valid()) {
             sol::error err = result;
@@ -274,7 +290,11 @@ namespace Extensions {
 
         std::filesystem::path iconPath = folderPath / "icon.png";
         if (std::filesystem::exists(iconPath)) {
-            ext->extensionImage = Helpers::loadTextureFromFile(iconPath.string(), ext->extensionImageWidth, ext->extensionImageHeight);
+            ext->extensionImage = Helpers::loadTextureFromFile(
+                iconPath.string(),
+                ext->extensionImageWidth,
+                ext->extensionImageHeight
+            );
         }
 
         ext->initializeFunction = getLuaFunction(env, "Init", ext->name);
@@ -286,8 +306,56 @@ namespace Extensions {
         registeredExtensions.push_back(std::move(ext));
     }
 
-    void createGlobalLuaState() {
-        globalLuaState.open_libraries(sol::lib::base, sol::lib::package, sol::lib::math, sol::lib::string, sol::lib::table);
-        LuaFunctions::registerLuaFunctions(globalLuaState);
+    void drawExtensionPermissionMenu() {
+        ImGui::TextWrapped(
+            "Extensions can be given permissions to access certain features.  Some of these are sensitive and should be granted with caution.");
+        for (auto& ext : registeredExtensions) {
+            ImGui::Separator();
+            ImGui::Text("%s", ext->name.c_str());
+            ImGui::TextDisabled("%s  v%s", ext->author.c_str(), ext->version.c_str());
+            ImGui::TextWrapped("%s", ext->description.c_str());
+        }
+    }
+
+    void hashExtensions(){
+        for (auto& ext : registeredExtensions) {
+            std::vector<std::filesystem::path> luaFiles;
+
+            for (const auto& entry :
+                std::filesystem::recursive_directory_iterator(ext->folder)) {
+
+                if (!entry.is_regular_file())
+                    continue;
+
+                if (entry.path().extension() != ".lua")
+                    continue;
+
+                luaFiles.push_back(entry.path());
+            }
+
+            std::sort(
+                luaFiles.begin(),
+                luaFiles.end(),
+                [&](const auto& a, const auto& b) {
+                    return std::filesystem::relative(a, ext->folder).generic_string() <
+                        std::filesystem::relative(b, ext->folder).generic_string();
+                }
+            );
+
+            std::string combined;
+
+            for (const auto& file : luaFiles) {
+                std::filesystem::path relative =
+                    std::filesystem::relative(file, ext->folder);
+
+                combined += relative.generic_string();
+                combined += "\n";
+                combined += Helpers::hashFile(file);
+                combined += "\n";
+            }
+
+            ext->extensionHash = Helpers::hashString(combined);
+			std::cout << "Extension " << ext->name << " hash: " << ext->extensionHash << std::endl;
+        }
     }
 }

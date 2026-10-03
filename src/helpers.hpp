@@ -9,4 +9,6 @@ namespace Helpers {
     extern bool isElevated();
     // starts this exe again as admin (UAC prompt), false if that was declined
     extern bool relaunchAsAdmin();
+    extern std::string hashFile(const std::filesystem::path& filePath);
+    extern std::string hashString(const std::string& input);
 }
