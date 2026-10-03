@@ -27,4 +27,6 @@ namespace LuaFunctions {
     void PopClipRect();
     sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab);
 	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab);
+    sol::object JSONEncode(sol::object value, sol::this_state state);
+    sol::object JSONDecode(const std::string& json, sol::this_state state);
 }

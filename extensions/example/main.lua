@@ -10,16 +10,17 @@ local clicks = 0
 local response = Net_Get("https://example.com")
 
 if response then
-    print(response.status)
-    print(response.body)
+    print("GET response status:", response.status)
 end
 
 local response = Net_Post(
     "https://httpbin.org/post",
     '{"foo":"bar"}'
 )
-print(response.status)
-print(response.body)
+if response then
+    print("POST response status:", response.status)
+end
+
 
 function RegisterSettings()
     DefineExtensionSetting("show_clicks", "Show click count", "bool", true)

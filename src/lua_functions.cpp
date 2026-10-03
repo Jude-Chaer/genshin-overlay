@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <nlohmann/json.hpp>
 #include "lua_functions.hpp"
 #include "extensions.hpp"
 #include "helpers.hpp"
@@ -7,6 +8,7 @@
 #include "map_tracking.hpp"
 #include <imgui.h>
 #include <iostream>
+
 
 namespace LuaFunctions {
     static void callLua(const sol::protected_function& function) {
@@ -37,6 +39,8 @@ namespace LuaFunctions {
         luaState.set_function("PopClipRect", PopClipRect);
         luaState.set_function("Net_Get", NetGet);
         luaState.set_function("Net_Post", NetPost);
+        luaState.set_function("JSON_Encode", JSONEncode);
+		luaState.set_function("JSON_Decode", JSONDecode);
         luaState["KeybindFlags"] = luaState.create_table_with(
             "None", Keybindings::KeybindFlags_None,
             "ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -273,5 +277,140 @@ namespace LuaFunctions {
 
     void PopClipRect() {
         ImGui::GetBackgroundDrawList()->PopClipRect();
+    }
+
+    static nlohmann::json LuaToJson(sol::object obj) {
+        switch (obj.get_type()) {
+        case sol::type::nil:
+            return nullptr;
+
+        case sol::type::boolean:
+            return obj.as<bool>();
+
+        case sol::type::number:
+            return obj.as<double>();
+
+        case sol::type::string:
+            return obj.as<std::string>();
+
+        case sol::type::table: {
+            sol::table table = obj.as<sol::table>();
+
+            bool isArray = true;
+            size_t count = 0;
+
+            for (const auto& pair : table) {
+                if (pair.first.get_type() != sol::type::number) {
+                    isArray = false;
+                    break;
+                }
+
+                double key = pair.first.as<double>();
+
+                if (key < 1 || key != static_cast<size_t>(key)) {
+                    isArray = false;
+                    break;
+                }
+
+                count++;
+            }
+
+            if (isArray) {
+                for (size_t i = 1; i <= count; i++) {
+                    if (!table.raw_get<sol::object>(i).valid()) {
+                        isArray = false;
+                        break;
+                    }
+                }
+            }
+
+            if (isArray) {
+                nlohmann::json result = nlohmann::json::array();
+
+                for (size_t i = 1; i <= count; i++) {
+                    result.push_back(LuaToJson(table.raw_get<sol::object>(i)));
+                }
+
+                return result;
+            }
+
+            nlohmann::json result = nlohmann::json::object();
+
+            for (const auto& pair : table) {
+                if (pair.first.get_type() != sol::type::string)
+                    throw std::runtime_error("JSON object keys must be strings");
+
+                std::string key = pair.first.as<std::string>();
+                result[key] = LuaToJson(pair.second);
+            }
+
+            return result;
+        }
+
+        default:
+            throw std::runtime_error("Unsupported Lua type for JSON encoding");
+        }
+    }
+
+    static sol::object JsonToLua(const nlohmann::json& value, sol::state_view lua) {
+        if (value.is_null())
+            return sol::make_object(lua, sol::lua_nil);
+
+        if (value.is_boolean())
+            return sol::make_object(lua, value.get<bool>());
+
+        if (value.is_number_integer())
+            return sol::make_object(lua, value.get<long long>());
+
+        if (value.is_number())
+            return sol::make_object(lua, value.get<double>());
+
+        if (value.is_string())
+            return sol::make_object(lua, value.get<std::string>());
+
+        if (value.is_array()) {
+            sol::table result = lua.create_table();
+
+            for (size_t i = 0; i < value.size(); i++) {
+                result[i + 1] = JsonToLua(value[i], lua);
+            }
+
+            return sol::make_object(lua, result);
+        }
+
+        if (value.is_object()) {
+            sol::table result = lua.create_table();
+
+            for (auto it = value.begin(); it != value.end(); ++it) {
+                result[it.key()] = JsonToLua(it.value(), lua);
+            }
+
+            return sol::make_object(lua, result);
+        }
+
+        return sol::lua_nil;
+    }
+
+    sol::object JSONEncode(sol::object value, sol::this_state state) {
+        try {
+            std::string encoded = LuaToJson(value).dump();
+            return sol::make_object(state, encoded);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "JSON Encode Error: " << e.what() << std::endl;
+            return sol::lua_nil;
+        }
+    }
+
+    sol::object JSONDecode(const std::string& input, sol::this_state state) {
+        try {
+            nlohmann::json decoded = nlohmann::json::parse(input);
+            sol::state_view lua(state);
+            return JsonToLua(decoded, lua);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "JSON Decode Error: " << e.what() << std::endl;
+            return sol::lua_nil;
+        }
     }
 }

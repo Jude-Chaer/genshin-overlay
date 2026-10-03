@@ -17,6 +17,16 @@ namespace Extensions {
         String
     };
 
+    enum class ExtensionPermissionTypes {
+        None,
+        ExternalReadfile,
+		InternalReadfile,
+		ExternalWritefile,
+        InternalWritefile,
+		NetworkAccess,
+		DisplayOverlay,
+    };
+
     struct ExtensionSetting {
         std::string id;
         std::string label;
