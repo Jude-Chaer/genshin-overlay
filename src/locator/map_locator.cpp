@@ -24,6 +24,7 @@ namespace MapLocator {
     static constexpr double REF_SCALE = 0.5;  // reference art is SIFT'd at half size
     static constexpr int QUERY_WIDTHS[] = { 1920, 960, 480 };
     static constexpr int FAST_QUERY_WIDTHS[] = { 960, 480 };
+    static constexpr int SMALL_FIRST_WIDTHS[] = { 480, 960 };
     static constexpr int STRONG_INLIERS = 60;
     static constexpr int MIN_INLIERS = 12;  // real locks got 66+, wrong ones never above 8
     static constexpr double RATIO = 0.8;
@@ -618,7 +619,7 @@ namespace MapLocator {
         auto strongest = [&]() { return (std::max)(surface.inliers, floor.inliers); };
 
         auto pass = [&](const cv::Mat& graySource, std::vector<Query>* keep) {
-            const int* widths = fast ? FAST_QUERY_WIDTHS : QUERY_WIDTHS;
+            const int* widths = fast ? (smallFirst ? SMALL_FIRST_WIDTHS : FAST_QUERY_WIDTHS) : QUERY_WIDTHS;
             size_t count = fast ? std::size(FAST_QUERY_WIDTHS) : std::size(QUERY_WIDTHS);
             for (size_t i = 0; i < count; i++) {
                 Query query;
@@ -707,156 +708,6 @@ namespace MapLocator {
         m_hasLast = true;
         m_last = best;
         return best;
-    }
-
-
-    // while following, every 8th tick is a full resolution match to keep it accurate
-    static constexpr int FULL_EVERY = 8;
-    // Starting to follow needs more than staying on it (MIN_INLIERS). Most frames
-    // with no fix are normal gameplay, and they must never pass as the map.
-    static constexpr int FIRST_FIX_INLIERS = 25;
-    // after this many misses the map is taken as closed and we go back to quick looks
-    static constexpr int MISSES_BEFORE_LOST = 2;
-    // A fast miss is only rechecked at full resolution if the fast look still
-    // found this many matching points. A floor the half resolution pass missed
-    // leaves a few, a gameplay frame leaves almost none.
-    static constexpr int RECHECK_INLIERS = 6;
-    static constexpr double STILL_DIFF = 1.5;  // mean brightness change of a still frame
-    static constexpr int THUMB_W = 48, THUMB_H = 22;
-
-    static bool samePlace(const Result& a, const Result& b) {
-        return a.mapId == b.mapId && a.groupId == b.groupId && a.floorId == b.floorId;
-    }
-
-    void Tracker::Reset() {
-        m_lastThumb.release();
-        m_hasFix = false;
-        m_claimed = false;
-        m_ticksSinceFull = 0;
-        m_misses = 0;
-    }
-
-    bool Tracker::Decide(const Result& result, bool fromFull, Result& out) {
-        if (!result.found) return false;
-        if (!m_hasFix || samePlace(result, m_fix)) {
-            m_claimed = false;
-            out = result;
-            return true;
-        }
-
-        // a different map or floor has to be seen by two full matches in a row
-        if (!fromFull) return false;
-        if (m_claimed && samePlace(result, m_claim)) {
-            m_claimed = false;
-            out = result;
-            return true;
-        }
-        m_claimed = true;
-        m_claim = result;
-
-        if (result.mapId == m_fix.mapId) {
-            // follow the position but stay on the current floor for now
-            out = result;
-            out.groupId = m_fix.groupId;
-            out.floorId = m_fix.floorId;
-        }
-        else {
-            out = m_fix;
-        }
-        return true;
-    }
-
-    TrackStep Tracker::Step(Index& index, const cv::Mat& bgr, double cx, double cy) {
-        TrackStep step;
-        if (bgr.empty() || !index.IsReady()) return step;
-
-        cv::Mat gray, thumb;
-        try {
-            cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
-            cv::resize(gray, thumb, cv::Size(THUMB_W, THUMB_H), 0, 0, cv::INTER_AREA);
-        }
-        catch (...) {
-            return step;
-        }
-
-        // Skip frames that didn't change, unless a floor change is waiting to be confirmed.
-        // If the last frame had no map, an unchanged one has no map either, so it
-        // counts as a miss. Otherwise standing still after closing the map would
-        // never reach MISSES_BEFORE_LOST and the old position would stay forever.
-        if (!m_lastThumb.empty() && !m_claimed && cv::norm(thumb, m_lastThumb, cv::NORM_L1) / (THUMB_W * THUMB_H) < STILL_DIFF) {
-            if (m_lastMissed) {
-                if (m_hasFix && ++m_misses >= MISSES_BEFORE_LOST) {
-                    Reset();
-                }
-                return step;
-            }
-            step.kind = TrackStep::Still;
-            return step;
-        }
-
-        // Nothing followed yet: one quick half resolution look, without the slow
-        // extra passes. Most of these frames are gameplay, and they need to fail fast.
-        if (!m_hasFix) {
-            m_lastThumb = thumb;
-            Result result = index.Match(bgr, cx, cy, true, false);
-            m_lastMissed = !result.found || result.inliers < FIRST_FIX_INLIERS;
-            if (m_lastMissed) return step;
-
-            m_hasFix = true;
-            m_fix = result;
-            m_misses = 0;
-            m_ticksSinceFull = 0;
-            step.kind = TrackStep::Apply;
-            step.result = result;
-            return step;
-        }
-
-        bool fast = !m_claimed && m_ticksSinceFull < FULL_EVERY;
-        if (fast) {
-            m_ticksSinceFull++;
-        }
-        else {
-            m_ticksSinceFull = 0;
-        }
-
-        auto full = [&]() {
-            m_ticksSinceFull = 0;
-            return index.Match(bgr, cx, cy, false, false);
-        };
-
-        // A fast miss, or a fast match on another floor, gets checked again at full
-        // resolution. Only when the fast look saw at least a trace of the map though:
-        // after the map closes it sees next to nothing, and a full check on a 4K
-        // gameplay frame takes over a second.
-        Result result = index.Match(bgr, cx, cy, fast, false);
-        Result shown;
-        bool ok;
-        if (!result.found) {
-            ok = fast && m_misses == 0 && result.inliers >= RECHECK_INLIERS && Decide(full(), true, shown);
-        }
-        else if (!fast) {
-            ok = Decide(result, true, shown);
-        }
-        else {
-            ok = Decide(result, false, shown) || Decide(full(), true, shown);
-        }
-
-        m_lastThumb = thumb;
-        m_lastMissed = !ok;
-        if (!ok) {
-            m_claimed = false;
-            // the map was probably closed, go back to quick looks so gameplay frames stay cheap
-            if (++m_misses >= MISSES_BEFORE_LOST) {
-                Reset();
-            }
-            return step;
-        }
-
-        m_misses = 0;
-        m_fix = shown;
-        step.kind = TrackStep::Apply;
-        step.result = shown;
-        return step;
     }
 
 }

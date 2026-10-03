@@ -1,6 +1,7 @@
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "lua_functions.hpp"
+#include "settings.hpp"
 #include <imgui.h>
 #include <iostream>
 
@@ -46,16 +47,76 @@ namespace Extensions {
         }
     }
 
-    static void drawSetting(ExtensionSetting& setting) {
+    // kept per extension folder in settings.json
+    static void saveSettings() {
+        nlohmann::json all = Settings::LoadExtensions();
+        for (auto& ext : registeredExtensions) {
+            nlohmann::json& saved = all[ext->folder.filename().string()];
+            for (const auto& [id, setting] : ext->settings) {
+                std::visit([&](auto&& value) { saved[id] = value; }, setting.value);
+            }
+        }
+        Settings::SaveExtensions(all);
+    }
+
+    // a saved value that isn't the setting's type anymore is left out
+    static void loadSettings() {
+        nlohmann::json all = Settings::LoadExtensions();
+        for (auto& ext : registeredExtensions) {
+            auto saved = all.find(ext->folder.filename().string());
+            if (saved == all.end() || !saved->is_object()) continue;
+            for (auto& [id, setting] : ext->settings) {
+                auto it = saved->find(id);
+                if (it == saved->end()) continue;
+                std::visit([&](auto&& current) {
+                    try { setting.value = it->get<std::decay_t<decltype(current)>>(); }
+                    catch (const nlohmann::json::exception&) {}
+                }, setting.value);
+            }
+        }
+    }
+
+    // true once a change is done (let go of the slider, clicked, ...), so it gets saved then
+    static bool drawSetting(ExtensionSetting& setting) {
+        bool done = false;
         switch (setting.type) {
         case ExtensionSettingTypes::Bool:
-            ImGui::Checkbox(setting.label.c_str(), &std::get<bool>(setting.value));
+            done = ImGui::Checkbox(setting.label.c_str(), &std::get<bool>(setting.value));
             break;
         case ExtensionSettingTypes::Int:
             ImGui::InputInt(setting.label.c_str(), &std::get<int>(setting.value));
+            done = ImGui::IsItemDeactivatedAfterEdit();
             break;
         case ExtensionSettingTypes::Float:
-            ImGui::InputFloat(setting.label.c_str(), &std::get<float>(setting.value));
+            if (setting.min && setting.max) {
+                // Slider, and next to it the number, drag on it for small steps.
+                // No typing, the overlay never gets the keyboard, the game keeps it.
+                float& value = std::get<float>(setting.value);
+                ImGui::PushID(setting.id.c_str());
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10);
+                ImGui::SliderFloat("##slider", &value, *setting.min, *setting.max, "", ImGuiSliderFlags_NoInput);
+                done |= ImGui::IsItemDeactivatedAfterEdit();
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4);
+                float step = (*setting.max - *setting.min) / 200.0f;
+                ImGui::DragFloat("##number", &value, step, *setting.min, *setting.max, "%.2f",
+                    ImGuiSliderFlags_NoInput | ImGuiSliderFlags_AlwaysClamp);
+                done |= ImGui::IsItemDeactivatedAfterEdit();
+                ImGui::SameLine();
+                ImGui::TextUnformatted(setting.label.c_str());
+                ImGui::SameLine();
+                ImGui::BeginDisabled(value == std::get<float>(setting.defaultValue));
+                if (ImGui::SmallButton("Reset")) {
+                    value = std::get<float>(setting.defaultValue);
+                    done = true;
+                }
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            else {
+                ImGui::InputFloat(setting.label.c_str(), &std::get<float>(setting.value));
+                done = ImGui::IsItemDeactivatedAfterEdit();
+            }
             break;
         case ExtensionSettingTypes::String: {
             // ImGui edits text in a plain char buffer
@@ -65,9 +126,11 @@ namespace Extensions {
             if (ImGui::InputText(setting.label.c_str(), buffer, sizeof(buffer))) {
                 text = buffer;
             }
+            done = ImGui::IsItemDeactivatedAfterEdit();
             break;
         }
         }
+        return done;
     }
 
     // one section per extension: icon, info, settings, then its own Menu()
@@ -122,8 +185,8 @@ namespace Extensions {
         for (const auto& id : ext->settingsOrder) {
             auto it = ext->settings.find(id);
 
-            if (it != ext->settings.end()) {
-                drawSetting(it->second);
+            if (it != ext->settings.end() && drawSetting(it->second)) {
+                saveSettings();
             }
         }
 
@@ -139,6 +202,7 @@ namespace Extensions {
         for (auto& ext : registeredExtensions) {
             runForExtension(ext.get(), ext->registerSettings);
         }
+        loadSettings();
     }
 
     // every folder in extensions/ with a main.lua in it is an extension

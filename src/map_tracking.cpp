@@ -1,56 +1,91 @@
 #include "map_tracking.hpp"
 #include "capture.hpp"
 #include "map_data.hpp"
+#include "map_follow.hpp"
+#include "map_check.hpp"
+#include "settings.hpp"
 #include "helpers.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <dwmapi.h>
 #include <iostream>
 #include <mutex>
 #include <thread>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 
-// How it fits together: Tick runs on the main thread every frame. About every
-// 120ms it takes a screenshot of the game and hands it to the worker thread,
-// which runs the Tracker on it and updates the view. A new screenshot is only
-// taken once the worker is done with the last one, so a slow match never piles
-// up frames, it just lowers how often the view updates.
+// How it fits together. Four threads:
+//   zoom bar detector  says if the in-game map is open
+//   follow thread      while it's open, wakes up for every frame the game
+//                      draws, grabs a few patches of it and compares them
+//                      (MapFollow), which moves the view
+//   worker             SIFT, slow. Finds the map, finds it again when the
+//                      compare lost it, and lands it exactly once it stops.
+//   tile check         MapCheck, keeps the view lined up while it moves
+// SIFT and the tile check answer for the frame they were given. The follower
+// knows how the map moved since, so their answers fix the view without waiting.
+// The draw loop only reads the view, through GetView.
 //
 // Closing the map is noticed two ways. Pressing M or Esc hides the view right
 // away, when running as admin. Anything else (the X button, a controller) is
-// noticed when the screenshots stop matching, which takes about a second.
+// noticed by the zoom bar going away.
 
 namespace MapTracking {
-    static constexpr auto TICK_INTERVAL = std::chrono::milliseconds(120);
-    // two misses in a row before hiding, so one blurry frame while dragging doesn't make it flicker
-    static constexpr int MISSES_BEFORE_HIDE = 2;
+    // The map is followed exactly while FollowWhileMoving was called this
+    // recently, loosely otherwise.
+    static constexpr auto FOLLOW_ASKED_FOR = std::chrono::milliseconds(500);
+    // when it was last called, steady_clock ticks
+    static std::atomic<std::chrono::steady_clock::rep> followAskedAt{ 0 };
+    // follow thread only
+    static bool followExact = false;
+    // the last GetView had a map in it
+    static std::atomic<bool> viewGiven{ false };
+    // Finding the map needs this many matching points. Following it takes
+    // any match SIFT calls found.
+    static constexpr int FIRST_FIX_INLIERS = 15;
 
     static std::atomic<Status> status{ Status::NoData };
     static std::atomic<bool> stopping{ false };
     static std::thread worker;
+    static std::thread followWorker;
+    static std::atomic<HWND> overlayWindow{ nullptr };
+    // held for a whole step, by the follow thread or by the draw loop (Settings::followOnThread)
+    static std::mutex stepMutex;
     static std::mutex mutex;
     static std::condition_variable wake;
 
     static MapLocator::Index index;
-    static MapLocator::Tracker tracker;
 
     // guarded by mutex
     static bool frameWaiting = false;
     static bool busy = false;
     static bool resetTracker = false;
     static cv::Mat frame;
-    static RECT frameRect = {};
-    static std::chrono::steady_clock::time_point frameTime;
+    static bool matchDone = false;
+    static MapLocator::Result matched;
     static MapView view;
     static std::chrono::steady_clock::time_point lastUpdate;
-    static int misses = 0;
+    // goes up with every publish, WaitForDraw waits for the next one
+    static uint64_t answers = 0;
+    static std::condition_variable answered;
+
+    // follow thread only
+    static MapFollow::Follower follower;
+    // a copy of it for GetView, so drawing never waits for a step. Guarded by mutex
+    static MapFollow::Follower shown;
+    // the last frame handed to the follower, and its id there
+    static Capture::Frame lastGameFrame;
+    static int frameId = 0;
+    // The frame SIFT was given. Session goes up with every reset, a result
+    // from before the reset is dropped.
+    static int sentId = 0;
+    static int session = 0, sentSession = -1;
 
     static std::atomic<float> lastStepMs{ 0.0f };
     static std::string downloadStage;
     static std::atomic<int> downloadPercent{ 0 };
 
-    static std::chrono::steady_clock::time_point lastCapture;
     static HWND lastGameWindow = nullptr;
 
     // After M or Esc closes the map, the game takes about half a second to fade
@@ -81,7 +116,7 @@ namespace MapTracking {
     static constexpr auto DETECTOR_INTERVAL =
         std::chrono::milliseconds(50);
 
-    // loads the index once, then matches whatever frame Tick hands over
+    // loads the index once, then matches whatever frame follow hands over
     static void workerLoop(std::filesystem::path dataFolder) {
         status = Status::Downloading;
         bool ready = MapData::ensure(dataFolder, [](const char* stage, int percent) {
@@ -111,50 +146,128 @@ namespace MapTracking {
             if (stopping) return;
 
             cv::Mat current = frame;
-            RECT rect = frameRect;
-            auto takenAt = frameTime;
             frame.release();
             frameWaiting = false;
             busy = true;
-            if (resetTracker) {
-                tracker.Reset();
-                resetTracker = false;
-            }
             lock.unlock();
 
+            // fast: the game at half resolution at most, also to land when the map stops
             double cx = current.cols / 2.0;
             double cy = current.rows / 2.0;
             auto started = std::chrono::steady_clock::now();
-            MapLocator::TrackStep step = tracker.Step(index, current, cx, cy);
+            index.smallFirst = Settings::findSmallFirst;
+            MapLocator::Result result = index.Match(current, cx, cy, true, false);
             lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - started).count();
 
             lock.lock();
             busy = false;
-            // taken while the map was still fading out, checked by when the
-            // screenshot was taken, not when the match finished
-            if (takenAt < ignoreUntil) {
-                resetTracker = true;
-            }
-            else if (step.kind == MapLocator::TrackStep::Apply) {
-                view.visible = true;
-                view.result = step.result;
-                view.gameRect = rect;
-                lastUpdate = std::chrono::steady_clock::now();
-                misses = 0;
-            }
-            else if (step.kind == MapLocator::TrackStep::Miss) {
-                if (++misses >= MISSES_BEFORE_HIDE) {
-                    view.visible = false;
-                }
-            }
+            matched = result;
+            matchDone = true;
         }
     }
+
+    // Hands what the follower knows to GetView and wakes the draw loop.
+    // Takes the lock and keeps it.
+    static void publish(std::unique_lock<std::mutex>& lock, const RECT& rect, std::chrono::steady_clock::time_point now) {
+        lock.lock();
+        // closed while we were at it
+        if (resetTracker) return;
+        shown = follower;
+        view.visible = follower.Visible();
+        view.result = follower.View();
+        view.gameRect = rect;
+        lastUpdate = now;
+        answers++;
+        answered.notify_all();
+    }
+
+    // One step of following: takes back SIFT's and the tile check's answers,
+    // grabs the newest frame for the follower, and hands SIFT a whole grab
+    // when the follower wants one.
+    static void follow(HWND game, const RECT& rect, std::chrono::steady_clock::time_point now) {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (resetTracker) {
+            resetTracker = false;
+            session++;
+            follower.Reset();
+            lastGameFrame = {};
+        }
+        bool canSend = !busy && !frameWaiting;
+        bool gotMatch = matchDone;
+        MapLocator::Result match = matched;
+        matchDone = false;
+        lock.unlock();
+
+        double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+        if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
+            follower.Matched(sentId, match, seconds);
+        }
+        int checkedId = 0;
+        MapLocator::Result checked;
+        if (MapCheck::Take(checkedId, checked) && Settings::lineUpWithMap) follower.Checked(checkedId, checked);
+
+        // Extensions only run while there's a view, so while there's none
+        // nobody can ask and what was asked for last still goes.
+        bool asked = now - std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(followAskedAt.load())) < FOLLOW_ASKED_FOR;
+        if (asked || viewGiven) followExact = asked;
+        follower.Loose(!followExact);
+        if (!follower.WantsGrab(seconds)) {
+            // SIFT's answer may have just come back
+            publish(lock, rect, now);
+            return;
+        }
+
+        bool settle = canSend && follower.WantsSettle(seconds);
+        bool look = canSend && !settle && follower.WantsLook(seconds);
+        Capture::Frame gameFrame = lastGameFrame;
+        MapFollow::Patches patches;
+        cv::Mat screenshot, wide;
+        if (settle || look) {
+            if (!Capture::grabGame(game, rect, screenshot, &gameFrame)) return;
+            if (gameFrame.number != lastGameFrame.number) {
+                patches = MapFollow::cut(screenshot, rect);
+                wide = MapFollow::cutWide(screenshot);
+            }
+        }
+        else if (!MapFollow::grab(game, rect, patches, wide, gameFrame)) {
+            // the game didn't draw a new frame yet
+            return;
+        }
+        follower.Grabbed(seconds);
+        if (!patches.empty()) {
+            int frames = lastGameFrame.number ? (int)std::min<uint64_t>(gameFrame.number - lastGameFrame.number, 100) : 1;
+            lastGameFrame = gameFrame;
+            follower.Frame(++frameId, patches, wide, rect, gameFrame.seconds, frames);
+            // loosely it's hidden while it moves, nothing to line up
+            if (followExact && follower.Visible() && Settings::lineUpWithMap) {
+                MapCheck::Check(frameId, patches, rect, follower.View());
+            }
+        }
+
+        if (settle || look) {
+            sentId = frameId;
+            sentSession = session;
+            if (settle) follower.Settling();
+            else follower.Looking(seconds);
+
+            lock.lock();
+            frame = screenshot;
+            frameWaiting = true;
+            lock.unlock();
+            wake.notify_one();
+        }
+
+        publish(lock, rect, now);
+    }
+
+    static void followLoop();
 
     void Start(const std::filesystem::path& dataFolder) {
         if (worker.joinable()) return;
         stopping = false;
         detectorStopping = false;
         worker = std::thread(workerLoop, dataFolder);
+        followWorker = std::thread(followLoop);
 		detectorWorker = std::thread(zoombarDetectorLoop);  
     }
 
@@ -175,6 +288,9 @@ namespace MapTracking {
         if (worker.joinable())
             worker.join();
 
+        if (followWorker.joinable())
+            followWorker.join();
+
         Capture::closeGameCapture();
     }
 
@@ -185,7 +301,6 @@ namespace MapTracking {
             view.visible = false;
             resetTracker = true;
         }
-        misses = 0;
     }
 
     // M and Esc open and close the map, no need to wait for the screenshots to
@@ -206,38 +321,37 @@ namespace MapTracking {
         if (view.visible) {
             view.visible = false;
             resetTracker = true;
-            misses = 0;
             ignoreUntil = std::chrono::steady_clock::now() + IGNORE_AFTER_CLOSE;
         }
         else {
-            // the map is probably opening, look now instead of at the next tick.
-            // If it's still mid animation that look misses and the next tick catches it.
-            lastCapture = {};
+            // the map is probably opening, look now instead of waiting.
+            // If it's still mid animation that look misses and the next one catches it.
+            follower.LookNow();
         }
     }
 
-    void Tick(HWND overlayWindow) {
-        if (status != Status::Ready) return;
+    // one step if the game is in front and its map open, false if there's nothing to follow now
+    static bool step() {
+        if (status != Status::Ready) return false;
 
         // only capture while the game, or our own menu, is in front
         HWND game = Capture::findGameWindow();
         HWND foreground = GetForegroundWindow();
-        if (!game || IsIconic(game) || (foreground != game && foreground != overlayWindow)) {
+        if (!game || IsIconic(game) || (foreground != game && foreground != overlayWindow.load())) {
             hide();
-            return;
+            return false;
         }
 
         if (!mapOpen.load(std::memory_order_acquire))
-            return;
+            return false;
 
         // every frame, a quick tap would slip between two screenshots
         checkMapKeys();
 
         auto now = std::chrono::steady_clock::now();
-        if (now - lastCapture < TICK_INTERVAL) return;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (now < ignoreUntil) return;
+            if (now < ignoreUntil) return true;
         }
 
         if (game != lastGameWindow) {
@@ -246,31 +360,45 @@ namespace MapTracking {
             resetTracker = true;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            // still working on the last one
-            if (busy || frameWaiting) return;
-        }
-
         RECT rect;
-        if (!Capture::getClientRectOnScreen(game, rect)) return;
+        if (!Capture::getClientRectOnScreen(game, rect)) return false;
 
-        cv::Mat screenshot;
-        lastCapture = now;
-        if (!Capture::grabGame(game, rect, screenshot)) return;
+        follow(game, rect, now);
+        return true;
+    }
 
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            frame = screenshot;
-            frameRect = rect;
-            frameTime = now;
-            frameWaiting = true;
+    // The follow thread. Steps when the game hands over a frame, so the draw
+    // loop never waits for a grab.
+    static void followLoop() {
+        while (!stopping) {
+            bool following = false;
+            if (Settings::followOnThread) {
+                std::lock_guard<std::mutex> lock(stepMutex);
+                following = step();
+            }
+            if (following) Capture::waitForGameFrame(20);
+            else std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        wake.notify_one();
+    }
+
+    void Tick(HWND window) {
+        overlayWindow = window;
+        if (!Settings::followOnThread) {
+            std::lock_guard<std::mutex> lock(stepMutex);
+            step();
+        }
     }
 
     Status GetStatus() {
         return status;
+    }
+
+    bool IsMapOpen() {
+        return mapOpen.load(std::memory_order_acquire);
+    }
+
+    void FollowWhileMoving() {
+        followAskedAt = std::chrono::steady_clock::now().time_since_epoch().count();
     }
 
     float GetLastStepMs() {
@@ -283,10 +411,62 @@ namespace MapTracking {
         return downloadStage;
     }
 
+    // seconds between two screen refreshes
+    static double refreshSeconds() {
+        static double seconds = 0.0;
+        if (seconds > 0.0) return seconds;
+        DWM_TIMING_INFO timing = { sizeof(timing) };
+        LARGE_INTEGER frequency;
+        if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &timing)) && QueryPerformanceFrequency(&frequency) && timing.qpcRefreshPeriod) {
+            seconds = (double)timing.qpcRefreshPeriod / frequency.QuadPart;
+        }
+        else {
+            seconds = 1.0 / 60.0;
+        }
+        return seconds;
+    }
+
+    // When what's drawn now gets on screen. Windows puts the screen together
+    // right after a refresh out of what was drawn until then, and shows that
+    // on the refresh after.
+    static double shownAt(double now) {
+        DWM_TIMING_INFO timing = { sizeof(timing) };
+        LARGE_INTEGER frequency;
+        double refresh = refreshSeconds();
+        if (FAILED(DwmGetCompositionTimingInfo(nullptr, &timing)) || !QueryPerformanceFrequency(&frequency)) return now + refresh;
+        double blank = (double)timing.qpcVBlank / frequency.QuadPart;
+        double next = blank + std::ceil((now - blank) / refresh) * refresh;
+        return next + refresh;
+    }
+
+    // The follow thread has its answer early in a refresh. Drawing right
+    // then gets it on screen one refresh sooner than drawing after DwmFlush.
+    void WaitForDraw() {
+        static uint64_t drawn = 0;
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!Settings::followOnThread || !view.visible) {
+            lock.unlock();
+            DwmFlush();
+            return;
+        }
+        answered.wait_for(lock, std::chrono::milliseconds(20), []() { return answers != drawn; });
+        drawn = answers;
+    }
+
     MapView GetView() {
         std::lock_guard<std::mutex> lock(mutex);
         MapView copy = view;
-        copy.secondsSinceUpdate = std::chrono::duration<double>(std::chrono::steady_clock::now() - lastUpdate).count();
+        auto now = std::chrono::steady_clock::now();
+        copy.secondsSinceUpdate = std::chrono::duration<double>(now - lastUpdate).count();
+        if (copy.visible) {
+            // What we draw now shows up about a screen refresh later than the
+            // game's frame drawn now does, so the view is for then.
+            double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+            copy.result = shown.Ahead(Settings::followOnThread ? shownAt(seconds) : seconds + refreshSeconds());
+            copy.moving = !shown.Landed(seconds);
+            if (shown.Hidden(seconds)) copy.visible = false;
+        }
+        viewGiven = copy.visible;
         return copy;
     }
 
@@ -395,11 +575,11 @@ namespace MapTracking {
                 if (previousOpen) {
                     previousOpen = false;
                     mapOpen = false;
+                    Capture::setLight(true);
 
                     std::lock_guard<std::mutex> lock(mutex);
                     view.visible = false;
                     resetTracker = true;
-                    misses = 0;
                 }
                 std::this_thread::sleep_for(DETECTOR_INTERVAL);
                 continue;
@@ -412,21 +592,18 @@ namespace MapTracking {
                 if (open != previousOpen) {
                     previousOpen = open;
                     mapOpen = open;
+                    Capture::setLight(!open);
+
                     if (open) {
                         std::lock_guard<std::mutex> lock(mutex);
 
                         resetTracker = true;
-                        misses = 0;
-                        lastCapture = {};
                     }
                     else {
                         std::lock_guard<std::mutex> lock(mutex);
 
                         view.visible = false;
                         resetTracker = true;
-                        misses = 0;
-                        // a match still running would bring the view back
-                        ignoreUntil = std::chrono::steady_clock::now();
                     }
                 }
             }
