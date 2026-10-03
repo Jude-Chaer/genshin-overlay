@@ -221,7 +221,6 @@ namespace Extensions {
                 loadLuaExtension(scriptPath, dirEntry.path());
             }
         }
-        hashExtensions();
     }
 
     // wraps a Lua function so an error gets printed instead of taking the overlay down
@@ -296,13 +295,55 @@ namespace Extensions {
                 ext->extensionImageHeight
             );
         }
+        
+        std::vector<std::pair<std::string, std::string>> luaFileHashes;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(folderPath)) {
+            if (!entry.is_regular_file())
+                continue;
 
+            if (entry.path().extension() != ".lua")
+                continue;
+
+            std::filesystem::path relative =
+                std::filesystem::relative(entry.path(), folderPath);
+
+            std::string fileHash = Helpers::hashFile(entry.path());
+
+            if (fileHash.empty()) {
+                std::cerr << "Failed to hash " << entry.path() << std::endl;
+                return;
+            }
+
+            luaFileHashes.emplace_back(
+                relative.generic_string(),
+                fileHash
+            );
+        }
+        std::sort(
+            luaFileHashes.begin(),
+            luaFileHashes.end(),
+            [](const auto& a, const auto& b) {
+                return a.first < b.first;
+            }
+        );
+
+        std::string combined;
+
+        for (const auto& [path, hash] : luaFileHashes) {
+            combined += path;
+            combined += "\n";
+            combined += hash;
+            combined += "\n";
+        }
+
+        ext->extensionHash = Helpers::hashString(combined);
+		loadExtensionPermissions(ext.get());
         ext->initializeFunction = getLuaFunction(env, "Init", ext->name);
         ext->updateFunction = getLuaFunction(env, "Update", ext->name);
         ext->menuFunction = getLuaFunction(env, "Menu", ext->name);
         ext->registerSettings = getLuaFunction(env, "RegisterSettings", ext->name);
         ext->shutdownFunction = getLuaFunction(env, "Shutdown", ext->name);
-
+		std::cout << "Loaded extension: " << ext->name << " Hash: " << ext->extensionHash << std::endl;
         registeredExtensions.push_back(std::move(ext));
     }
 
@@ -314,48 +355,26 @@ namespace Extensions {
             ImGui::Text("%s", ext->name.c_str());
             ImGui::TextDisabled("%s  v%s", ext->author.c_str(), ext->version.c_str());
             ImGui::TextWrapped("%s", ext->description.c_str());
+            ImGui::Separator();
+            ImGui::PushID(ext.get());
+            for (auto permission : allPermissions) {
+                if (permission.first == ExtensionPermissionTypes::None) continue;
+                bool hasPermission = ext->extensionPermissions.count(permission.first) > 0;
+                std::string permissionName = permission.second;
+                if (ImGui::Checkbox(permissionName.c_str(), &hasPermission)) {
+                    if (hasPermission) {
+                        ext->extensionPermissions.insert(permission.first);
+                    }
+                    else {
+                        ext->extensionPermissions.erase(permission.first);
+                    }
+                    Settings::SaveExtensionPermissions(ext->extensionHash, ext->extensionPermissions);
+                }
+            }
+            ImGui::PopID();
         }
     }
-
-    void hashExtensions(){
-        for (auto& ext : registeredExtensions) {
-            std::vector<std::filesystem::path> luaFiles;
-
-            for (const auto& entry :
-                std::filesystem::recursive_directory_iterator(ext->folder)) {
-
-                if (!entry.is_regular_file())
-                    continue;
-
-                if (entry.path().extension() != ".lua")
-                    continue;
-
-                luaFiles.push_back(entry.path());
-            }
-
-            std::sort(
-                luaFiles.begin(),
-                luaFiles.end(),
-                [&](const auto& a, const auto& b) {
-                    return std::filesystem::relative(a, ext->folder).generic_string() <
-                        std::filesystem::relative(b, ext->folder).generic_string();
-                }
-            );
-
-            std::string combined;
-
-            for (const auto& file : luaFiles) {
-                std::filesystem::path relative =
-                    std::filesystem::relative(file, ext->folder);
-
-                combined += relative.generic_string();
-                combined += "\n";
-                combined += Helpers::hashFile(file);
-                combined += "\n";
-            }
-
-            ext->extensionHash = Helpers::hashString(combined);
-			std::cout << "Extension " << ext->name << " hash: " << ext->extensionHash << std::endl;
-        }
+    void loadExtensionPermissions(Extension* ext) {
+        ext->extensionPermissions = Settings::LoadExtensionPermissions(ext->extensionHash);
     }
 }

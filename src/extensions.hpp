@@ -30,6 +30,17 @@ namespace Extensions {
         DisplayRead,
     };
 
+    inline const std::unordered_map<ExtensionPermissionTypes, std::string> allPermissions = {
+        {ExtensionPermissionTypes::None, "None"},
+        {ExtensionPermissionTypes::ExternalReadfile, "External File Reading"},
+        {ExtensionPermissionTypes::InternalReadfile, "Internal File Reading"},
+        {ExtensionPermissionTypes::ExternalWritefile, "External File Writing"},
+        {ExtensionPermissionTypes::InternalWritefile, "Internal File Writing"},
+        {ExtensionPermissionTypes::NetworkAccess, "Network Access"},
+        {ExtensionPermissionTypes::DisplayOverlay, "Display Overlay"},
+        {ExtensionPermissionTypes::DisplayRead, "Display Read"}
+    };
+
     struct ExtensionSetting {
         std::string id;
         std::string label;
@@ -77,5 +88,5 @@ namespace Extensions {
     extern void loadLuaExtension(const std::filesystem::path& scriptPath, const std::filesystem::path& folderPath);
     extern void runForExtension(Extension* ext, const std::function<void()>& function);
     extern void drawExtensionPermissionMenu();
-    extern void hashExtensions();
+    extern void loadExtensionPermissions(Extension* ext);
 }
