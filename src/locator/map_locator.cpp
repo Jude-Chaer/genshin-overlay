@@ -297,6 +297,16 @@ namespace MapLocator {
         return ok;
     }
 
+    void Index::Unload() {
+        m_kd.reset();
+        m_sift = nullptr;
+        m_descriptors.release();
+        m_points.clear();
+        m_pieceOf.clear();
+        m_pieces.clear();
+        m_hasLast = false;
+    }
+
     bool Index::LoadImpl(const fs::path& manifest, const std::atomic<bool>* cancel, int maxThreads) {
         m_sift = cv::SIFT::create(0, 3, 0.04, 10, 1.6, CV_8U);
         m_kd.reset();

@@ -39,6 +39,7 @@ namespace MapLocator {
         // Reads index.bin next to the manifest, or builds it from the reference
         // images if it's missing or stale. Takes ~2s from the cache, ~10s to build.
         bool Load(const std::filesystem::path& manifest, const std::atomic<bool>* cancel = nullptr, int maxThreads = 12);
+        void Unload();
         bool IsReady() const { return !m_descriptors.empty() && m_kd != nullptr; }
 
         // fast skips the full resolution pass, used while tracking.
