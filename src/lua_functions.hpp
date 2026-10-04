@@ -5,9 +5,23 @@
 #include <tuple>
 #include "keybindings.hpp"
 #include "net.hpp"
+#include "extensions.hpp"
 
 namespace LuaFunctions {
     void registerLuaFunctions(sol::state& luaState);
+
+    const std::unordered_map<std::string, std::vector<Extensions::ExtensionPermissionTypes>> functionPermissions = {
+        { "LuaFunctions::LoadTexture", { Extensions::ExtensionPermissionTypes::InternalReadfile } },
+        { "LuaFunctions::NetGet", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::NetPost", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::RegisterKeybind", { Extensions::ExtensionPermissionTypes::Keybinds } },
+        { "LuaFunctions::DrawImage", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
+        { "LuaFunctions::ReadFile", {Extensions::ExtensionPermissionTypes::InternalReadfile}}, // External has to be checked within the function, once the paths are resolved
+		{ "LuaFunctions::WriteFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved
+		{ "LuaFunctions::AppendFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved}
+    };
+
+    bool checkPermissions(const std::string& functionName);
 
     void ImGUI_Text(const std::string& str);
     void ImGUI_Button(const std::string& label, sol::protected_function callback);
@@ -29,4 +43,9 @@ namespace LuaFunctions {
     void PopClipRect();
     sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab);
 	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab);
+    sol::object JSONEncode(sol::object value, sol::this_state state);
+    sol::object JSONDecode(const std::string& json, sol::this_state state);
+	std::string ReadFile(const std::string& path);
+	bool WriteFile(const std::string& path, const std::string& contents);
+	bool AppendFile(const std::string& path, const std::string& contents);
 }

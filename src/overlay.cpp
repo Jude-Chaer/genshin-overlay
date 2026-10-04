@@ -469,7 +469,7 @@ namespace Overlay {
         case 1:
             ImGui::Text("Settings");
             ImGui::Separator();
-
+            Extensions::drawExtensionPermissionMenu();
             break;
 
         case 2:

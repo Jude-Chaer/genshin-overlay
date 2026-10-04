@@ -1,6 +1,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
-
+#include <unordered_set>
+#include "extensions.hpp"
 // The app's own settings, saved in settings.json next to the exe.
 
 namespace Settings {
@@ -32,4 +33,7 @@ namespace Settings {
     // extension settings live in the same file, under "extensions"
     extern nlohmann::json LoadExtensions();
     extern void SaveExtensions(const nlohmann::json& extensions);
+
+    extern void SaveExtensionPermissions(std::string extensionHash, std::unordered_set<Extensions::ExtensionPermissionTypes> permissions);
+    extern std::unordered_set<Extensions::ExtensionPermissionTypes> LoadExtensionPermissions(std::string extensionHash);
 }

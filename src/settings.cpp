@@ -75,4 +75,33 @@ namespace Settings {
         settings["extensions"] = extensions;
         write(settings);
     }
+
+    void SaveExtensionPermissions(std::string extensionHash, std::unordered_set<Extensions::ExtensionPermissionTypes> permissions) {
+        nlohmann::json settings = read();
+        nlohmann::json& extPermissions = settings["extensionPermissions"][extensionHash];
+        extPermissions = nlohmann::json::array();
+        for (const auto& permission : permissions) {
+            extPermissions.push_back(static_cast<int>(permission));
+        }
+        write(settings);
+	}
+    std::unordered_set<Extensions::ExtensionPermissionTypes> LoadExtensionPermissions(std::string extensionHash) {
+        nlohmann::json settings = read();
+        std::unordered_set<Extensions::ExtensionPermissionTypes> permissions;
+        auto it = settings.find("extensionPermissions");
+        if (it == settings.end() || !it->is_object() || !it->contains(extensionHash)) {
+			return Extensions::defaultPermissions;
+        }
+        if (it != settings.end() && it->is_object()) {
+            auto extIt = it->find(extensionHash);
+            if (extIt != it->end() && extIt->is_array()) {
+                for (const auto& perm : *extIt) {
+                    if (perm.is_number_integer()) {
+                        permissions.insert(static_cast<Extensions::ExtensionPermissionTypes>(perm.get<int>()));
+                    }
+                }
+            }
+        }
+        return permissions;
+	}
 }
