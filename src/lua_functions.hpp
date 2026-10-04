@@ -18,6 +18,7 @@ namespace LuaFunctions {
         { "LuaFunctions::DrawImage", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
         { "LuaFunctions::ReadFile", {Extensions::ExtensionPermissionTypes::InternalReadfile}}, // External has to be checked within the function, once the paths are resolved
 		{ "LuaFunctions::WriteFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved
+		{ "LuaFunctions::AppendFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved}
     };
 
     bool checkPermissions(const std::string& functionName);
@@ -46,4 +47,5 @@ namespace LuaFunctions {
     sol::object JSONDecode(const std::string& json, sol::this_state state);
 	std::string ReadFile(const std::string& path);
 	bool WriteFile(const std::string& path, const std::string& contents);
+	bool AppendFile(const std::string& path, const std::string& contents);
 }

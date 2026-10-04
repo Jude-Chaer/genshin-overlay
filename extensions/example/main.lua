@@ -31,7 +31,9 @@ function Init()
     end
 
     print(ReadFile("example.txt"))
-    WriteFile("example.txt", "hi.")
+    WriteFile("example.txt", "hi?")
+    print(ReadFile("example.txt"))
+    AppendFile("example.txt", "\nhello")
     print(ReadFile("example.txt"))
 end
 

@@ -43,6 +43,15 @@ namespace Extensions {
 		{ExtensionPermissionTypes::Keybinds, "Keybinds" }
     };
 
+    inline const std::unordered_set<ExtensionPermissionTypes> defaultPermissions = {
+        ExtensionPermissionTypes::DisplayOverlay,
+        ExtensionPermissionTypes::DisplayRead,
+        ExtensionPermissionTypes::Keybinds,
+        ExtensionPermissionTypes::InternalReadfile,
+        ExtensionPermissionTypes::InternalWritefile,
+        ExtensionPermissionTypes::NetworkAccess // HACK: will be removed for release, but it really helps with debugging, marking it as hack so I don't forget it
+    };
+
     struct ExtensionSetting {
         std::string id;
         std::string label;

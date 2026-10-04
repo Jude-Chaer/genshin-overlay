@@ -89,6 +89,9 @@ namespace Settings {
         nlohmann::json settings = read();
         std::unordered_set<Extensions::ExtensionPermissionTypes> permissions;
         auto it = settings.find("extensionPermissions");
+        if (it == settings.end() || !it->is_object() || !it->contains(extensionHash)) {
+			return Extensions::defaultPermissions;
+        }
         if (it != settings.end() && it->is_object()) {
             auto extIt = it->find(extensionHash);
             if (extIt != it->end() && extIt->is_array()) {
