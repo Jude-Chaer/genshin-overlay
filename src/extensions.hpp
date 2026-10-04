@@ -52,6 +52,8 @@ namespace Extensions {
         ExtensionPermissionTypes::NetworkAccess // HACK: will be removed for release, but it really helps with debugging, marking it as hack so I don't forget it
     };
 
+	inline const int ExtensionWriteLimit = 1024 * 1024 * 512; // 512MB. Write limits will be enforced only on every load, so restarting the program will reset the limit.  This is simply so that extensions don't write a ton of data to disk at once as a security measure.
+
     struct ExtensionSetting {
         std::string id;
         std::string label;
@@ -80,6 +82,7 @@ namespace Extensions {
         std::function<void()> registerSettings;
         std::function<void()> updateFunction;
         std::function<void()> menuFunction;
+        int bytesToDiskWritten = 0;
         GLuint extensionImage = 0;
         int extensionImageWidth = 0;
         int extensionImageHeight = 0;

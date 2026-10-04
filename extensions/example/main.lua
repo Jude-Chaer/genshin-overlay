@@ -35,6 +35,7 @@ function Init()
     print(ReadFile("example.txt"))
     AppendFile("example.txt", "\nhello")
     print(ReadFile("example.txt"))
+
 end
 
 function Menu()

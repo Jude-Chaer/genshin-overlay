@@ -504,6 +504,23 @@ namespace LuaFunctions {
         );
     }
 
+    static void writeExtensionData(std::ofstream& file, const std::string& data) {
+        auto* ext = Extensions::currentExtension;
+
+        if (!ext)
+            throw std::runtime_error("No current extension");
+
+        if (data.size() > Extensions::ExtensionWriteLimit - ext->bytesToDiskWritten)
+            throw std::runtime_error("Extension disk write limit exceeded");
+
+        file.write(data.data(), static_cast<std::streamsize>(data.size()));
+
+        if (!file)
+            throw std::runtime_error("Failed to write file");
+
+        ext->bytesToDiskWritten += static_cast<int>(data.size());
+    }
+
     bool WriteFile(const std::string& path, const std::string& data) {
         CHECK_PERMISSIONS();
 
@@ -516,54 +533,57 @@ namespace LuaFunctions {
         std::string rootStr = root.string();
         std::string filePathStr = filePath.string();
         std::string rootWithSep = rootStr;
-        if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
+
+        if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator)
             rootWithSep += std::filesystem::path::preferred_separator;
-        }
-        if (filePath != root &&
-            filePathStr.find(rootWithSep) != 0)
-        {
+
+        if (filePath != root && filePathStr.find(rootWithSep) != 0) {
             if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalWritefile) ==
-                Extensions::currentExtension->extensionPermissions.end())
-            {
+                Extensions::currentExtension->extensionPermissions.end()) {
                 throw std::runtime_error("Extension does not have permission to write external files");
             }
         }
 
-        std::ofstream file(filePath, std::ios::binary);
+        std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
 
         if (!file)
             throw std::runtime_error("Failed to open file");
 
-        file.write(data.data(), data.size());
+        writeExtensionData(file, data);
 
-        return file.good();
+        return true;
     }
 
     bool AppendFile(const std::string& path, const std::string& data) {
         CHECK_PERMISSIONS();
+
         std::filesystem::path root = std::filesystem::weakly_canonical(
             Extensions::currentExtension->folder
         );
+
         std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
+
         std::string rootStr = root.string();
         std::string filePathStr = filePath.string();
         std::string rootWithSep = rootStr;
-        if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
+
+        if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator)
             rootWithSep += std::filesystem::path::preferred_separator;
-        }
-        if (filePath != root &&
-            filePathStr.find(rootWithSep) != 0)
-        {
+
+        if (filePath != root && filePathStr.find(rootWithSep) != 0) {
             if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalWritefile) ==
-                Extensions::currentExtension->extensionPermissions.end())
-            {
+                Extensions::currentExtension->extensionPermissions.end()) {
                 throw std::runtime_error("Extension does not have permission to write external files");
             }
         }
+
         std::ofstream file(filePath, std::ios::binary | std::ios::app);
+
         if (!file)
             throw std::runtime_error("Failed to open file");
-        file.write(data.data(), data.size());
-        return file.good();
-	}
+
+        writeExtensionData(file, data);
+
+        return true;
+    }
 }
