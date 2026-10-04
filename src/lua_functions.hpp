@@ -19,6 +19,12 @@ namespace LuaFunctions {
         { "LuaFunctions::ReadFile", {Extensions::ExtensionPermissionTypes::InternalReadfile}}, // External has to be checked within the function, once the paths are resolved
 		{ "LuaFunctions::WriteFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved
 		{ "LuaFunctions::AppendFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved}
+        { "LuaFunctions::WebSocketConnect", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::WebSocketSend", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::WebSocketPoll", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::WebSocketPollAll", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::WebSocketIsConnected", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::WebSocketClose", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
     };
 
     bool checkPermissions(const std::string& functionName);
@@ -48,4 +54,10 @@ namespace LuaFunctions {
 	std::string ReadFile(const std::string& path);
 	bool WriteFile(const std::string& path, const std::string& contents);
 	bool AppendFile(const std::string& path, const std::string& contents);
+    bool WebSocketConnect(Net::WebSocket& socket, const std::string& url, sol::optional<bool> hoyolab);
+    bool WebSocketSend(Net::WebSocket& socket, const std::string& message);
+    sol::object WebSocketPoll(Net::WebSocket& socket, sol::this_state state);
+    sol::object WebSocketPollAll(Net::WebSocket& socket, sol::this_state state);
+    bool WebSocketIsConnected(Net::WebSocket& socket);
+    void WebSocketClose(Net::WebSocket& socket);
 }

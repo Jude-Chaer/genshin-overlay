@@ -6,7 +6,8 @@ metadata = {
 }
 
 local clicks = 0
-
+local ws = WebSocket.new()
+local connected = false
 
 
 function RegisterSettings()
@@ -35,7 +36,14 @@ function Init()
     print(ReadFile("example.txt"))
     AppendFile("example.txt", "\nhello")
     print(ReadFile("example.txt"))
+    connected = ws:connect("wss://echo.websocket.org")
 
+    if connected then
+        print("WebSocket connected")
+        ws:send("Hello from Genshin Overlay!")
+    else
+        print("WebSocket connection failed")
+    end
 end
 
 function Menu()
@@ -48,4 +56,18 @@ function Menu()
     end
 end
 
+function Update()
+    if not connected then
+        return
+    end
+    ws:send(string.format("Click count: %d", clicks))
+    for _, message in ipairs(ws:pollAll()) do
+        print("WebSocket received: " .. message)
+    end
+end
+
+function Shutdown()
+    ws:close()
+    print("WebSocket closed")
+end
 

@@ -65,6 +65,14 @@ namespace LuaFunctions {
             "Shift", Keybindings::KeybindModifiers_Shift
         );
 
+        auto websocket = luaState.new_usertype<Net::WebSocket>("WebSocket", sol::constructors<Net::WebSocket()>());
+        websocket.set_function("connect", WebSocketConnect);
+        websocket.set_function("send", WebSocketSend);
+        websocket.set_function("poll", WebSocketPoll);
+        websocket.set_function("pollAll", WebSocketPollAll);
+        websocket.set_function("isConnected", WebSocketIsConnected);
+        websocket.set_function("close", WebSocketClose);
+
         // key names for RegisterKeybind, like Keys.F5 or Keys.Grave
         sol::table keys = luaState.create_table();
         for (int key = GLFW_KEY_A; key <= GLFW_KEY_Z; key++) {
@@ -585,5 +593,55 @@ namespace LuaFunctions {
         writeExtensionData(file, data);
 
         return true;
+    }
+
+    bool WebSocketConnect(Net::WebSocket& socket, const std::string& url, sol::optional<bool> hoyolab)
+    {
+        if (!checkPermissions("LuaFunctions::WebSocketConnect"))
+            throw std::runtime_error("Extension does not have permission");
+
+        return socket.connect(url, hoyolab.value_or(false));
+    }
+
+    bool WebSocketSend(Net::WebSocket& socket, const std::string& message)
+    {
+        if (!checkPermissions("LuaFunctions::WebSocketSend"))
+            throw std::runtime_error("Extension does not have permission");
+
+        return socket.send(message);
+    }
+
+    sol::object WebSocketPoll(Net::WebSocket& socket, sol::this_state state)
+    {
+        std::string message;
+
+        if (!socket.poll(message))
+            return sol::nil;
+
+        return sol::make_object(state, message);
+    }
+
+    sol::object WebSocketPollAll(Net::WebSocket& socket, sol::this_state state)
+    {
+        sol::state_view lua(state);
+        sol::table result = lua.create_table();
+
+        auto messages = socket.pollAll();
+
+        int index = 1;
+        for (const auto& message : messages)
+            result[index++] = message;
+
+        return result;
+    }
+
+    bool WebSocketIsConnected(Net::WebSocket& socket)
+    {
+        return socket.isConnected();
+    }
+
+    void WebSocketClose(Net::WebSocket& socket)
+    {
+        socket.close();
     }
 }
