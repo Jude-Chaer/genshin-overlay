@@ -65,6 +65,7 @@ namespace Extensions {
 
     class Extension {
     public:
+        std::unique_ptr<sol::state> luaState;
         std::string name;
         std::string description;
         std::string author;
@@ -79,7 +80,6 @@ namespace Extensions {
         std::function<void()> registerSettings;
         std::function<void()> updateFunction;
         std::function<void()> menuFunction;
-        std::unique_ptr<sol::state> luaState;
         GLuint extensionImage = 0;
         int extensionImageWidth = 0;
         int extensionImageHeight = 0;

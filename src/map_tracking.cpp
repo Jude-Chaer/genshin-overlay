@@ -292,6 +292,7 @@ namespace MapTracking {
             followWorker.join();
 
         Capture::closeGameCapture();
+        index.Unload();
     }
 
     // game closed or in the background: forget the map until it's back
