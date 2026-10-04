@@ -246,4 +246,8 @@ namespace Helpers {
 
         return result.str();
     }
+
+    std::filesystem::path resolveRelativePath(const std::filesystem::path& basePath, const std::filesystem::path& relativePath) {
+        return std::filesystem::weakly_canonical(basePath / relativePath);
+    }
 }

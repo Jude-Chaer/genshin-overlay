@@ -260,7 +260,13 @@ namespace Extensions {
             sol::lib::string,
             sol::lib::table
         );
-
+        ext->luaState->globals()["load"] = sol::nil;
+        ext->luaState->globals()["loadfile"] = sol::nil;
+        ext->luaState->globals()["dofile"] = sol::nil;
+        ext->luaState->globals()["loadstring"] = sol::nil;
+        ext->luaState->globals()["package"]["path"] = folderPath.string() + "/?.lua";
+        ext->luaState->globals()["package"]["cpath"] = "";
+        ext->luaState->globals()["package"]["loadlib"] = sol::nil;
         LuaFunctions::registerLuaFunctions(*ext->luaState);
 
         std::vector<std::pair<std::string, std::string>> luaFileHashes;

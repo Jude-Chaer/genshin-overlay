@@ -11,12 +11,13 @@ namespace LuaFunctions {
     void registerLuaFunctions(sol::state& luaState);
 
     const std::unordered_map<std::string, std::vector<Extensions::ExtensionPermissionTypes>> functionPermissions = {
-        { "LuaFunctions::ImGUI_Text", {} },
         { "LuaFunctions::LoadTexture", { Extensions::ExtensionPermissionTypes::InternalReadfile } },
         { "LuaFunctions::NetGet", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::NetPost", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::RegisterKeybind", { Extensions::ExtensionPermissionTypes::Keybinds } },
         { "LuaFunctions::DrawImage", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
+        { "LuaFunctions::ReadFile", {Extensions::ExtensionPermissionTypes::InternalReadfile}}, // External has to be checked within the function, once the paths are resolved
+		{ "LuaFunctions::WriteFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved
     };
 
     bool checkPermissions(const std::string& functionName);
@@ -43,4 +44,6 @@ namespace LuaFunctions {
 	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab);
     sol::object JSONEncode(sol::object value, sol::this_state state);
     sol::object JSONDecode(const std::string& json, sol::this_state state);
+	std::string ReadFile(const std::string& path);
+	bool WriteFile(const std::string& path, const std::string& contents);
 }

@@ -15,6 +15,24 @@ end
 
 function Init()
     print("Example extension loaded from " .. WORKING_DIR)
+    
+    local response = Net_Get("https://example.com")
+
+    if response then
+        print("GET response status:", response.status)
+    end
+
+    local response = Net_Post(
+        "https://httpbin.org/post",
+        '{"foo":"bar"}'
+    )
+    if response then
+        print("POST response status:", response.status)
+    end
+
+    print(ReadFile("example.txt"))
+    WriteFile("example.txt", "hi.")
+    print(ReadFile("example.txt"))
 end
 
 function Menu()
@@ -28,17 +46,3 @@ function Menu()
 end
 
 
-
-local response = Net_Get("https://example.com")
-
-if response then
-    print("GET response status:", response.status)
-end
-
-local response = Net_Post(
-    "https://httpbin.org/post",
-    '{"foo":"bar"}'
-)
-if response then
-    print("POST response status:", response.status)
-end

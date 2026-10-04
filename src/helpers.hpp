@@ -11,4 +11,5 @@ namespace Helpers {
     extern bool relaunchAsAdmin();
     extern std::string hashFile(const std::filesystem::path& filePath);
     extern std::string hashString(const std::string& input);
+    extern std::filesystem::path resolveRelativePath(const std::filesystem::path& basePath, const std::filesystem::path& relativePath);
 }

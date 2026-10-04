@@ -8,6 +8,11 @@
 #include "map_tracking.hpp"
 #include <imgui.h>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <iterator>
+#include <stdexcept>
 
 #define CHECK_PERMISSIONS() \
     if (!LuaFunctions::checkPermissions(__FUNCTION__)) \
@@ -46,6 +51,8 @@ namespace LuaFunctions {
         luaState.set_function("Net_Post", NetPost);
         luaState.set_function("JSON_Encode", JSONEncode);
 		luaState.set_function("JSON_Decode", JSONDecode);
+		luaState.set_function("ReadFile", ReadFile);
+		luaState.set_function("WriteFile", WriteFile);
         luaState["KeybindFlags"] = luaState.create_table_with(
             "None", Keybindings::KeybindFlags_None,
             "ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -457,5 +464,77 @@ namespace LuaFunctions {
         }
 
         return true;
+    }
+
+    std::string ReadFile(const std::string& path) {
+        CHECK_PERMISSIONS();
+
+        // Fix: Use std::filesystem::path for concatenation instead of operator+ with strings
+        std::filesystem::path root = std::filesystem::weakly_canonical(
+            Extensions::currentExtension->folder
+        );
+
+        std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
+
+        std::string rootStr = root.string();
+        std::string filePathStr = filePath.string();
+        std::string rootWithSep = rootStr;
+        if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
+            rootWithSep += std::filesystem::path::preferred_separator;
+        }
+         if (filePath != root &&
+            filePathStr.find(rootWithSep) != 0)
+        {
+            if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalReadfile) ==
+                Extensions::currentExtension->extensionPermissions.end())
+            {
+                throw std::runtime_error("Extension does not have permission to read external files");
+			}
+        }
+
+        std::ifstream file(filePath, std::ios::binary);
+
+        if (!file)
+            throw std::runtime_error("Failed to open file");
+
+        return std::string(
+            std::istreambuf_iterator<char>(file),
+            std::istreambuf_iterator<char>()
+        );
+    }
+
+    bool WriteFile(const std::string& path, const std::string& data) {
+        CHECK_PERMISSIONS();
+
+        std::filesystem::path root = std::filesystem::weakly_canonical(
+            Extensions::currentExtension->folder
+        );
+
+        std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
+
+        std::string rootStr = root.string();
+        std::string filePathStr = filePath.string();
+        std::string rootWithSep = rootStr;
+        if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
+            rootWithSep += std::filesystem::path::preferred_separator;
+        }
+        if (filePath != root &&
+            filePathStr.find(rootWithSep) != 0)
+        {
+            if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalWritefile) ==
+                Extensions::currentExtension->extensionPermissions.end())
+            {
+                throw std::runtime_error("Extension does not have permission to write external files");
+            }
+        }
+
+        std::ofstream file(filePath, std::ios::binary);
+
+        if (!file)
+            throw std::runtime_error("Failed to open file");
+
+        file.write(data.data(), data.size());
+
+        return file.good();
     }
 }
