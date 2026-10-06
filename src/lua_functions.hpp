@@ -25,7 +25,19 @@ namespace LuaFunctions {
         { "LuaFunctions::WebSocketPollAll", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::WebSocketIsConnected", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::WebSocketClose", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::LoadTextureFromFileLua", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
     };
+
+    struct LuaInterval
+    {
+        int id;
+        int milliseconds;
+        double nextExecution;
+        Extensions::Extension* owner;
+        sol::protected_function callback;
+    };
+    static std::vector<LuaInterval> intervals;
+    static int nextIntervalId = 1;
 
     bool checkPermissions(const std::string& functionName);
 
@@ -45,6 +57,7 @@ namespace LuaFunctions {
     GLuint GetMapTile(int mapId, int x, int y, int size);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
+    void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color); // The "G" is only there because DrawText is already used by the Windows API
     void PushClipRect(float x0, float y0, float x1, float y1);
     void PopClipRect();
     sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab);
@@ -60,4 +73,11 @@ namespace LuaFunctions {
     sol::object WebSocketPollAll(Net::WebSocket& socket, sol::this_state state);
     bool WebSocketIsConnected(Net::WebSocket& socket);
     void WebSocketClose(Net::WebSocket& socket);
+	double CompareImages(GLuint textureID1, GLuint textureID2, int accuracy);
+    double GetOSTimeMS(); // Yeah I think we need to expose this because Lua doesn't have a way to get time, since with don't include sol::lib:os
+    int SetInterval(sol::protected_function callback, int milliseconds);
+    void ClearInterval(int id);
+    void UpdateIntervals();
+    std::tuple<int, int> GetMousePosition();
+
 }

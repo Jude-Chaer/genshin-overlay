@@ -13,6 +13,8 @@
 #include <string>
 #include <iterator>
 #include <stdexcept>
+#include <chrono>
+#include <algorithm>
 
 #define CHECK_PERMISSIONS() \
     if (!LuaFunctions::checkPermissions(__FUNCTION__)) \
@@ -20,6 +22,7 @@
 
 
 namespace LuaFunctions {
+
     static void callLua(const sol::protected_function& function) {
         auto result = function();
         if (!result.valid()) {
@@ -39,12 +42,14 @@ namespace LuaFunctions {
         luaState.set_function("DefineExtensionSetting", DefineExtensionSetting);
         luaState.set_function("GetSetting", GetExtensionSetting);
         luaState.set_function("LoadTexture", LoadTextureFromFileLua);
+        luaState.set_function("CompareImages", CompareImages);
         luaState.set_function("GetMapView", GetMapView);
         luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
         luaState.set_function("GetMapGrid", GetMapGrid);
         luaState.set_function("GetMapTile", GetMapTile);
         luaState.set_function("GetMapFloor", GetMapFloor);
         luaState.set_function("DrawImage", DrawImage);
+        luaState.set_function("DrawText", GDrawText);
         luaState.set_function("PushClipRect", PushClipRect);
         luaState.set_function("PopClipRect", PopClipRect);
         luaState.set_function("Net_Get", NetGet);
@@ -54,6 +59,10 @@ namespace LuaFunctions {
 		luaState.set_function("ReadFile", ReadFile);
 		luaState.set_function("WriteFile", WriteFile);
         luaState.set_function("AppendFile", AppendFile);
+        luaState.set_function("SetInterval", SetInterval);
+        luaState.set_function("ClearInterval", ClearInterval);
+        luaState.set_function("GetOSTimeMS", GetOSTimeMS);
+        luaState.set_function("GetMousePosition", GetMousePosition);
         luaState["KeybindFlags"] = luaState.create_table_with(
             "None", Keybindings::KeybindFlags_None,
             "ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -190,6 +199,27 @@ namespace LuaFunctions {
     }
 
     std::tuple<GLuint, int, int> LoadTextureFromFileLua(const std::string& path) {
+        std::filesystem::path root = std::filesystem::weakly_canonical(
+            Extensions::currentExtension->folder
+        );
+
+        std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
+
+        std::string rootStr = root.string();
+        std::string filePathStr = filePath.string();
+        std::string rootWithSep = rootStr;
+        if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
+            rootWithSep += std::filesystem::path::preferred_separator;
+        }
+        if (filePath != root &&
+            filePathStr.find(rootWithSep) != 0)
+        {
+            if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalReadfile) ==
+                Extensions::currentExtension->extensionPermissions.end())
+            {
+                throw std::runtime_error("Extension does not have permission to read external files");
+            }
+        }
         int width = 0, height = 0;
         GLuint tex = Helpers::loadTextureFromFile(path, width, height);
         return { tex, width, height };
@@ -478,7 +508,6 @@ namespace LuaFunctions {
     std::string ReadFile(const std::string& path) {
         CHECK_PERMISSIONS();
 
-        // Fix: Use std::filesystem::path for concatenation instead of operator+ with strings
         std::filesystem::path root = std::filesystem::weakly_canonical(
             Extensions::currentExtension->folder
         );
@@ -643,5 +672,113 @@ namespace LuaFunctions {
     void WebSocketClose(Net::WebSocket& socket)
     {
         socket.close();
+    }
+
+    double CompareImages(GLuint textureID1, GLuint textureID2, int accuracy) {
+		return Helpers::compareTextures(textureID1, textureID2, accuracy);
+    }
+
+    double GetOSTimeMS() {
+        return std::chrono::duration<double, std::milli>(
+            std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+    }
+    int SetInterval(sol::protected_function callback, int milliseconds)
+    {
+        if (!callback.valid() || milliseconds <= 0)
+            return 0;
+
+        LuaInterval interval;
+        interval.id = nextIntervalId++;
+        interval.milliseconds = milliseconds;
+        interval.nextExecution = GetOSTimeMS() + milliseconds;
+        interval.owner = Extensions::currentExtension;
+        interval.callback = std::move(callback);
+
+        intervals.push_back(std::move(interval));
+
+        return intervals.back().id;
+    }
+    void ClearInterval(int id)
+    {
+        auto it = std::find_if(
+            intervals.begin(),
+            intervals.end(),
+            [id](const LuaInterval& interval) {
+                return interval.id == id;
+            }
+        );
+
+        if (it == intervals.end())
+            return;
+
+        if (it->owner != Extensions::currentExtension)
+            return;
+
+        intervals.erase(it);
+    }
+    void UpdateIntervals()
+    {
+        double now = GetOSTimeMS();
+
+        std::vector<int> dueIntervals;
+
+        for (const auto& interval : intervals)
+        {
+            if (now >= interval.nextExecution)
+                dueIntervals.push_back(interval.id);
+        }
+
+        for (int id : dueIntervals)
+        {
+            auto it = std::find_if(
+                intervals.begin(),
+                intervals.end(),
+                [id](const LuaInterval& interval) {
+                    return interval.id == id;
+                }
+            );
+
+            if (it == intervals.end())
+                continue;
+
+            it->nextExecution = now + it->milliseconds;
+
+            Extensions::Extension* owner = it->owner;
+            sol::protected_function callback = it->callback;
+
+            Extensions::runForExtension(owner, [&callback]() {
+                callLua(callback);
+                });
+        }
+    }
+    std::tuple<int, int> GetMousePosition()
+    {
+        POINT point;
+        if (!GetCursorPos(&point))
+            return { 0, 0 };
+
+        return { point.x, point.y };
+    }
+    void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color)
+    {
+        if (text.empty())
+            return;
+
+        float fontSize = size.value_or(ImGui::GetFontSize());
+        uint32_t rgba = color.value_or(0xFFFFFFFF);
+
+        int r = (rgba >> 24) & 0xFF;
+        int g = (rgba >> 16) & 0xFF;
+        int b = (rgba >> 8) & 0xFF;
+        int a = rgba & 0xFF;
+
+        ImGui::GetBackgroundDrawList()->AddText(
+            ImGui::GetFont(),
+            fontSize,
+            ImVec2(x, y),
+            IM_COL32(r, g, b, a),
+            text.c_str()
+        );
     }
 }

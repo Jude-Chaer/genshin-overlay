@@ -67,6 +67,7 @@ function Update()
                 local x1 = view.centerX + (unitX + tile - view.lng) / unitsPerPixel
                 local y1 = view.centerY + (unitY + tile - view.lat) / unitsPerPixel
                 DrawImage(texture, x0, y0, x1, y1, surfaceOpacity)
+                DrawText(string.format("%d,%d", x, y), x0 + 2, y0 + 2, 32, 0xFF0000FF)
             end
         end
     end

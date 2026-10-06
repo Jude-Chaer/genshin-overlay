@@ -5,6 +5,8 @@
 #include <iostream>
 #include <bcrypt.h>
 #include <algorithm>
+#include <opencv2/opencv.hpp>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -249,5 +251,147 @@ namespace Helpers {
 
     std::filesystem::path resolveRelativePath(const std::filesystem::path& basePath, const std::filesystem::path& relativePath) {
         return std::filesystem::weakly_canonical(basePath / relativePath);
+    }
+    
+    double compareTextures(GLuint texture1, GLuint texture2, int accuracy) {
+        accuracy = std::clamp(accuracy, 0, 5);
+
+        if (!texture1 || !texture2)
+            return 0.0;
+
+        GLint width1 = 0, height1 = 0, width2 = 0, height2 = 0;
+
+        glBindTexture(GL_TEXTURE_2D, texture1);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width1);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height1);
+
+        glBindTexture(GL_TEXTURE_2D, texture2);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width2);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height2);
+
+        if (width1 <= 0 || height1 <= 0 || width2 <= 0 || height2 <= 0)
+            return 0.0;
+
+        std::vector<unsigned char> data1(width1 * height1 * 4);
+        std::vector<unsigned char> data2(width2 * height2 * 4);
+
+        glBindTexture(GL_TEXTURE_2D, texture1);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, data1.data());
+
+        glBindTexture(GL_TEXTURE_2D, texture2);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, data2.data());
+
+        cv::Mat rgba1(height1, width1, CV_8UC4, data1.data());
+        cv::Mat rgba2(height2, width2, CV_8UC4, data2.data());
+
+        cv::Mat gray1, gray2;
+        cv::cvtColor(rgba1, gray1, cv::COLOR_RGBA2GRAY);
+        cv::cvtColor(rgba2, gray2, cv::COLOR_RGBA2GRAY);
+
+        const int scale = 1 << accuracy;
+
+        if (scale > 1)
+        {
+            cv::resize(gray1, gray1, cv::Size(std::max(1, gray1.cols / scale), std::max(1, gray1.rows / scale)), 0, 0, cv::INTER_AREA);
+            cv::resize(gray2, gray2, cv::Size(std::max(1, gray2.cols / scale), std::max(1, gray2.rows / scale)), 0, 0, cv::INTER_AREA);
+        }
+
+        int features = 0;
+        double contrastThreshold = 0.04;
+
+        switch (accuracy)
+        {
+        case 0:
+            features = 0;
+            contrastThreshold = 0.02;
+            break;
+        case 1:
+            features = 2500;
+            contrastThreshold = 0.025;
+            break;
+        case 2:
+            features = 1800;
+            contrastThreshold = 0.03;
+            break;
+        case 3:
+            features = 1200;
+            contrastThreshold = 0.04;
+            break;
+        case 4:
+            features = 800;
+            contrastThreshold = 0.05;
+            break;
+        case 5:
+            features = 500;
+            contrastThreshold = 0.06;
+            break;
+        }
+
+        auto sift = cv::SIFT::create(features, 3, contrastThreshold, 10, 1.6);
+
+        std::vector<cv::KeyPoint> keypoints1, keypoints2;
+        cv::Mat descriptors1, descriptors2;
+
+        sift->detectAndCompute(gray1, cv::noArray(), keypoints1, descriptors1);
+        sift->detectAndCompute(gray2, cv::noArray(), keypoints2, descriptors2);
+
+        if (descriptors1.empty() || descriptors2.empty())
+            return 0.0;
+
+        cv::FlannBasedMatcher matcher(
+            cv::makePtr<cv::flann::KDTreeIndexParams>(4),
+            cv::makePtr<cv::flann::SearchParams>(64)
+        );
+
+        std::vector<std::vector<cv::DMatch>> matches;
+        matcher.knnMatch(descriptors1, descriptors2, matches, 2);
+
+        const double ratio = accuracy <= 1 ? 0.75 : accuracy == 2 ? 0.78 : accuracy == 3 ? 0.80 : accuracy == 4 ? 0.83 : 0.86;
+
+        std::vector<cv::DMatch> goodMatches;
+        for (const auto& match : matches)
+        {
+            if (match.size() >= 2 && match[0].distance < ratio * match[1].distance)
+                goodMatches.push_back(match[0]);
+        }
+
+        if (goodMatches.size() < 4)
+            return 0.0;
+
+        std::vector<cv::Point2f> points1, points2;
+        points1.reserve(goodMatches.size());
+        points2.reserve(goodMatches.size());
+
+        for (const auto& match : goodMatches)
+        {
+            points1.push_back(keypoints1[match.queryIdx].pt);
+            points2.push_back(keypoints2[match.trainIdx].pt);
+        }
+
+        std::vector<unsigned char> inlierMask;
+        cv::Mat homography = cv::findHomography(
+            points1,
+            points2,
+            cv::RANSAC,
+            accuracy <= 1 ? 3.0 : accuracy <= 3 ? 5.0 : 8.0,
+            inlierMask,
+            2000,
+            0.995
+        );
+
+        if (homography.empty())
+            return 0.0;
+
+        int inliers = 0;
+        for (unsigned char value : inlierMask)
+            inliers += value != 0;
+
+        if (inliers < 4)
+            return 0.0;
+
+        double inlierRatio = static_cast<double>(inliers) / static_cast<double>(goodMatches.size());
+        double matchScore = std::min(1.0, static_cast<double>(inliers) / static_cast<double>(std::max(8, 20 - accuracy * 2)));
+
+        return std::clamp(0.7 * inlierRatio + 0.3 * matchScore, 0.0, 1.0);
     }
 }

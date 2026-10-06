@@ -44,6 +44,12 @@ function Init()
     else
         print("WebSocket connection failed")
     end
+
+    SetInterval(function() 
+        if connected then
+            ws:send(string.format("Click count: %d", clicks))
+        end
+    end, 5000)
 end
 
 function Menu()
@@ -60,7 +66,7 @@ function Update()
     if not connected then
         return
     end
-    ws:send(string.format("Click count: %d", clicks))
+--    ws:send(string.format("Click count: %d", clicks))
     for _, message in ipairs(ws:pollAll()) do
         print("WebSocket received: " .. message)
     end
