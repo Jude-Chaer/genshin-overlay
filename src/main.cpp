@@ -50,14 +50,8 @@ int main(int argc, char** argv) {
         return MapData::makeIndex(argv[2]);
     }
 
-    // Admin is optional, see Settings::runAsAdmin. If the prompt is declined we
-    // just carry on without it. --no-admin skips it for testing.
     Settings::Load();
-    bool noAdmin = argc >= 2 && std::string(argv[1]) == "--no-admin";
-    if (Settings::runAsAdmin && !noAdmin && !Helpers::isElevated()) {
-        if (Helpers::relaunchAsAdmin()) return 0;
-        std::cerr << "Not running as admin, the map closes about a second after the game's map" << std::endl;
-    }
+
 
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;

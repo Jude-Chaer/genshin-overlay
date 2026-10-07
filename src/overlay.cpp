@@ -372,35 +372,8 @@ namespace Overlay {
             )) {
                 DrawMapStatus();
 
-                bool instantClose = Settings::runAsAdmin;
-
-                if (ImGui::Checkbox(
-                    "Close instantly on M and Esc (needs admin)",
-                    &instantClose
-                )) {
-                    Settings::runAsAdmin = instantClose;
+                if (ImGui::Checkbox("Hide on map close", &Settings::hideOnMapClose)) {
                     Settings::Save();
-
-                    if (instantClose && !Helpers::isElevated()) {
-                        Keybindings::SetEnabled(false);
-
-                        if (Helpers::relaunchAsAdmin()) {
-                            glfwHideWindow(Overlay::Window);
-                            glfwSetWindowShouldClose(
-                                Overlay::Window,
-                                true
-                            );
-                        }
-                        else {
-                            Keybindings::SetEnabled(true);
-                        }
-                    }
-                }
-
-                if (!instantClose && Helpers::isElevated()) {
-                    ImGui::TextDisabled(
-                        "Starts without admin next time"
-                    );
                 }
             }
 
@@ -534,6 +507,11 @@ namespace Overlay {
 
             Extensions::frameUpdateExtensions();
             DrawStartupHint();
+
+            if (Settings::hideOnMapClose) {
+                Overlay::menuOpen = MapTracking::IsMapOpen();
+            }
+
             if (Overlay::menuOpen) {
                 DrawMenu();
             }

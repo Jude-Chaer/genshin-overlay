@@ -4,7 +4,8 @@
 #include <nlohmann/json.hpp>
 
 namespace Settings {
-    bool runAsAdmin = false;
+    //bool runAsAdmin = false;
+	bool hideOnMapClose = false;
     bool lineUpWithMap = true;
     bool ignoreSea = true;
     bool steadyZoom = true;
@@ -24,7 +25,7 @@ namespace Settings {
 
         nlohmann::json settings = nlohmann::json::parse(file, nullptr, false);
         if (settings.is_discarded()) return;
-        runAsAdmin = settings.value("runAsAdmin", false);
+		hideOnMapClose = settings.value("hideOnMapClose", false);
         lineUpWithMap = settings.value("lineUpWithMap", true);
         ignoreSea = settings.value("ignoreSea", true);
         steadyZoom = settings.value("steadyZoom", true);
@@ -51,7 +52,7 @@ namespace Settings {
     // extension settings are in the same file, don't wipe them
     void Save() {
         nlohmann::json settings = read();
-        settings["runAsAdmin"] = runAsAdmin;
+		settings["hideOnMapClose"] = hideOnMapClose;
         settings["lineUpWithMap"] = lineUpWithMap;
         settings["ignoreSea"] = ignoreSea;
         settings["steadyZoom"] = steadyZoom;

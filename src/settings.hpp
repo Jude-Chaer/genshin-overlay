@@ -7,7 +7,7 @@
 namespace Settings {
     // Start as admin. Only needed to see M and Esc while the game has focus,
     // so the map overlay can close the moment the map does.
-    extern bool runAsAdmin;
+	extern bool hideOnMapClose;
 
     // Switches for parts of the map following, in the menu under Advanced.
     // the map's tiles keep the follower lined up while the map moves

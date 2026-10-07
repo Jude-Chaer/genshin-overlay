@@ -16,6 +16,7 @@ namespace LuaFunctions {
         { "LuaFunctions::NetPost", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::RegisterKeybind", { Extensions::ExtensionPermissionTypes::Keybinds } },
         { "LuaFunctions::DrawImage", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
+		{ "LuaFunctions::GDrawText", {Extensions::ExtensionPermissionTypes::DisplayOverlay}}, 
         { "LuaFunctions::ReadFile", {Extensions::ExtensionPermissionTypes::InternalReadfile}}, // External has to be checked within the function, once the paths are resolved
 		{ "LuaFunctions::WriteFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved
 		{ "LuaFunctions::AppendFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved}
@@ -26,6 +27,8 @@ namespace LuaFunctions {
         { "LuaFunctions::WebSocketIsConnected", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::WebSocketClose", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::LoadTextureFromFileLua", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
+        { "LuaFunctions::FileExists", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
+        { "LuaFunctions::ListDirectory", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
     };
 
     struct LuaInterval
@@ -44,6 +47,13 @@ namespace LuaFunctions {
     void ImGUI_Text(const std::string& str);
     void ImGUI_Button(const std::string& label, sol::protected_function callback);
     void ImGUI_Image(GLuint textureID, float width, float height);
+    bool ImGUI_Checkbox(const std::string& label, bool currentValue);
+    float ImGUI_SliderFloat(const std::string& label, float currentValue, float minValue, float maxValue);
+    int ImGUI_SliderInt(const std::string& label, int currentValue, int minValue, int maxValue);
+    std::string ImGUI_InputText(const std::string& label, const std::string& currentText);
+    void ImGUI_SameLine();
+    void ImGUI_Tooltip(const std::string& text);
+    void ImGUI_Separator();
     bool IsProgramHidden();
     void RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers);
     void DeleteKeybind(int glfwKey);
@@ -67,6 +77,8 @@ namespace LuaFunctions {
 	std::string ReadFile(const std::string& path);
 	bool WriteFile(const std::string& path, const std::string& contents);
 	bool AppendFile(const std::string& path, const std::string& contents);
+    bool FileExists(const std::string& path);
+    sol::table ListDirectory(const std::string& path, sol::this_state state);
     bool WebSocketConnect(Net::WebSocket& socket, const std::string& url, sol::optional<bool> hoyolab);
     bool WebSocketSend(Net::WebSocket& socket, const std::string& message);
     sol::object WebSocketPoll(Net::WebSocket& socket, sol::this_state state);
