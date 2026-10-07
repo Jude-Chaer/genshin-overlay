@@ -153,7 +153,13 @@ namespace MapCheck {
             lock.unlock();
 
             MapLocator::Result result;
-            bool found = compute(current, result);
+            bool found = false;
+            try {
+                found = compute(current, result);
+            }
+            catch (...) {
+                // a check that goes wrong is skipped
+            }
 
             lock.lock();
             busy = false;
