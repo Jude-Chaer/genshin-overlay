@@ -5,6 +5,11 @@ VisualStudioVersion = 17.14.36301.6
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "genshin-overlay", "genshin-overlay.vcxproj", "{745B726D-1260-4430-A84B-67A15A3A0281}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tests", "tests.vcxproj", "{9B903A81-9D2E-4F0C-92B7-4C8445D56086}"
+	ProjectSection(ProjectDependencies) = postProject
+		{745B726D-1260-4430-A84B-67A15A3A0281} = {745B726D-1260-4430-A84B-67A15A3A0281}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -15,6 +20,10 @@ Global
 		{745B726D-1260-4430-A84B-67A15A3A0281}.Debug|x64.Build.0 = Debug|x64
 		{745B726D-1260-4430-A84B-67A15A3A0281}.Release|x64.ActiveCfg = Release|x64
 		{745B726D-1260-4430-A84B-67A15A3A0281}.Release|x64.Build.0 = Release|x64
+		{9B903A81-9D2E-4F0C-92B7-4C8445D56086}.Debug|x64.ActiveCfg = Debug|x64
+		{9B903A81-9D2E-4F0C-92B7-4C8445D56086}.Debug|x64.Build.0 = Debug|x64
+		{9B903A81-9D2E-4F0C-92B7-4C8445D56086}.Release|x64.ActiveCfg = Release|x64
+		{9B903A81-9D2E-4F0C-92B7-4C8445D56086}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

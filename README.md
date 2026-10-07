@@ -79,6 +79,15 @@ To test the map matching without the game, run it on a screenshot of the in-game
 genshin-overlay.exe --locate screenshot.png
 ```
 
+## Tests
+
+The `tests` project in the solution builds `build\Release\tests.exe`. Run it and it says what
+passed and what didn't. It needs no game and no map data, the tests make their own small map.
+They also run on GitHub for every pull request and every push to main.
+
+To add a test, put a `TEST_CASE` in one of the files in `tests`, or add a new `.cpp` there and
+to the `tests` project. They are written with [Catch2](https://github.com/catchorg/Catch2).
+
 ## Credits
 
 Started by [Mippy](https://github.com/Mipppy), who came up with the idea and built the first
