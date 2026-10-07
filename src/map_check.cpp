@@ -94,12 +94,13 @@ namespace MapCheck {
         if (x1 - x0 > 1000 || y1 - y0 > 1000) return {};
 
         cv::Mat area(y1 - y0, x1 - x0, CV_8U, cv::Scalar(0));
-        for (int ty = std::max(0, (int)std::floor((double)y0 / size)); ty <= std::min(grid.rows - 1, (y1 - 1) / size); ++ty) {
-            for (int tx = std::max(0, (int)std::floor((double)x0 / size)); tx <= std::min(grid.cols - 1, (x1 - 1) / size); ++tx) {
+        for (int ty = std::max(0, (int)std::floor((double)y0 / size)); ty <= std::min(grid.rows - 1, (int)std::floor((double)(y1 - 1) / size)); ++ty) {
+            for (int tx = std::max(0, (int)std::floor((double)x0 / size)); tx <= std::min(grid.cols - 1, (int)std::floor((double)(x1 - 1) / size)); ++tx) {
                 const cv::Mat& image = tile(view.mapId, grid, tx, ty, shrink);
                 if (image.empty()) continue;
                 cv::Rect in(tx * size, ty * size, size, size);
                 cv::Rect both = in & cv::Rect(x0, y0, x1 - x0, y1 - y0);
+                if (both.empty()) continue;
                 image(both - in.tl()).copyTo(area(both - cv::Point(x0, y0)));
             }
         }
@@ -152,7 +153,13 @@ namespace MapCheck {
             lock.unlock();
 
             MapLocator::Result result;
-            bool found = compute(current, result);
+            bool found = false;
+            try {
+                found = compute(current, result);
+            }
+            catch (...) {
+                // a check that goes wrong is skipped
+            }
 
             lock.lock();
             busy = false;
