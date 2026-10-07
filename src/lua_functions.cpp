@@ -146,14 +146,12 @@ namespace LuaFunctions {
 		ImGui::SliderInt(label.c_str(), &value, minValue, maxValue);
 		return value;
 	}
-
 	std::string ImGUI_InputText(const std::string& label, const std::string& currentText)
 	{
 		std::string value = currentText;
-		char buffer[4096];
+		char buffer[4096]{};
 
-		std::strncpy(buffer, value.c_str(), sizeof(buffer) - 1);
-		buffer[sizeof(buffer) - 1] = '\0';
+		strncpy_s(buffer, sizeof(buffer), value.c_str(), _TRUNCATE);
 
 		if (ImGui::InputText(label.c_str(), buffer, sizeof(buffer)))
 			value = buffer;
