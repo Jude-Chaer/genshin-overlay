@@ -3,6 +3,7 @@
   "version-string": "0.1.0",
   "builtin-baseline": "c4ee5a52d77493324f8dd58747e9d9611202ed0e",
   "dependencies": [
+    "catch2",
     "glew",
     "glfw3",
     {

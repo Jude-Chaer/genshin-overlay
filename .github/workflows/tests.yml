@@ -1,0 +1,39 @@
+# Builds the app and the tests and runs the tests, on every push to main and
+# on every pull request.
+
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # same cache as the release workflow, so OpenCV isn't built again
+      - name: Cache vcpkg libraries
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        run: |
+          # the runner's vcpkg can be older than the baseline in vcpkg.json
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --quiet origin master
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
+          msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+
+      - name: Run the tests
+        shell: pwsh
+        run: build\Release\tests.exe
