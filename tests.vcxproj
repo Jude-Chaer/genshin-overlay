@@ -100,7 +100,11 @@
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="tests\helpers_tests.cpp" />
     <ClCompile Include="tests\main.cpp" />
+    <ClCompile Include="tests\map_check_tests.cpp" />
+    <ClCompile Include="tests\map_follow_tests.cpp" />
+    <ClCompile Include="tests\test_map.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\capture.hpp" />
@@ -118,6 +122,7 @@
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
+    <ClInclude Include="tests\test_map.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
