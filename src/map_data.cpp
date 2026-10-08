@@ -18,6 +18,7 @@ using json = nlohmann::json;
 
 namespace MapData {
     static const std::string API = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc";
+    static const std::string STATIC_API = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc";
     static const std::string RELEASE = "https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
     static const std::string INDEX_FILE = "map-index.bin.gz";
     static const std::string META_FILE = "map-index.json";
@@ -28,9 +29,9 @@ namespace MapData {
     // Ids without their own tiles get skipped.
     static constexpr int MAP_IDS[] = { 2, 7, 9, 34, 36, 37, 40 };
 
-    static bool getJson(const std::string& path, json& data) {
+    static bool getJson(const std::string& path, json& data, bool isStatic = false) {
         Net::Response response;
-        if (!Net::get(API + path, response, true) || response.status != 200) return false;
+        if (!Net::get((isStatic ? STATIC_API : API) + path, response, true) || response.status != 200) return false;
 
         json body = json::parse(response.body, nullptr, false);
         if (body.is_discarded() || body.value("retcode", -1) != 0 || !body.contains("data")) return false;
@@ -301,6 +302,11 @@ namespace MapData {
             return 1;
         }
 
+        if (!downloadItems()) {
+            std::cerr << "Downloading item data failed" << std::endl;
+            return 1;
+        }
+
         json published;
         if (fetchPublishedMeta(published) && published.value("manifest", "") == plan.manifest) {
             std::cout << "The published index is already current" << std::endl;
@@ -355,4 +361,94 @@ namespace MapData {
         std::cout << "Wrote " << INDEX_FILE << " (" << packed.size() / 1000000.0 << " MB) and " << META_FILE << std::endl;
         return 0;
     }
+
+    extern bool downloadItems() {
+		return downloadItemIcons() && downloadItemPositionData();
+    }
+
+    // Need to implement for other maps (Not just map 2)
+    bool downloadItemIcons() {
+        json data;
+        if (!getJson("/v2/map/label/tree?map_id=2&app_sn=ys_obc&lang=en-us", data, true)
+            || !data.is_object() || !data.contains("tree") || !data["tree"].is_array()) {
+            std::cerr << "[icons] label tree request failed or has an unexpected shape" << std::endl;
+            return false;
+        }
+
+        struct Icon { std::string url, path; };
+        std::map<int, Icon> icons;
+        fs::path folder = fs::path("items") / "icons";
+
+        std::vector<const json*> stack;
+        for (const json& node : data["tree"]) stack.push_back(&node);
+        while (!stack.empty()) {
+            const json& node = *stack.back();
+            stack.pop_back();
+            if (!node.is_object()) continue;
+
+            if (node.contains("id") && node["id"].is_number_integer()
+                && node.contains("icon") && node["icon"].is_string()) {
+                int id = node["id"].get<int>();
+                std::string url = node["icon"].get<std::string>();
+                if (id > 0 && !url.empty()) {
+                    std::string ext = ".png";
+                    size_t dot = url.find_last_of('.'), slash = url.find_last_of('/');
+                    if (dot != std::string::npos && slash != std::string::npos && dot > slash && url.size() - dot <= 5) {
+                        ext = url.substr(dot);
+                    }
+                    icons.emplace(id, Icon{ url, (folder / (std::to_string(id) + ext)).string() });
+                }
+            }
+
+            if (node.contains("children") && node["children"].is_array()) {
+                for (const json& child : node["children"]) stack.push_back(&child);
+            }
+        }
+
+        if (icons.empty()) {
+            std::cerr << "[icons] the tree had no id/icon pairs" << std::endl;
+            return false;
+        }
+
+        std::error_code ec;
+        fs::create_directories(folder, ec);
+
+        std::vector<const Icon*> todo;
+        for (const auto& entry : icons) {
+            if (!fs::exists(fs::u8path(entry.second.path))) todo.push_back(&entry.second);
+        }
+
+        std::atomic<size_t> next{ 0 }, saved{ 0 }, failed{ 0 };
+        auto worker = [&]() {
+            for (;;) {
+                size_t i = next.fetch_add(1);
+                if (i >= todo.size()) return;
+
+                bool ok = false;
+                for (int attempt = 0; attempt < 3 && !ok; attempt++) {
+                    Net::Response response;
+                    if (Net::get(todo[i]->url, response, true) && response.status == 200 && !response.body.empty()) {
+                        ok = writeFile(fs::u8path(todo[i]->path), response.body);
+                    }
+                }
+                if (ok) saved++;
+                else {
+                    failed++;
+                    std::cerr << "[icons] failed: " << todo[i]->url << std::endl;
+                }
+            }
+            };
+
+        std::vector<std::thread> pool;
+        for (int t = 0; t < DOWNLOAD_THREADS; t++) pool.emplace_back(worker);
+        for (auto& thread : pool) thread.join();
+
+        std::cout << "[icons] " << icons.size() << " found, " << saved << " saved, "
+            << (icons.size() - todo.size()) << " already there, " << failed << " failed" << std::endl;
+        return true;
+    }
+    
+    extern bool downloadItemPositionData() {
+        return true;
+	}
 }
