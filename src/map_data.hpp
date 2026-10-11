@@ -36,8 +36,8 @@ namespace MapData {
         const std::atomic<bool>* cancel = nullptr);
     extern bool downloadPrebuiltIndex(const std::filesystem::path& folder, const Plan& plan, const Progress& progress);
     extern bool downloadItems();
-    extern bool downloadItemIcons();
-    extern bool downloadItemPositionData();
+    extern bool downloadItemIcons(int map_id);
+    extern bool downloadItemPositionData(int map_id);
 
     // What the app runs on startup. Returns false only when there's nothing usable,
     // with no internet it keeps using whatever is already in the folder.
