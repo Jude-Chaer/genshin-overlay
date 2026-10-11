@@ -50,6 +50,8 @@ namespace LuaFunctions {
 		luaState.set_function("DefineExtensionSetting", DefineExtensionSetting);
 		luaState.set_function("GetSetting", GetExtensionSetting);
 		luaState.set_function("LoadTexture", LoadTextureFromFileLua);
+		luaState.set_function("GetItemIcon", GetItemIcon);
+		luaState.set_function("GetItemIconById", GetItemPositions);
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
@@ -921,5 +923,24 @@ namespace LuaFunctions {
 			IM_COL32(r, g, b, a),
 			text.c_str()
 		);
+	}
+	GLuint GetItemIcon(int itemId)
+	{
+		int width = 0, height = 0;
+		return Helpers::loadTextureFromFile(Helpers::exeDirectory().string() + "/items/icons/" + std::to_string(itemId) + ".png", width, height);
+	}
+	sol::object GetItemPositions(int itemId, sol::this_state state)
+	{
+		std::filesystem::path path = Helpers::exeDirectory() / "items" / "positions" / (std::to_string(itemId) + ".json");
+
+		std::ifstream file(path, std::ios::binary);
+		if (!file)
+			return sol::lua_nil;
+
+		nlohmann::json data = nlohmann::json::parse(file, nullptr, false);
+		if (data.is_discarded())
+			return sol::lua_nil;
+
+		return JsonToLua(data, sol::state_view(state));
 	}
 }
