@@ -63,6 +63,8 @@ namespace Keybindings {
     extern void RefreshRegistrations();
     // lets go of every key, or takes them back
     extern void SetEnabled(bool enabled);
+    // the Windows key for a GLFW one, 0 for a key that can't be bound
+    extern unsigned int GlfwKeyToVirtualKey(int key);
     extern Keybind* DoesKeybindExist(int glfwKey);
     extern void DeleteKeybind(int glfwKey);
 

@@ -101,6 +101,7 @@
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
+    <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\main.cpp" />
     <ClCompile Include="tests\map_check_tests.cpp" />
     <ClCompile Include="tests\map_follow_tests.cpp" />
