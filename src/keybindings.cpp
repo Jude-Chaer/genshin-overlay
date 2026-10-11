@@ -22,7 +22,7 @@ namespace Keybindings {
     static bool enabled = true;
 
     // Lua and the rest of the code use GLFW key codes, RegisterHotKey wants Windows ones
-    static UINT GlfwKeyToVirtualKey(int key) {
+    UINT GlfwKeyToVirtualKey(int key) {
         if ((key >= GLFW_KEY_0 && key <= GLFW_KEY_9) || (key >= GLFW_KEY_A && key <= GLFW_KEY_Z)) {
             return (UINT)key;
         }
