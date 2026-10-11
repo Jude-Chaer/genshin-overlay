@@ -1,11 +1,9 @@
 #include <chrono>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <thread>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include <opencv2/imgcodecs.hpp>
 #include "map_check.hpp"
 #include "test_map.hpp"
 
@@ -20,24 +18,11 @@ static const cv::Mat& map() {
     return map;
 }
 
-// the test map cut into tiles like the map data has them, with its manifest
 static std::filesystem::path dataFolder() {
     static std::filesystem::path folder;
     if (!folder.empty()) return folder;
     folder = std::filesystem::temp_directory_path() / "genshin-overlay-tests" / "map_data";
-    std::filesystem::remove_all(folder);
-    std::filesystem::create_directories(folder / "tiles");
-    for (int y = 0; y < ROWS; ++y) {
-        for (int x = 0; x < COLS; ++x) {
-            std::vector<uchar> bytes;
-            cv::imencode(".webp", map()(cv::Rect(x * TILE, y * TILE, TILE, TILE)), bytes, { cv::IMWRITE_WEBP_QUALITY, 101 });
-            std::ofstream file(folder / "tiles" / (std::to_string(x) + "_" + std::to_string(y) + ".webp"), std::ios::binary);
-            file.write((const char*)bytes.data(), bytes.size());
-        }
-    }
-    // no origin, so the map units are the tile pixels
-    std::ofstream manifest(folder / "manifest.tsv");
-    manifest << "grid\t" << MAP_ID << "\t" << COLS << "\t" << ROWS << "\t" << TILE << "\t0\t0\ttiles\n";
+    TestMap::save(map(), folder, MAP_ID, TILE);
     return folder;
 }
 

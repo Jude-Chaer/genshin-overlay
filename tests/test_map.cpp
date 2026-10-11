@@ -1,4 +1,8 @@
 #include "test_map.hpp"
+#include <fstream>
+#include <string>
+#include <vector>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 namespace TestMap {
@@ -20,5 +24,21 @@ namespace TestMap {
         cv::warpAffine(map, gray, to, cv::Size(w, h), cv::INTER_LINEAR | cv::WARP_INVERSE_MAP, cv::BORDER_CONSTANT, cv::Scalar(0));
         cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
         return bgr;
+    }
+
+    void save(const cv::Mat& map, const std::filesystem::path& folder, int mapId, int tile) {
+        int cols = map.cols / tile, rows = map.rows / tile;
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder / "tiles");
+        for (int y = 0; y < rows; ++y) {
+            for (int x = 0; x < cols; ++x) {
+                std::vector<uchar> bytes;
+                cv::imencode(".webp", map(cv::Rect(x * tile, y * tile, tile, tile)), bytes, { cv::IMWRITE_WEBP_QUALITY, 101 });
+                std::ofstream file(folder / "tiles" / (std::to_string(x) + "_" + std::to_string(y) + ".webp"), std::ios::binary);
+                file.write((const char*)bytes.data(), bytes.size());
+            }
+        }
+        std::ofstream manifest(folder / "manifest.tsv");
+        manifest << "grid\t" << mapId << "\t" << cols << "\t" << rows << "\t" << tile << "\t0\t0\ttiles\n";
     }
 }
