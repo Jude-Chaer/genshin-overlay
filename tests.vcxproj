@@ -104,6 +104,7 @@
     <ClCompile Include="tests\main.cpp" />
     <ClCompile Include="tests\map_check_tests.cpp" />
     <ClCompile Include="tests\map_follow_tests.cpp" />
+    <ClCompile Include="tests\settings_tests.cpp" />
     <ClCompile Include="tests\test_map.cpp" />
   </ItemGroup>
   <ItemGroup>

@@ -15,7 +15,10 @@ namespace Settings {
     bool shrinkOnGpu = true;
     bool findSmallFirst = true;
 
+    std::filesystem::path file;
+
     static std::filesystem::path settingsPath() {
+        if (!file.empty()) return file;
         return Helpers::exeDirectory() / "settings.json";
     }
 
