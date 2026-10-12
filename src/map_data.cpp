@@ -12,6 +12,8 @@
 #include <thread>
 #include <nlohmann/json.hpp>
 #include <zlib.h>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -120,6 +122,78 @@ namespace MapData {
 		std::string dir = grid.dir.filename().string();
 		return fetch(TILES + std::to_string(mapId) + "/" + dir.substr(dir.find('_') + 1) + "/" + std::to_string(x) + "_" + std::to_string(y) + "_P0.webp",
 			tilePath(grid, x, y));
+	}
+
+	cv::Mat readGray(const fs::path& path, int shrunkBy) {
+		std::ifstream file(path, std::ios::binary);
+		std::vector<uchar> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+		if (bytes.empty()) return {};
+		cv::Mat gray;
+		try {
+			cv::Mat image = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
+			if (image.empty() || image.depth() != CV_8U) return {};
+			if (image.channels() == 4) {
+				std::vector<cv::Mat> parts;
+				cv::split(image, parts);
+				cv::cvtColor(image, gray, cv::COLOR_BGRA2GRAY);
+				cv::multiply(gray, parts[3], gray, 1.0 / 255.0);
+			}
+			else if (image.channels() == 3) cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+			else gray = image;
+			if (shrunkBy > 1) cv::resize(gray, gray, cv::Size(std::max(1, gray.cols / shrunkBy), std::max(1, gray.rows / shrunkBy)), 0, 0, cv::INTER_AREA);
+		}
+		catch (...) {
+			return {};
+		}
+		return gray;
+	}
+
+	// one tile as gray, shrunk, empty if there's no such tile
+	const cv::Mat& Tiles::tile(int mapId, const Grid& grid, int x, int y, int shrunkBy) {
+		Key key{ mapId, x, y, shrunkBy };
+		auto it = m_tiles.find(key);
+		if (it != m_tiles.end()) return it->second;
+
+		if (m_fetch) fetchTile(mapId, grid, x, y);
+		cv::Mat image = readGray(tilePath(grid, x, y), shrunkBy);
+
+		if (m_order.size() >= m_kept) {
+			m_tiles.erase(m_order.front());
+			m_order.pop_front();
+		}
+		m_order.push_back(key);
+		return m_tiles[key] = image;
+	}
+
+	cv::Mat Tiles::Draw(int mapId, const Grid& grid, double left, double top, int side, double perPixel, int shrunkBy) {
+		int size = grid.tileSize / shrunkBy;
+		// drawn pixel u lands on shrunk tile pixel a * u + b, pixel middles lined up
+		double a = perPixel / shrunkBy;
+		double bx = (left + 0.5 * perPixel + grid.originX) / shrunkBy - 0.5;
+		double by = (top + 0.5 * perPixel + grid.originY) / shrunkBy - 0.5;
+		int x0 = (int)std::floor(bx) - 2, y0 = (int)std::floor(by) - 2;
+		int x1 = (int)std::ceil(bx + a * (side - 1)) + 3, y1 = (int)std::ceil(by + a * (side - 1)) + 3;
+
+		cv::Mat area(y1 - y0, x1 - x0, CV_8U, cv::Scalar(0));
+		for (int ty = std::max(0, (int)std::floor((double)y0 / size)); ty <= std::min(grid.rows - 1, (int)std::floor((double)(y1 - 1) / size)); ++ty) {
+			for (int tx = std::max(0, (int)std::floor((double)x0 / size)); tx <= std::min(grid.cols - 1, (int)std::floor((double)(x1 - 1) / size)); ++tx) {
+				const cv::Mat& image = tile(mapId, grid, tx, ty, shrunkBy);
+				if (image.empty()) continue;
+				cv::Rect in(tx * size, ty * size, size, size);
+				cv::Rect both = in & cv::Rect(x0, y0, x1 - x0, y1 - y0);
+				if (both.empty()) continue;
+				image(both - in.tl()).copyTo(area(both - cv::Point(x0, y0)));
+			}
+		}
+		cv::Mat drawn;
+		cv::Matx23d to(a, 0.0, bx - x0, 0.0, a, by - y0);
+		cv::warpAffine(area, drawn, to, cv::Size(side, side), cv::INTER_LINEAR | cv::WARP_INVERSE_MAP, cv::BORDER_CONSTANT, cv::Scalar(0));
+		return drawn;
+	}
+
+	void Tiles::Clear() {
+		m_tiles.clear();
+		m_order.clear();
 	}
 
 	bool makePlan(Plan& plan) {

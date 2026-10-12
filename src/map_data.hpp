@@ -1,11 +1,14 @@
 #pragma once
 #include <atomic>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
+#include <opencv2/core.hpp>
 
 // Gets the data the map matching needs into a folder: manifest.tsv plus either
 // a ready index.bin or the map images to build one from.
@@ -58,6 +61,32 @@ namespace MapData {
     // couldn't be. What HoYoLAB doesn't have is kept as an empty file.
     extern bool fetch(const std::string& url, const std::filesystem::path& path);
     extern bool fetchTile(int mapId, const Grid& grid, int x, int y);
+
+    // A picture as gray, shrunk. Black where it's see-through, like where
+    // there's no tile. Empty if it isn't on disk.
+    extern cv::Mat readGray(const std::filesystem::path& path, int shrunkBy = 1);
+
+    // Draws a part of a map from its tiles, the way the game should show it
+    // there. Keeps the tiles it read, so every thread has its own.
+    class Tiles {
+    public:
+        // how many decoded tiles stay in memory, and if a tile that isn't on
+        // disk gets downloaded
+        explicit Tiles(size_t kept, bool fetch = false) : m_kept(kept), m_fetch(fetch) {}
+        // side x side pixels of perPixel map units, the first one's corner at
+        // left, top. From tiles shrunk by shrunkBy, black where there are none.
+        cv::Mat Draw(int mapId, const Grid& grid, double left, double top, int side, double perPixel, int shrunkBy);
+        void Clear();
+
+    private:
+        const cv::Mat& tile(int mapId, const Grid& grid, int x, int y, int shrunkBy);
+
+        size_t m_kept;
+        bool m_fetch;
+        using Key = std::tuple<int, int, int, int>;  // map, x, y, shrunk by
+        std::map<Key, cv::Mat> m_tiles;
+        std::deque<Key> m_order;
+    };
 
     // stage is a short description, percent is 0 to 100
     typedef std::function<void(const char* stage, int percent)> Progress;
