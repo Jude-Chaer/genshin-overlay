@@ -1,8 +1,12 @@
 #include <windows.h>
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <opencv2/imgcodecs.hpp>
 #include "overlay.hpp"
 #include "extensions.hpp"
@@ -90,7 +94,38 @@ static int locatePlayer(const std::string& imagePath) {
     return 0;
 }
 
+// genshin-overlay.exe --minimap-replay <folder> <out.tsv> [looks per second]
+// Follows the player through a folder of minimap pictures (the square
+// MiniMap::rect gives, in name order) like the live thread would, and writes
+// one line per picture.
+static int replayMinimap(const std::string& folder, const std::string& outPath, double perSecond) {
+    std::vector<std::filesystem::path> pictures;
+    for (const auto& entry : std::filesystem::directory_iterator(folder)) pictures.push_back(entry.path());
+    std::sort(pictures.begin(), pictures.end());
+    MiniMap::Load(Helpers::exeDirectory() / "map_data");
+
+    std::ofstream out(outPath);
+    out << "picture\tseconds\tfound\tmap\tlat\tlng\tscore\tsearched\tms\tzoom\tfloor\n";
+    MapLocator::Index index;
+    MiniMap::Watcher watcher(locateWith(index));
+    for (size_t i = 0; i < pictures.size(); ++i) {
+        cv::Mat image = cv::imread(pictures[i].string(), cv::IMREAD_COLOR);
+        if (image.empty()) continue;
+        double seconds = i / perSecond;
+        bool searched = false;
+        auto start = std::chrono::steady_clock::now();
+        MiniMap::Spot spot = watcher.Look(image, seconds, &searched);
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        out << pictures[i].filename().string() << "\t" << seconds << "\t" << spot.found << "\t" << spot.mapId << "\t" << spot.lat << "\t" << spot.lng
+            << "\t" << spot.score << "\t" << searched << "\t" << ms << "\t" << spot.zoom << "\t" << spot.floorId << "\n";
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
+        return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0);
+    }
     if (argc >= 3 && std::string(argv[1]) == "--locate") {
         return locateImage(argv[2]);
     }
