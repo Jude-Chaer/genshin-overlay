@@ -6,11 +6,11 @@
 #include <fstream>
 #include <map>
 #include <mutex>
-#include <sstream>
 #include <thread>
 #include <tuple>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include "map_data.hpp"
 
 namespace MapCheck {
     // decoded tiles kept in memory, 64 KB each at full size, less shrunk
@@ -20,13 +20,7 @@ namespace MapCheck {
     // patches that have to be sure before the answer is used
     static constexpr int MIN_SURE = 2;
 
-    // one map's tiles on disk: cols x rows files of tileSize pixels, named
-    // x_y.webp. Tile pixel = map units + origin.
-    struct Grid {
-        int cols = 0, rows = 0, tileSize = 256;
-        double originX = 0.0, originY = 0.0;
-        std::filesystem::path dir;
-    };
+    using MapData::Grid;
 
     // what Check was asked
     struct Job {
@@ -58,8 +52,7 @@ namespace MapCheck {
         if (it != tiles.end()) return it->second;
 
         cv::Mat image;
-        std::filesystem::path path = grid.dir / (std::to_string(x) + "_" + std::to_string(y) + ".webp");
-        std::ifstream file(path, std::ios::binary);
+        std::ifstream file(MapData::tilePath(grid, x, y), std::ios::binary);
         std::vector<uchar> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         if (!bytes.empty()) image = cv::imdecode(bytes, cv::IMREAD_GRAYSCALE);
         if (!image.empty() && shrink > 1) cv::resize(image, image, cv::Size(grid.tileSize / shrink, grid.tileSize / shrink), 0, 0, cv::INTER_AREA);
@@ -171,25 +164,9 @@ namespace MapCheck {
         }
     }
 
-    static void load(const std::filesystem::path& dataFolder) {
-        grids.clear();
-        std::ifstream manifest(dataFolder / "manifest.tsv");
-        std::string text;
-        while (std::getline(manifest, text)) {
-            std::istringstream fields(text);
-            std::string kind, dir;
-            int id = 0;
-            Grid grid;
-            if (!(fields >> kind) || kind != "grid") continue;
-            if (!(fields >> id >> grid.cols >> grid.rows >> grid.tileSize >> grid.originX >> grid.originY >> dir)) continue;
-            grid.dir = dataFolder / std::filesystem::u8path(dir);
-            grids[id] = grid;
-        }
-    }
-
     void Start(const std::filesystem::path& dataFolder) {
         if (worker.joinable()) return;
-        load(dataFolder);
+        grids = MapData::readManifest(dataFolder).grids;
         stopping = false;
         worker = std::thread(loop);
     }

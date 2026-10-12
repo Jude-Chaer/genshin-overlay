@@ -2,6 +2,7 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -27,6 +28,36 @@ namespace MapData {
         std::vector<File> files;
         std::set<std::string> tileDirs;
     };
+
+    // one map's tiles on disk: cols x rows files of tileSize pixels, named
+    // x_y.webp. Tile pixel = map units + origin.
+    struct Grid {
+        int cols = 0, rows = 0, tileSize = 256;
+        double originX = 0.0, originY = 0.0;
+        std::filesystem::path dir;
+    };
+
+    // An underground floor's picture, and the box of map units it covers on
+    // its map.
+    struct Floor {
+        int mapId = 0, groupId = 0, floorId = 0;
+        double left = 0.0, top = 0.0, right = 0.0, bottom = 0.0;
+        std::filesystem::path path;
+        std::string url;
+    };
+
+    struct Manifest {
+        std::map<int, Grid> grids;
+        std::vector<Floor> floors;
+    };
+
+    // what the manifest in a data folder says there is
+    extern Manifest readManifest(const std::filesystem::path& folder);
+    extern std::filesystem::path tilePath(const Grid& grid, int x, int y);
+    // Makes sure a file is on disk, downloaded if it isn't yet. False if it
+    // couldn't be. What HoYoLAB doesn't have is kept as an empty file.
+    extern bool fetch(const std::string& url, const std::filesystem::path& path);
+    extern bool fetchTile(int mapId, const Grid& grid, int x, int y);
 
     // stage is a short description, percent is 0 to 100
     typedef std::function<void(const char* stage, int percent)> Progress;

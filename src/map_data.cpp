@@ -19,7 +19,8 @@ using json = nlohmann::json;
 namespace MapData {
 	static const std::string API = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc";
 	static const std::string STATIC_API = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc";
-	static const std::string RELEASE = "https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
+	static const std::string TILES = "https://act-webstatic.hoyoverse.com/map_manage/map/";
+	static const std::string RELEASE ="https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
 	static const std::string INDEX_FILE = "map-index.bin.gz";
 	static const std::string META_FILE = "map-index.json";
 	static constexpr int META_FORMAT = 1;
@@ -66,6 +67,61 @@ namespace MapData {
 		return !ec;
 	}
 
+	Manifest readManifest(const fs::path& folder) {
+		Manifest out;
+		std::map<std::string, std::string> urls;
+		std::ifstream urlFile(folder / "overlay_urls.tsv");
+		std::string line;
+		while (std::getline(urlFile, line)) {
+			size_t tab = line.find('\t');
+			if (tab != std::string::npos) urls[line.substr(0, tab)] = line.substr(tab + 1);
+		}
+
+		std::ifstream manifest(folder / "manifest.tsv");
+		while (std::getline(manifest, line)) {
+			std::istringstream fields(line);
+			std::string kind, path;
+			fields >> kind;
+			// grid <map> <cols> <rows> <tile size> <origin x> <origin y> <dir>
+			if (kind == "grid") {
+				int id = 0;
+				Grid grid;
+				if (!(fields >> id >> grid.cols >> grid.rows >> grid.tileSize >> grid.originX >> grid.originY >> path)) continue;
+				grid.dir = folder / fs::u8path(path);
+				out.grids[id] = grid;
+			}
+			// image <map> <group> <floor> <left> <top> <path> <right> <bottom>
+			else if (kind == "image") {
+				Floor floor;
+				if (!(fields >> floor.mapId >> floor.groupId >> floor.floorId >> floor.left >> floor.top >> path >> floor.right >> floor.bottom)) continue;
+				floor.path = folder / fs::u8path(path);
+				floor.url = urls[path];
+				out.floors.push_back(floor);
+			}
+		}
+		return out;
+	}
+
+	fs::path tilePath(const Grid& grid, int x, int y) {
+		return grid.dir / (std::to_string(x) + "_" + std::to_string(y) + ".webp");
+	}
+
+	bool fetch(const std::string& url, const fs::path& path) {
+		if (fs::exists(path)) return true;
+		Net::Response response;
+		if (url.empty() || !Net::get(url, response, true)) return false;
+		// an empty file stops us asking again, tiles outside the drawn map don't exist
+		if (response.status == 404) return writeFile(path, "");
+		return response.status == 200 && writeFile(path, response.body);
+	}
+
+	bool fetchTile(int mapId, const Grid& grid, int x, int y) {
+		// dir is tiles/<id>_<version>
+		std::string dir = grid.dir.filename().string();
+		return fetch(TILES + std::to_string(mapId) + "/" + dir.substr(dir.find('_') + 1) + "/" + std::to_string(x) + "_" + std::to_string(y) + "_P0.webp",
+			tilePath(grid, x, y));
+	}
+
 	bool makePlan(Plan& plan) {
 		std::vector<std::string> lines = { "# genshin-overlay map manifest v1" };
 		plan.files.clear();
@@ -94,7 +150,7 @@ namespace MapData {
 					for (int x = 0; x < cols; x++) {
 						std::string name = std::to_string(x) + "_" + std::to_string(y);
 						plan.files.push_back({
-							"https://act-webstatic.hoyoverse.com/map_manage/map/" + std::to_string(id) + "/" + version + "/" + name + "_P0.webp",
+							TILES + std::to_string(id) + "/" + version + "/" + name + "_P0.webp",
 							dir + "/" + name + ".webp"
 							});
 					}
@@ -155,18 +211,9 @@ namespace MapData {
 				if (i >= missing.size()) return;
 
 				const File& file = *missing[i];
-				fs::path target = folder / fs::u8path(file.path);
 				bool saved = false;
 				for (int attempt = 0; attempt < 3 && !saved; attempt++) {
-					Net::Response response;
-					if (!Net::get(file.url, response, true)) continue;
-					if (response.status == 200) {
-						saved = writeFile(target, response.body);
-					}
-					// tiles outside the drawn map don't exist, an empty file stops us asking again
-					else if (response.status == 404) {
-						saved = writeFile(target, "");
-					}
+					saved = fetch(file.url, folder / fs::u8path(file.path));
 				}
 				if (!saved) failed = true;
 				done++;

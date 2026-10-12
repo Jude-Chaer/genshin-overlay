@@ -1,6 +1,6 @@
 #include "map_tiles.hpp"
+#include "map_data.hpp"
 #include "map_tracking.hpp"
-#include "net.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -8,7 +8,6 @@
 #include <map>
 #include <mutex>
 #include <set>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -30,12 +29,6 @@ namespace MapTiles {
     static constexpr int FLOOR_SIZE = -1;
     static constexpr int MAX_FLOOR_SIZE = 2048;
 
-    struct MapInfo {
-        Grid grid;
-        std::string version;
-        fs::path dir;
-    };
-
     struct Entry {
         GLuint texture = 0;
         uint64_t lastUsed = 0;
@@ -54,14 +47,9 @@ namespace MapTiles {
 
     static fs::path dataFolder;
     static bool gridsLoaded = false;
-    static std::map<int, MapInfo> maps;
-
-    struct FloorInfo {
-        Floor box;
-        fs::path path;
-        std::string url;
-    };
-    static std::map<std::pair<int, int>, FloorInfo> floors;
+    static std::map<int, MapData::Grid> maps;
+    // by group and floor
+    static std::map<std::pair<int, int>, MapData::Floor> floors;
 
     // main thread only
     static std::map<Key, Entry> textures;
@@ -83,59 +71,13 @@ namespace MapTiles {
         return true;
     }
 
-    static void writeBytes(const fs::path& path, const std::string& data) {
-        std::error_code ec;
-        fs::create_directories(path.parent_path(), ec);
-        fs::path tmp = path;
-        tmp += ".part";
-        {
-            std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-            file.write(data.data(), (std::streamsize)data.size());
-        }
-        fs::rename(tmp, path, ec);
-    }
-
-    // the grid lines of the manifest say where each map's tiles are
+    // the manifest says where each map's tiles and floors are
     static void loadGrids() {
         if (gridsLoaded || MapTracking::GetStatus() != MapTracking::Status::Ready) return;
 
-        std::ifstream file(dataFolder / "manifest.tsv");
-        std::string line;
-        while (std::getline(file, line)) {
-            std::istringstream fields(line);
-            std::string kind, dir;
-            int id = 0;
-            MapInfo info;
-            if (!(fields >> kind) || kind != "grid") continue;
-            if (!(fields >> id >> info.grid.cols >> info.grid.rows >> info.grid.tileSize >> info.grid.originX >> info.grid.originY >> dir)) continue;
-
-            // dir is tiles/<id>_<version>
-            info.dir = dataFolder / fs::u8path(dir);
-            info.version = dir.substr(dir.find('_') + 1);
-            maps[id] = info;
-        }
-
-        std::map<std::string, std::string> urls;
-        std::ifstream urlFile(dataFolder / "overlay_urls.tsv");
-        while (std::getline(urlFile, line)) {
-            size_t tab = line.find('\t');
-            if (tab != std::string::npos) urls[line.substr(0, tab)] = line.substr(tab + 1);
-        }
-
-        // image <map> <group> <floor> <left> <top> <path> <right> <bottom>
-        file.clear();
-        file.seekg(0);
-        while (std::getline(file, line)) {
-            std::istringstream fields(line);
-            std::string kind, path;
-            int mapId = 0, groupId = 0, floorId = 0;
-            FloorInfo info;
-            if (!(fields >> kind) || kind != "image") continue;
-            if (!(fields >> mapId >> groupId >> floorId >> info.box.left >> info.box.top >> path >> info.box.right >> info.box.bottom)) continue;
-            info.path = dataFolder / fs::u8path(path);
-            info.url = urls[path];
-            floors[{ groupId, floorId }] = info;
-        }
+        MapData::Manifest manifest = MapData::readManifest(dataFolder);
+        maps = manifest.grids;
+        for (const MapData::Floor& floor : manifest.floors) floors[{ floor.groupId, floor.floorId }] = floor;
         gridsLoaded = true;
     }
 
@@ -144,16 +86,10 @@ namespace MapTiles {
         result.key = key;
         auto it = floors.find({ std::get<1>(key), std::get<2>(key) });
         if (it == floors.end()) return result;
-        const FloorInfo& info = it->second;
-
-        if (!fs::exists(info.path)) {
-            Net::Response response;
-            if (info.url.empty() || !Net::get(info.url, response, true) || response.status != 200) return result;
-            writeBytes(info.path, response.body);
-        }
+        const MapData::Floor& info = it->second;
 
         std::vector<uchar> bytes;
-        if (!readBytes(info.path, bytes) || bytes.empty()) return result;
+        if (!MapData::fetch(info.url, info.path) || !readBytes(info.path, bytes) || bytes.empty()) return result;
         try {
             // keep the transparency, the image only covers part of its box
             cv::Mat image = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
@@ -180,28 +116,9 @@ namespace MapTiles {
 
         auto it = maps.find(mapId);
         if (it == maps.end()) return result;
-        const MapInfo& info = it->second;
-
-        fs::path path = info.dir / (std::to_string(x) + "_" + std::to_string(y) + ".webp");
-        if (!fs::exists(path)) {
-            std::string url = "https://act-webstatic.hoyoverse.com/map_manage/map/" + std::to_string(mapId) + "/" + info.version + "/"
-                + std::to_string(x) + "_" + std::to_string(y) + "_P0.webp";
-            Net::Response response;
-            if (!Net::get(url, response, true)) return result;
-            if (response.status == 200) {
-                writeBytes(path, response.body);
-            }
-            // outside the drawn map, remember that there's nothing there
-            else if (response.status == 404) {
-                writeBytes(path, "");
-            }
-            else {
-                return result;
-            }
-        }
 
         std::vector<uchar> bytes;
-        if (!readBytes(path, bytes) || bytes.empty()) return result;
+        if (!MapData::fetchTile(mapId, it->second, x, y) || !readBytes(MapData::tilePath(it->second, x, y), bytes) || bytes.empty()) return result;
         cv::Mat image;
         try {
             image = cv::imdecode(bytes, cv::IMREAD_COLOR);
@@ -268,7 +185,8 @@ namespace MapTiles {
         loadGrids();
         auto it = maps.find(mapId);
         if (it == maps.end()) return false;
-        out = it->second.grid;
+        const MapData::Grid& grid = it->second;
+        out = { grid.cols, grid.rows, grid.tileSize, grid.originX, grid.originY };
         return true;
     }
 
@@ -296,8 +214,8 @@ namespace MapTiles {
         it->second.lastUsed = frame;
         if (it->second.texture == 0) return false;
 
-        out = info->second.box;
-        out.texture = it->second.texture;
+        const MapData::Floor& box = info->second;
+        out = { it->second.texture, box.left, box.top, box.right, box.bottom };
         return true;
     }
 
