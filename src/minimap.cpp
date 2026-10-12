@@ -10,6 +10,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <concrt.h>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include "capture.hpp"
@@ -786,7 +787,17 @@ namespace MiniMap {
         return m_last;
     }
 
+    // OpenCV runs its loops on the scheduler of the thread that calls it
+    OneThread::OneThread() {
+        Concurrency::CurrentScheduler::Create(Concurrency::SchedulerPolicy(2, Concurrency::MinConcurrency, 1, Concurrency::MaxConcurrency, 1));
+    }
+
+    OneThread::~OneThread() {
+        Concurrency::CurrentScheduler::Detach();
+    }
+
     static void loop() {
+        OneThread alone;
         Watcher watcher(MapTracking::Locate);
         bool wasOpen = false;
         double fetchAt = 0.0;

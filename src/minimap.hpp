@@ -126,6 +126,14 @@ namespace MiniMap {
         std::map<double, cv::Mat> m_areaDrawn;
     };
 
+    // OpenCV splits its work over helper threads, and those keep spinning
+    // for a while after. A look is too short for that to pay. While one of
+    // these lives, OpenCV stays on the thread that made it.
+    struct OneThread {
+        OneThread();
+        ~OneThread();
+    };
+
     // Load, and starts the thread
     extern void Start(const std::filesystem::path& dataFolder);
     extern void Stop();

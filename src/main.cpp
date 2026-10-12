@@ -103,6 +103,7 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
     for (const auto& entry : std::filesystem::directory_iterator(folder)) pictures.push_back(entry.path());
     std::sort(pictures.begin(), pictures.end());
     MiniMap::Load(Helpers::exeDirectory() / "map_data");
+    MiniMap::OneThread alone;
 
     std::ofstream out(outPath);
     out << "picture\tseconds\tfound\tmap\tlat\tlng\tscore\tsearched\tms\tzoom\tfloor\n";
