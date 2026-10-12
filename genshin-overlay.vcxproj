@@ -129,6 +129,7 @@
   <ItemGroup>
     <None Include="extensions\example\main.lua" />
     <None Include="extensions\map\main.lua" />
+    <None Include="extensions\player\main.lua" />
     <None Include="tools\publish_map_index.bat" />
     <None Include="vcpkg.json" />
   </ItemGroup>
