@@ -1,3 +1,4 @@
+#include <Windows.h>
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "lua_functions.hpp"
