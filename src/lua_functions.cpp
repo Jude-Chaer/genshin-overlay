@@ -6,6 +6,7 @@
 #include "overlay.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
+#include "minimap.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -55,6 +56,7 @@ namespace LuaFunctions {
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
+		luaState.set_function("GetPlayerPosition", GetPlayerPosition);
 		luaState.set_function("GetMapGrid", GetMapGrid);
 		luaState.set_function("GetMapTile", GetMapTile);
 		luaState.set_function("GetMapFloor", GetMapFloor);
@@ -357,6 +359,40 @@ namespace LuaFunctions {
 	// cheaper, and found exactly when it stops.
 	void FollowMapWhileMoving() {
 		MapTracking::FollowWhileMoving();
+	}
+
+	// Where the player is on the map, read from the minimap, or nil while it
+	// isn't found (menus, cutscenes, indoors). The minimap is only watched while
+	// this gets called, so the first calls give nil.
+	sol::object GetPlayerPosition(sol::this_state state) {
+		MiniMap::Spot spot = MiniMap::GetPlayer();
+		if (!spot.found) return sol::lua_nil;
+
+		int windowX = 0, windowY = 0;
+		glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+		float left = (float)(spot.square.left - windowX);
+		float top = (float)(spot.square.top - windowY);
+		float right = (float)(spot.square.right - windowX);
+		float bottom = (float)(spot.square.bottom - windowY);
+
+		// Left to bottom is the square around the game's minimap on the overlay.
+		// The minimap is the circle that just fits in it.
+		sol::state_view lua(state);
+		return sol::make_object(state, lua.create_table_with(
+			"mapId", spot.mapId,
+			"groupId", spot.groupId,
+			"floorId", spot.floorId,
+			"lat", spot.lat,
+			"lng", spot.lng,
+			"unitsPerPixel", MiniMap::UNITS_ACROSS / spot.zoom / std::max(1.0f, right - left),
+			"left", left,
+			"top", top,
+			"right", right,
+			"bottom", bottom,
+			"centerX", (left + right) / 2.0f,
+			"centerY", (top + bottom) / 2.0f,
+			"radius", (right - left) / 2.0f
+		));
 	}
 
 	// how a map's tiles are laid out: tile x covers map units x * tileSize - originX and up

@@ -46,9 +46,17 @@ namespace MapTracking {
     extern std::string GetDownloadStage(int& percent);
     // where the map is when what's drawn now shows up
     extern MapView GetView();
+    // The big map's view as it was last found, also after it closed. Its
+    // visible says nothing here.
+    extern MapView LastView();
+    // the game, or our own menu, is the window in front
+    extern bool GameInFront();
     // Draw loop, after drawing a frame: sleeps until the follower has a new
     // view, or until the next screen refresh if there's no map.
     extern void WaitForDraw();
+    // Where a picture of the map is, its middle as the spot. For the minimap,
+    // the big map is found by the tracker itself.
+    extern MapLocator::Result Locate(const cv::Mat& image);
     // how long the last screenshot took to match
     extern float GetLastStepMs();
     extern const char* GetMapName(int mapId);

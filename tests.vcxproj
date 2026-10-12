@@ -96,6 +96,7 @@
     <ClCompile Include="src\map_follow.cpp" />
     <ClCompile Include="src\map_tiles.cpp" />
     <ClCompile Include="src\map_tracking.cpp" />
+    <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -106,6 +107,7 @@
     <ClCompile Include="tests\main.cpp" />
     <ClCompile Include="tests\map_check_tests.cpp" />
     <ClCompile Include="tests\map_follow_tests.cpp" />
+    <ClCompile Include="tests\minimap_tests.cpp" />
     <ClCompile Include="tests\settings_tests.cpp" />
     <ClCompile Include="tests\test_map.cpp" />
   </ItemGroup>
@@ -121,6 +123,8 @@
     <ClInclude Include="src\map_follow.hpp" />
     <ClInclude Include="src\map_tiles.hpp" />
     <ClInclude Include="src\map_tracking.hpp" />
+    <ClInclude Include="src\minimap.hpp" />
+    <ClInclude Include="src\minimap_corner.hpp" />
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\settings.hpp" />
