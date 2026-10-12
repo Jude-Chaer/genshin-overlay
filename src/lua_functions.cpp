@@ -23,7 +23,7 @@
 
 
 namespace LuaFunctions {
-
+	static void createVirtualKeyTable(sol::table& virtualKeys);
 	static void callLua(const sol::protected_function& function) {
 		auto result = function();
 		if (!result.valid()) {
@@ -51,7 +51,7 @@ namespace LuaFunctions {
 		luaState.set_function("GetSetting", GetExtensionSetting);
 		luaState.set_function("LoadTexture", LoadTextureFromFileLua);
 		luaState.set_function("GetItemIcon", GetItemIcon);
-		luaState.set_function("GetItemIconById", GetItemPositions);
+		luaState.set_function("GetItemPositions", GetItemPositions);
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
@@ -75,6 +75,11 @@ namespace LuaFunctions {
 		luaState.set_function("ClearInterval", ClearInterval);
 		luaState.set_function("GetOSTimeMS", GetOSTimeMS);
 		luaState.set_function("GetMousePosition", GetMousePosition);
+		luaState.set_function("SendKey", SendKey);
+		luaState.set_function("SendMouseMove", SendMouseMove);
+		luaState.set_function("SendMouseMoveRelative", SendMouseMoveRelative);
+		luaState.set_function("SendMouseClick", SendMouseClick);
+		luaState.set_function("SendMouseMoveThenClick", SendMouseMoveThenClick);
 		luaState["KeybindFlags"] = luaState.create_table_with(
 			"None", Keybindings::KeybindFlags_None,
 			"ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -85,7 +90,9 @@ namespace LuaFunctions {
 			"Ctrl", Keybindings::KeybindModifiers_Ctrl,
 			"Shift", Keybindings::KeybindModifiers_Shift
 		);
-
+		sol::table virtualKey = luaState.create_table();
+		createVirtualKeyTable(virtualKey);
+		luaState["VirtualKeys"] = virtualKey;
 		auto websocket = luaState.new_usertype<Net::WebSocket>("WebSocket", sol::constructors<Net::WebSocket()>());
 		websocket.set_function("connect", WebSocketConnect);
 		websocket.set_function("send", WebSocketSend);
@@ -942,5 +949,131 @@ namespace LuaFunctions {
 			return sol::lua_nil;
 
 		return JsonToLua(data, sol::state_view(state));
+	}
+	void SendMouseMoveRelative(int dx, int dy)
+	{
+		CHECK_PERMISSIONS();
+		INPUT input{};
+		input.type = INPUT_MOUSE;
+		input.mi.dx = dx;
+		input.mi.dy = dy;
+		input.mi.dwFlags = MOUSEEVENTF_MOVE;
+
+		if (SendInput(1, &input, sizeof(INPUT)) != 1)
+			throw std::runtime_error("Failed to move mouse");
+	}
+	void SendMouseMove(int x, int y)
+	{
+		CHECK_PERMISSIONS();
+		if (!SetCursorPos(x, y))
+			throw std::runtime_error("Failed to move mouse");
+	}
+	void SendKey(int virtualKey)
+	{
+		CHECK_PERMISSIONS();
+
+		INPUT inputs[2]{};
+
+		inputs[0].type = INPUT_KEYBOARD;
+		inputs[0].ki.wVk = static_cast<WORD>(virtualKey);
+
+		inputs[1].type = INPUT_KEYBOARD;
+		inputs[1].ki.wVk = static_cast<WORD>(virtualKey);
+		inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+
+		if (SendInput(2, inputs, sizeof(INPUT)) != 2)
+			throw std::runtime_error("Failed to send keyboard input");
+	}
+	void SendMouseClick(const std::string& button)
+	{
+		CHECK_PERMISSIONS();
+
+		DWORD downFlags;
+		DWORD upFlags;
+
+		if (button == "left") {
+			downFlags = MOUSEEVENTF_LEFTDOWN;
+			upFlags = MOUSEEVENTF_LEFTUP;
+		}
+		else if (button == "right") {
+			downFlags = MOUSEEVENTF_RIGHTDOWN;
+			upFlags = MOUSEEVENTF_RIGHTUP;
+		}
+		else if (button == "middle") {
+			downFlags = MOUSEEVENTF_MIDDLEDOWN;
+			upFlags = MOUSEEVENTF_MIDDLEUP;
+		}
+		else {
+			throw std::runtime_error("Invalid mouse button");
+		}
+
+		INPUT inputs[2]{};
+
+		inputs[0].type = INPUT_MOUSE;
+		inputs[0].mi.dwFlags = downFlags;
+
+		inputs[1].type = INPUT_MOUSE;
+		inputs[1].mi.dwFlags = upFlags;
+
+		if (SendInput(2, inputs, sizeof(INPUT)) != 2)
+			throw std::runtime_error("Failed to send mouse input");
+	}
+	void SendMouseMoveThenClick(int x, int y, const std::string& button) {
+		SendMouseMove(x, y);
+		SendMouseClick(button);
+	}
+	static void createVirtualKeyTable(sol::table& virtualKeys) {
+		for (int key = 'A'; key <= 'Z'; key++)
+			virtualKeys[std::string(1, (char)key)] = key;
+
+		for (int key = '0'; key <= '9'; key++)
+			virtualKeys["Num" + std::string(1, (char)key)] = key;
+
+		virtualKeys["Backspace"] = VK_BACK;
+		virtualKeys["Tab"] = VK_TAB;
+		virtualKeys["Enter"] = VK_RETURN;
+		virtualKeys["Shift"] = VK_SHIFT;
+		virtualKeys["Ctrl"] = VK_CONTROL;
+		virtualKeys["Alt"] = VK_MENU;
+		virtualKeys["Pause"] = VK_PAUSE;
+		virtualKeys["CapsLock"] = VK_CAPITAL;
+		virtualKeys["Escape"] = VK_ESCAPE;
+		virtualKeys["Space"] = VK_SPACE;
+		virtualKeys["PageUp"] = VK_PRIOR;
+		virtualKeys["PageDown"] = VK_NEXT;
+		virtualKeys["End"] = VK_END;
+		virtualKeys["Home"] = VK_HOME;
+		virtualKeys["Left"] = VK_LEFT;
+		virtualKeys["Up"] = VK_UP;
+		virtualKeys["Right"] = VK_RIGHT;
+		virtualKeys["Down"] = VK_DOWN;
+		virtualKeys["Insert"] = VK_INSERT;
+		virtualKeys["Delete"] = VK_DELETE;
+
+		for (int i = 1; i <= 24; i++)
+			virtualKeys["F" + std::to_string(i)] = VK_F1 + i - 1;
+
+		virtualKeys["LeftShift"] = VK_LSHIFT;
+		virtualKeys["RightShift"] = VK_RSHIFT;
+		virtualKeys["LeftCtrl"] = VK_LCONTROL;
+		virtualKeys["RightCtrl"] = VK_RCONTROL;
+		virtualKeys["LeftAlt"] = VK_LMENU;
+		virtualKeys["RightAlt"] = VK_RMENU;
+
+		virtualKeys["NumLock"] = VK_NUMLOCK;
+		virtualKeys["ScrollLock"] = VK_SCROLL;
+		virtualKeys["PrintScreen"] = VK_SNAPSHOT;
+
+		virtualKeys["Semicolon"] = VK_OEM_1;
+		virtualKeys["Equals"] = VK_OEM_PLUS;
+		virtualKeys["Comma"] = VK_OEM_COMMA;
+		virtualKeys["Minus"] = VK_OEM_MINUS;
+		virtualKeys["Period"] = VK_OEM_PERIOD;
+		virtualKeys["Slash"] = VK_OEM_2;
+		virtualKeys["Grave"] = VK_OEM_3;
+		virtualKeys["LeftBracket"] = VK_OEM_4;
+		virtualKeys["Backslash"] = VK_OEM_5;
+		virtualKeys["RightBracket"] = VK_OEM_6;
+		virtualKeys["Quote"] = VK_OEM_7;
 	}
 }

@@ -28,7 +28,8 @@ namespace Extensions {
 		NetworkAccess,
 		DisplayOverlay,
 		DisplayRead,
-		Keybinds
+		Keybinds,
+		SendInputs
 	};
 
 	inline const std::unordered_map<ExtensionPermissionTypes, std::string> allPermissions = {
@@ -40,7 +41,8 @@ namespace Extensions {
 		{ExtensionPermissionTypes::NetworkAccess, "Network Access"},
 		{ExtensionPermissionTypes::DisplayOverlay, "Display Overlay"},
 		{ExtensionPermissionTypes::DisplayRead, "Display Read"},
-		{ExtensionPermissionTypes::Keybinds, "Keybinds" }
+		{ExtensionPermissionTypes::Keybinds, "Keybinds" },
+		{ExtensionPermissionTypes::SendInputs, "Send Inputs"}
 	};
 
 	inline const std::unordered_set<ExtensionPermissionTypes> defaultPermissions = {
@@ -49,7 +51,8 @@ namespace Extensions {
 		ExtensionPermissionTypes::Keybinds,
 		ExtensionPermissionTypes::InternalReadfile,
 		ExtensionPermissionTypes::InternalWritefile,
-		ExtensionPermissionTypes::NetworkAccess // HACK: will be removed for release, but it really helps with debugging, marking it as hack so I don't forget it
+		ExtensionPermissionTypes::NetworkAccess, // HACK: will be removed for release, but it really helps with debugging, marking it as hack so I don't forget it
+		ExtensionPermissionTypes::SendInputs // Also HACK lol
 	};
 
 	inline const int ExtensionWriteLimit = 1024 * 1024 * 512; // 512MB. Write limits will be enforced only on every load, so restarting the program will reset the limit.  This is simply so that extensions don't write a ton of data to disk at once as a security measure.

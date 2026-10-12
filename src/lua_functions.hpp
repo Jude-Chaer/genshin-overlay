@@ -29,6 +29,10 @@ namespace LuaFunctions {
         { "LuaFunctions::LoadTextureFromFileLua", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
         { "LuaFunctions::FileExists", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
         { "LuaFunctions::ListDirectory", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
+        { "LuaFunctions::SendKey", {Extensions::ExtensionPermissionTypes::SendInputs}},
+        { "LuaFunctions::SendMouseMove", {Extensions::ExtensionPermissionTypes::SendInputs}},
+        { "LuaFunctions::SendMouseMoveRelative", {Extensions::ExtensionPermissionTypes::SendInputs}},
+		{ "LuaFunctions::SendMouseClick", {Extensions::ExtensionPermissionTypes::SendInputs}},
     };
 
     struct LuaInterval
@@ -93,5 +97,9 @@ namespace LuaFunctions {
     void ClearInterval(int id);
     void UpdateIntervals();
     std::tuple<int, int> GetMousePosition();
-
+    void SendKey(int virtualKey);
+    void SendMouseMove(int x, int y);
+    void SendMouseMoveRelative(int dx, int dy);
+    void SendMouseClick(const std::string& button);
+    void SendMouseMoveThenClick(int x, int y, const std::string& button);
 }

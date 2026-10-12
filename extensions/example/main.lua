@@ -56,6 +56,18 @@ function Menu()
     ImGUI_Button("Click me", function()
         clicks = clicks + 1
     end)
+    ImGUI_Button("Move Mouse to 0,0", function()
+        SendMouseMove(0,0)
+    end)
+    ImGUI_Button("Mouse Mouse 50 to the right", function()
+        SendMouseMoveRelative(50,0)
+    end)
+    ImGUI_Button("Key input 3", function() 
+        SendKey(VirtualKeys.Num3)
+    end)
+    ImGUI_Button("Left mouse click", function() 
+        SendMouseClick("left")
+    end)
 
     if GetSetting("show_clicks") then
         ImGUI_Text("Clicked " .. clicks .. " times")
