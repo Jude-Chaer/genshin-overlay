@@ -206,6 +206,24 @@ namespace Capture {
         }
     }
 
+    // Maps a staging texture for reading once the GPU is done with it. A plain
+    // Map keeps a driver thread busy the whole wait, this sleeps instead.
+    static bool mapWhenDone(ID3D11Texture2D* texture, D3D11_MAPPED_SUBRESOURCE& mapped) {
+        // Sleep(1) can take 15 ms, this timer really takes half a millisecond
+        static HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        context->Flush();
+        auto giveUp = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+        while (true) {
+            HRESULT result = context->Map(texture, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+            if (result != DXGI_ERROR_WAS_STILL_DRAWING) return SUCCEEDED(result);
+            if (std::chrono::steady_clock::now() > giveUp) return SUCCEEDED(context->Map(texture, 0, D3D11_MAP_READ, 0, &mapped));
+            LARGE_INTEGER half;
+            half.QuadPart = -5000;
+            if (timer && SetWaitableTimer(timer, &half, 0, nullptr, nullptr, FALSE)) WaitForSingleObject(timer, 10);
+            else Sleep(1);
+        }
+    }
+
     // the parts go side by side into one staging texture, so there's only one wait on the GPU
     static bool copyOut(HWND game, const std::vector<RECT>& rects, int conversion, std::vector<cv::Mat>& out) {
         // the frame starts at the window's visible edge, not at its client area
@@ -248,7 +266,7 @@ namespace Capture {
         }
 
         D3D11_MAPPED_SUBRESOURCE mapped;
-        if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
+        if (!mapWhenDone(staging.Get(), mapped)) return false;
         out.resize(boxes.size());
         x = 0;
         for (size_t i = 0; i < boxes.size(); ++i) {
@@ -462,11 +480,8 @@ namespace Capture {
         int atLeast = 0;
     };
 
-    // Every grab goes through here: opens the capture if it isn't, takes the
-    // newest frame and copies the rects out. With newerOnly it's false when
-    // frame is still the newest.
-    static bool grab(HWND game, const std::vector<RECT>& rects, int conversion, std::vector<cv::Mat>& out, Frame* frame, bool newerOnly,
-        const Small* also = nullptr) {
+    // opens the capture of the game if it isn't. With gameMutex held.
+    static bool open(HWND game) {
         thread_local bool apartment = false;
         if (!apartment) {
             try { winrt::init_apartment(winrt::apartment_type::multi_threaded); }
@@ -474,16 +489,23 @@ namespace Capture {
             apartment = true;
         }
 
-        std::lock_guard<std::mutex> lock(gameMutex);
-        if (game != capturedWindow) {
-            closeSession();
-            if (std::chrono::steady_clock::now() < retryAt) return false;
-            if (!openSession(game)) {
-                std::cerr << "Couldn't capture the game window, trying again in 5 seconds" << std::endl;
-                retryAt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-                return false;
-            }
+        if (game == capturedWindow) return true;
+        closeSession();
+        if (std::chrono::steady_clock::now() < retryAt) return false;
+        if (!openSession(game)) {
+            std::cerr << "Couldn't capture the game window, trying again in 5 seconds" << std::endl;
+            retryAt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            return false;
         }
+        return true;
+    }
+
+    // Opens the capture if it isn't, takes the newest frame and copies the
+    // rects out. With newerOnly it's false when frame is still the newest.
+    static bool grab(HWND game, const std::vector<RECT>& rects, int conversion, std::vector<cv::Mat>& out, Frame* frame, bool newerOnly,
+        const Small* also = nullptr) {
+        std::lock_guard<std::mutex> lock(gameMutex);
+        if (!open(game)) return false;
 
         try {
             takeNewestFrame();
@@ -504,11 +526,74 @@ namespace Capture {
         }
     }
 
+    // A small part somebody asked grabGame for lately, as it is in frame.
+    // The zoom bar and the minimap are read all the time by two threads.
+    // Whoever comes first with a new frame reads them all in one go, the
+    // other takes its part from here.
+    struct Part {
+        RECT rect = {};
+        cv::Mat image;
+        uint64_t frame = 0;
+        std::chrono::steady_clock::time_point asked;
+    };
+    static std::vector<Part> parts;
+    // a part nobody asked for in this long isn't read along anymore
+    static constexpr auto PART_KEPT = std::chrono::seconds(1);
+    // bigger ones, like a whole screenshot, are read alone
+    static constexpr int PART_PIXELS = 512 * 512;
+
     bool grabGame(HWND game, const RECT& rect, cv::Mat& out, Frame* frame) {
-        std::vector<cv::Mat> parts;
-        if (!grab(game, { rect }, cv::COLOR_BGRA2BGR, parts, frame, false)) return false;
-        out = parts[0];
-        return true;
+        if ((rect.right - rect.left) * (rect.bottom - rect.top) > PART_PIXELS) {
+            std::vector<cv::Mat> alone;
+            if (!grab(game, { rect }, cv::COLOR_BGRA2BGR, alone, frame, false)) return false;
+            out = alone[0];
+            return true;
+        }
+
+        std::lock_guard<std::mutex> lock(gameMutex);
+        if (!open(game)) return false;
+        try {
+            takeNewestFrame();
+            if (frame) *frame = { frameCount, latestSeconds };
+            if (!latest) return false;
+
+            auto now = std::chrono::steady_clock::now();
+            parts.erase(std::remove_if(parts.begin(), parts.end(), [&](const Part& part) { return now - part.asked > PART_KEPT; }), parts.end());
+            size_t mine = 0;
+            while (mine < parts.size() && !EqualRect(&parts[mine].rect, &rect)) mine++;
+            if (mine == parts.size()) parts.push_back({ rect });
+            parts[mine].asked = now;
+
+            if (parts[mine].frame != frameCount || parts[mine].image.empty()) {
+                std::vector<RECT> rects;
+                for (const Part& part : parts) rects.push_back(part.rect);
+                // new pictures every time, the old ones may still be in use
+                std::vector<cv::Mat> images;
+                if (copyOut(game, rects, cv::COLOR_BGRA2BGR, images)) {
+                    for (size_t i = 0; i < parts.size(); ++i) {
+                        parts[i].image = images[i];
+                        parts[i].frame = frameCount;
+                    }
+                }
+                else {
+                    // one of the others doesn't fit the window anymore
+                    if (!copyOut(game, { rect }, cv::COLOR_BGRA2BGR, images)) return false;
+                    Part only = parts[mine];
+                    only.image = images[0];
+                    only.frame = frameCount;
+                    parts = { only };
+                    mine = 0;
+                }
+            }
+            out = parts[mine].image;
+            return true;
+        }
+        catch (...) {
+            // the window closed or the device was lost, opened again next time
+            closeSession();
+            parts.clear();
+            return false;
+        }
     }
 
     bool grabGameGray(HWND game, const std::vector<RECT>& rects, std::vector<cv::Mat>& out, Frame& frame,
