@@ -2,7 +2,7 @@ metadata = {
     name = "Player position",
     description = "Shows where you are on the map, read from the minimap.",
     author = "genshin-overlay",
-    version = "1.2.0",
+    version = "1.3.0",
 }
 
 function RegisterSettings()
@@ -69,14 +69,23 @@ function Update()
 
     if GetSetting("show") then
         local text = "no minimap"
-        if player then
+        if player.found then
             text = string.format("map %d   lat %.1f   lng %.1f", player.mapId, player.lat, player.lng)
             if player.floorId ~= 0 then text = text .. "   floor " .. player.floorId end
+        elseif player.state == "near" then
+            text = "lost it for a moment"
+        elseif player.state == "searching" then
+            text = "searching the map"
+        elseif player.state == "nowhere" then
+            text = "not on the map, in a domain?"
+        end
+        if not player.found and player.mapId ~= 0 then
+            text = text .. string.format("   (last seen %.0f s ago)", player.age)
         end
         DrawText(text, 20, 300, 24, 0xFF00FFFF)
     end
 
-    if player and GetSetting("showMap") then
+    if player.found and GetSetting("showMap") then
         local side = player.right - player.left
         if GetSetting("onTop") then
             drawMap(player, player.left, player.top, player.right, player.bottom)
