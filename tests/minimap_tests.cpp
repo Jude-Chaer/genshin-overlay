@@ -73,6 +73,18 @@ static cv::Mat miniAt(double x, double y, double zoom = 1.0) {
     return miniOf(map(), x, y, zoom);
 }
 
+// a minimap of somewhere the map doesn't have, like in a domain
+static cv::Mat miniElsewhere(double x, double y) {
+    static cv::Mat other;
+    if (other.empty()) {
+        other = cv::Mat(600, 600, CV_8U);
+        cv::RNG rng(7);
+        rng.fill(other, cv::RNG::UNIFORM, 0, 255);
+        cv::GaussianBlur(other, other, cv::Size(0, 0), 4.0);
+    }
+    return miniOf(other, x, y, 1.0);
+}
+
 // with the player at map pixel (x, y), down on the floor
 static cv::Mat miniOnFloor(double x, double y, double zoom = 1.0) {
     return miniOf(floorMap(), x - FLOOR_LEFT, y - FLOOR_TOP, zoom);
@@ -285,4 +297,50 @@ TEST_CASE("a floor with a zoom of its own is found", "[minimap]") {
     CHECK(spot.zoom == Approx(2.0).epsilon(0.02));
     CHECK(spot.lng == Approx(980.0).margin(2.0));
     CHECK(spot.lat == Approx(720.0).margin(2.0));
+}
+
+TEST_CASE("a spot says how sure it is of the player", "[minimap]") {
+    loadData();
+    MiniMap::Watcher watcher;
+    cv::Mat black(MiniMap::SIZE, MiniMap::SIZE, CV_8U, cv::Scalar(0));
+
+    // nothing on screen yet, and never seen
+    MiniMap::Spot spot = watcher.Look(black, 0.0);
+    CHECK(spot.state == MiniMap::State::None);
+    CHECK(spot.mapId == 0);
+    CHECK(spot.age == 0.0);
+
+    spot = watcher.Look(miniAt(900.0, 700.0), 1.0);
+    REQUIRE(spot.found);
+    CHECK(spot.state == MiniMap::State::Found);
+    CHECK(spot.age == 0.0);
+    // standing still is found too
+    spot = watcher.Look(miniAt(900.0, 700.0), 1.1);
+    CHECK(spot.found);
+
+    // The minimap stays and stops fitting. For a second the player is still
+    // taken to be there.
+    spot = watcher.Look(miniElsewhere(200.0, 200.0), 1.2);
+    CHECK_FALSE(spot.found);
+    CHECK(spot.state == MiniMap::State::Near);
+    CHECK(spot.age == Approx(0.1));
+    CHECK(spot.lng == Approx(900.0).margin(1.5));
+    spot = watcher.Look(miniElsewhere(210.0, 200.0), 1.6);
+    CHECK(spot.state == MiniMap::State::Near);
+
+    // then the whole map is searched, and it's on none
+    spot = watcher.Look(miniElsewhere(220.0, 200.0), 2.5);
+    CHECK(spot.state == MiniMap::State::Nowhere);
+    CHECK(spot.age == Approx(1.4));
+    CHECK(spot.lng == Approx(900.0).margin(1.5));
+
+    // covered by a menu
+    spot = watcher.Look(black, 3.0);
+    CHECK(spot.state == MiniMap::State::None);
+    CHECK(spot.age == Approx(1.9));
+
+    spot = watcher.Look(miniAt(915.0, 690.0), 4.0);
+    REQUIRE(spot.found);
+    CHECK(spot.state == MiniMap::State::Found);
+    CHECK(spot.age == 0.0);
 }

@@ -91,6 +91,9 @@ namespace MiniMap {
     // Seconds between two whole map searches while the minimap isn't found.
     // Doubles every time up to SEARCH_LAST, a menu or a cutscene can stay for long.
     static constexpr double SEARCH_FIRST = 1.0, SEARCH_LAST = 10.0;
+    // Lost with the minimap on screen all the time, the player is taken to
+    // be near the last spot for this long. Then the whole map gets searched.
+    static constexpr double NEAR_FOR = 1.0;
     // From this zoom on the area the big map showed is searched drawn from
     // the tiles, the minimap AREA_MINI pixels wide, if that picture is
     // AREA_SIDE pixels a side at most.
@@ -106,9 +109,10 @@ namespace MiniMap {
     static std::vector<Floor> floors;
     // each one whole, shrunk by FLOOR_SMALL, read when it's first searched
     static std::vector<cv::Mat> floorSmalls;
-    // floors by their place in that list, shrunk by SHRINK
-    static std::map<int, cv::Mat> floorPictures;
-    static std::deque<int> floorOrder;
+    // Floors by their place in that list, shrunk by SHRINK. The search has
+    // its own, it runs on another thread.
+    static thread_local std::map<int, cv::Mat> floorPictures;
+    static thread_local std::deque<int> floorOrder;
     static std::filesystem::path folder;
     static std::thread worker;
     static std::mutex mutex;
@@ -120,8 +124,8 @@ namespace MiniMap {
     static std::atomic<double> askedAt{ -1000.0 };
 
     // The app only downloads the tiles the big map shows, so the ones
-    // missing here get fetched.
-    static MapData::Tiles tiles(TILES_KEPT, true);
+    // missing here get fetched. One for every thread, like the floors.
+    static thread_local MapData::Tiles tiles(TILES_KEPT, true);
 
     static double now() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -255,8 +259,7 @@ namespace MiniMap {
 
     // Is there a minimap in this picture at all? Anything else that's ever
     // in that corner has no N at the top and no Paimon next to it. One of
-    // the two is enough: a marker can sit on the N, and Paimon isn't there
-    // in co-op.
+    // the two is enough, a marker can sit on the N.
     static bool shown(const cv::Mat& mini) {
         static const cv::Mat letter = north();
         cv::Mat result = fit(mini(cv::Rect(42, 1, 20, 15)), letter, cv::Mat(), false);
@@ -555,28 +558,71 @@ namespace MiniMap {
         m_searchAt = seconds;
         m_searchWait = SEARCH_FIRST;
         m_floorsAt = seconds;
+        m_empty = false;
+    }
+
+    void Watcher::SearchFirst(const Area& area) {
+        m_area = area;
+        m_areaAsked.release();
+        drop();
+    }
+
+    // lets go of what the search kept
+    void Watcher::drop() {
+        m_areaOf = Area();
+        m_areaMap.release();
+        m_areaDrawn.clear();
+    }
+
+    // The likely places first: the part of the map the big map showed, then
+    // around the last spot, then everywhere.
+    Watcher::Answer Watcher::find(const Search& search) {
+        Answer answer;
+        answer.search = search;
+        Spot found;
+        if (search.area.mapId != 0) found = inArea(search);
+        if (!found.found && search.around) found = otherLayer(search.mini, search.last, search.zooms);
+        if (!found.found && search.around) found = anyZoom(search);
+        // the zoomed ones double the work, so only with a minimap on screen
+        for (double zoom : search.zooms) {
+            if (!found.found && search.everywhere && (search.there || zoom == 1.0)) found = anywhere(search.mini, zoom);
+        }
+        if (!found.found && search.floors) found = anyFloor(search);
+        answer.spot = found;
+        return answer;
+    }
+
+    static bool sameArea(const Area& a, const Area& b) {
+        return a.mapId == b.mapId && a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
     }
 
     // the part of the map the big map showed last, at the zooms we know
-    Spot Watcher::inArea(const cv::Mat& mini) {
+    Spot Watcher::inArea(const Search& search) {
         Spot best;
-        auto grid = grids.find(m_area.mapId);
+        const cv::Mat& mini = search.mini;
+        const Area& area = search.area;
+        auto grid = grids.find(area.mapId);
         if (grid == grids.end()) return best;
+        if (!sameArea(area, m_areaOf)) {
+            m_areaOf = area;
+            m_areaMap.release();
+            m_areaDrawn.clear();
+        }
         if (m_areaMap.empty()) m_areaMap = wholeMap(grid->first, grid->second);
-        for (double zoom : m_zooms) {
-            Spot spot = onMap(mini, m_areaMap, grid->first, grid->second, zoom, &m_area);
+        for (double zoom : search.zooms) {
+            Spot spot = onMap(mini, m_areaMap, grid->first, grid->second, zoom, &area);
             if (better(spot, best)) best = spot;
         }
         // Zoomed in, like in a city, the minimap is a few pixels on that
         // small map and the right place doesn't make the best ones. So the
         // area drawn from the tiles, with the minimap as big as it is at zoom 1.
-        for (double zoom : m_zooms) {
+        for (double zoom : search.zooms) {
             if (best.found || zoom < AREA_ZOOM) continue;
             double perPixel = UNITS_ACROSS / zoom / AREA_MINI;
-            double across = std::max(m_area.right - m_area.left, m_area.bottom - m_area.top) + UNITS_ACROSS / zoom;
+            double across = std::max(area.right - area.left, area.bottom - area.top) + UNITS_ACROSS / zoom;
             int side = (int)std::ceil(across / perPixel);
             if (side > AREA_SIDE) continue;
-            double left = (m_area.left + m_area.right - across) / 2.0, top = (m_area.top + m_area.bottom - across) / 2.0;
+            double left = (area.left + area.right - across) / 2.0, top = (area.top + area.bottom - across) / 2.0;
             cv::Mat& drawn = m_areaDrawn[zoom];
             if (drawn.empty()) drawn = details(tiles.Draw(grid->first, grid->second, left, top, side, perPixel, SHRINK), AREA_MINI);
             cv::Mat little;
@@ -586,7 +632,7 @@ namespace MiniMap {
             if (better(spot, best)) best = spot;
         }
         // and the floors under it, a teleport can go under ground or water
-        for (const Spot& where : floorTries(mini, m_zooms, &m_area)) {
+        for (const Spot& where : floorTries(mini, search.zooms, &area)) {
             Spot spot = nearbyOn(mini, where, true, where.zoom);
             if (better(spot, best)) best = spot;
         }
@@ -624,56 +670,176 @@ namespace MiniMap {
 
     // The minimap at the last spot, at whatever zoom fits. On the other
     // layers too, caves have their own zoom.
-    Spot Watcher::anyZoom(const cv::Mat& mini) {
+    Spot Watcher::anyZoom(const Search& search) {
         Spot best;
         for (double zoom = ZOOM_FIRST; zoom <= ZOOM_LAST; zoom *= ZOOM_STEP) {
-            Spot spot = nearbyOn(mini, m_last, false, zoom);
+            Spot spot = nearbyOn(search.mini, search.last, false, zoom);
             if (spot.found && spot.score > best.score) best = spot;
         }
-        if (best.found) return settle(mini, best);
+        if (best.found) return settle(search, best);
 
-        for (const Spot& layer : layersAt(m_last)) {
+        for (const Spot& layer : layersAt(search.last)) {
             for (double zoom = ZOOM_FIRST; zoom <= ZOOM_LAST; zoom *= ZOOM_STEP) {
-                Spot spot = nearbyOn(mini, layer, false, zoom);
+                Spot spot = nearbyOn(search.mini, layer, false, zoom);
                 if (spot.found && spot.score >= FOUND_ANY && spot.score > best.score) best = spot;
             }
         }
         if (!best.found) return best;
-        return settle(mini, best);
+        return settle(search, best);
     }
 
     // a spot found at a zoom that's only about right
-    Spot Watcher::settle(const cv::Mat& mini, Spot best) {
+    Spot Watcher::settle(const Search& search, Spot best) {
         Spot rough = best;
         // one we know, tried a bit off?
-        for (double known : m_zooms) {
+        for (double known : search.zooms) {
             if (std::abs(rough.zoom / known - 1.0) > SAME) continue;
-            Spot spot = nearbyOn(mini, rough, false, known);
+            Spot spot = nearbyOn(search.mini, rough, false, known);
             if (spot.found) return spot;
         }
         // a new one, and what it is exactly
         for (int i = -4; i <= 4; ++i) {
-            Spot spot = nearbyOn(mini, rough, false, rough.zoom * (1.0 + i * 0.01));
+            Spot spot = nearbyOn(search.mini, rough, false, rough.zoom * (1.0 + i * 0.01));
             if (spot.found && spot.score > best.score) best = spot;
         }
-        m_zooms.push_back(best.zoom);
         return best;
     }
 
     // every floor at every zoom, for a cave it was never in before
-    Spot Watcher::anyFloor(const cv::Mat& mini) {
+    Spot Watcher::anyFloor(const Search& search) {
         std::vector<double> zooms;
         for (double zoom = ZOOM_FIRST; zoom <= ZOOM_LAST; zoom *= ZOOM_ROUGH) zooms.push_back(zoom);
 
         Spot best;
-        for (const Spot& where : floorTries(mini, zooms)) {
+        for (const Spot& where : floorTries(search.mini, zooms)) {
             for (int i = -6; i <= 6; ++i) {
-                Spot spot = nearbyOn(mini, where, false, where.zoom * (1.0 + i * 0.01));
+                Spot spot = nearbyOn(search.mini, where, false, where.zoom * (1.0 + i * 0.01));
                 if (spot.found && spot.score >= FOUND_ANY && spot.score > best.score) best = spot;
             }
         }
         if (!best.found) return best;
-        return settle(mini, best);
+        return settle(search, best);
+    }
+
+    // the same picture, give or take the noise of a grab
+    static bool same(const cv::Mat& a, const cv::Mat& b) {
+        return !a.empty() && !b.empty() && cv::norm(a, b, cv::NORM_INF) < 2.0;
+    }
+
+    // Around the last spot: where it was, at the zooms we know and on the
+    // other layers there.
+    Spot Watcher::around(const cv::Mat& mini, bool sign, double seconds) {
+        Spot spot;
+        if (m_last.mapId == 0) return spot;
+        spot = nearbyOn(mini, m_last, false, m_last.zoom);
+        bool there = spot.found || sign;
+        // walked into a city or out of one
+        if (!spot.found && (there || m_last.found)) {
+            for (double zoom : m_zooms) {
+                if (zoom == m_last.zoom) continue;
+                spot = nearbyOn(mini, m_last, false, zoom);
+                if (spot.found) break;
+            }
+        }
+        // Went under ground or water, or came back up. Only the moment it's
+        // lost, reading floor pictures every look would cost too much.
+        if (!spot.found && there && m_last.found) spot = otherLayer(mini, m_last, m_zooms);
+        // While it's followed the other layers get a look now and then. And
+        // at once when it fits a lot worse than at the last look there:
+        // after a teleport under water the game shows the surface first and
+        // fades to the floor.
+        if (spot.found && (seconds >= m_layersAt || spot.score < m_layerScore - LAYER_DROP)) {
+            m_layerScore = spot.score;
+            spot = bestLayer(mini, spot, m_zooms);
+            m_layersAt = seconds + LAYERS_EVERY;
+        }
+        return spot;
+    }
+
+    // A minimap that just came up (loading screen over, menu closed) is
+    // searched for right away. After the big map the area it showed gets its
+    // turn before that, the minimap can still be fading in.
+    void Watcher::cameUp(double seconds) {
+        SearchSoon(seconds);
+        if (m_area.mapId != 0) m_searchAt = seconds + SEARCH_FIRST;
+    }
+
+    // The quick places, for a minimap that isn't around the last spot:
+    // further around it, and the map matching. One miss shouldn't cost
+    // seconds of searching the whole map.
+    Spot Watcher::quick(const cv::Mat& grab, const cv::Mat& mini) {
+        Spot found;
+        if (m_last.mapId != 0) found = nearbyOn(mini, m_last, true, m_last.zoom);
+        if (!found.found) found = locate(grab, mini, true);
+        if (found.found) found = bestLayer(mini, found, m_zooms);
+        return found;
+    }
+
+    // what a search found, and when the next one is due
+    Spot Watcher::taken(const Answer& answer, const cv::Mat& mini, bool there, double seconds, bool* searched) {
+        Spot found = answer.spot;
+        if (found.found) {
+            if (std::find(m_zooms.begin(), m_zooms.end(), found.zoom) == m_zooms.end()) m_zooms.push_back(found.zoom);
+            if (there) found = bestLayer(mini, found, m_zooms);
+        }
+        if (!answer.search.due) return found;
+
+        if (searched) *searched = true;
+        if (answer.search.floors) m_floorsAt = seconds + FLOORS_EVERY;
+        if (!answer.search.everywhere) {
+            // that was around the last spot, the whole map once it isn't Near anymore
+            m_searchAt = m_nearUntil;
+        }
+        else {
+            // counted from now, the search itself can take as long as the wait
+            m_searchWait = std::min(m_searchWait * 2.0, SEARCH_LAST);
+            m_searchAt = seconds + m_searchWait;
+            if (!found.found) m_empty = true;
+        }
+        return found;
+    }
+
+    // which State it is when the minimap isn't found
+    State Watcher::lost(bool there, double seconds) const {
+        if (!there) return State::None;
+        if (seconds < m_nearUntil) return State::Near;
+        return m_empty ? State::Nowhere : State::Searching;
+    }
+
+    // What to search for now, by the State. Nothing if neither due nor area
+    // is set in what comes back.
+    Watcher::Search Watcher::wanted(State state, const cv::Mat& mini, bool there, double seconds) const {
+        Search search;
+        search.mini = mini;
+        search.last = m_last;
+        search.zooms = m_zooms;
+        search.there = there;
+        search.due = seconds >= m_searchAt;
+        // The part the big map showed, once for every new minimap and with
+        // every search that's due. A teleport ends somewhere in there.
+        if (there && (search.due || !same(mini, m_areaAsked))) search.area = m_area;
+        if (!search.due) return search;
+
+        switch (state) {
+        case State::Near:
+            search.around = true;
+            break;
+        case State::Searching:
+        case State::Nowhere:
+            search.around = m_last.mapId != 0;
+            search.everywhere = true;
+            search.floors = seconds >= m_floorsAt;
+            break;
+        case State::None:
+            // No N and no Paimon, and they weren't seen going away either.
+            // It can still be a minimap, so the whole maps get a look, at
+            // the zoom out in the world only.
+            search.everywhere = seconds >= m_nearUntil;
+            break;
+        case State::Found:
+            break;
+        }
+        return search;
     }
 
     const Spot& Watcher::Look(const cv::Mat& grab, double seconds, bool* searched) {
@@ -684,106 +850,77 @@ namespace MiniMap {
         else if (m_sign) m_covered = true;
         m_sign = sign;
         if (m_covered) {
-            m_last.found = false;
-            m_shown = false;
-            return m_last;
+            m_there = false;
+            drop();
+            return unfound(State::None, seconds);
         }
         // nothing moved, not even the arrow
-        if (m_last.found && !m_lastMini.empty() && cv::norm(mini, m_lastMini, cv::NORM_INF) < 2.0) return m_last;
+        if (m_last.found && same(mini, m_lastMini)) {
+            m_foundAt = seconds;
+            return m_last;
+        }
         m_lastMini = mini;
 
-        Spot spot;
-        if (m_last.mapId != 0) spot = nearbyOn(mini, m_last, false, m_last.zoom);
+        Spot spot = around(mini, sign, seconds);
         bool there = spot.found || sign;
-        // walked into a city or out of one
-        if (!spot.found && (there || m_last.found) && m_last.mapId != 0) {
-            for (double zoom : m_zooms) {
-                if (zoom == m_last.zoom) continue;
-                spot = nearbyOn(mini, m_last, false, zoom);
-                if (spot.found) break;
-            }
-        }
-        // Went under ground or water, or came back up. Only the moment it's
-        // lost, reading floor pictures every look would cost too much.
-        if (!spot.found && there && m_last.found) spot = otherLayer(mini, m_last, m_zooms);
-        // And at once when it fits a lot worse than at the last look there:
-        // after a teleport under water the game shows the surface first and
-        // fades to the floor.
-        if (spot.found && (seconds >= m_layersAt || spot.score < m_layerScore - LAYER_DROP)) {
-            m_layerScore = spot.score;
-            spot = bestLayer(mini, spot, m_zooms);
-            m_layersAt = seconds + LAYERS_EVERY;
-        }
-        // A minimap that just came up (loading screen over, menu closed) is
-        // searched for right away. After a teleport the quick places below
-        // get their turns first, no look happens while the whole map is
-        // searched.
-        if (there && !m_shown) {
-            SearchSoon(seconds);
-            if (m_area.mapId != 0) m_searchAt = seconds + SEARCH_FIRST;
-        }
-        m_shown = there;
+        if (there && !m_there) cameUp(seconds);
+        m_there = there;
 
-        // Lost with a minimap on screen: the quick places, every look. One
-        // miss shouldn't cost seconds of searching the whole map.
         if (!spot.found && there) {
-            Spot found;
-            if (m_last.mapId != 0) found = nearbyOn(mini, m_last, true, m_last.zoom);
-            if (!found.found) found = inArea(mini);
-            if (!found.found) found = locate(grab, mini, true);
-            if (found.found) spot = bestLayer(mini, found, m_zooms);
+            Spot found = quick(grab, mini);
+            if (found.found) spot = found;
         }
 
-        // It just went away: a menu, or the big map before its zoom bar is
-        // there. Nothing to search for, and a whole map search right then
-        // takes the cpu the big map needs to get found.
-        if (!spot.found && !there && m_last.found) m_searchAt = std::max(m_searchAt, seconds + SEARCH_FIRST);
-        // The same with the N still on screen, the big map fades in over the
-        // minimap. Around the last spot it's looked for at once, the whole
-        // map waits.
-        if (!spot.found && m_last.found) m_farAt = seconds + SEARCH_FIRST;
+        if (!spot.found && m_last.found) {
+            m_nearUntil = seconds + NEAR_FOR;
+            // It went away: a menu, or the big map before its zoom bar is
+            // there. Nothing to search for, and a whole map search right
+            // then takes the cpu the big map needs to get found.
+            if (!there) m_searchAt = std::max(m_searchAt, seconds + SEARCH_FIRST);
+        }
 
-        if (!spot.found && seconds >= m_searchAt) {
-            Spot found;
-            // with a minimap on screen these two were tried just above
-            if (!there && m_last.mapId != 0) found = nearbyOn(mini, m_last, true, m_last.zoom);
-            if (!found.found && !there) found = locate(grab, mini, false);
-            if (!found.found && there && m_last.mapId != 0) found = otherLayer(mini, m_last, m_zooms);
-            if (!found.found && there && m_last.mapId != 0) found = anyZoom(mini);
-            // the zoomed ones double the work, so only with a minimap on screen
-            for (double zoom : m_zooms) {
-                if (!found.found && seconds >= m_farAt && (there || zoom == 1.0)) found = anywhere(mini, zoom);
-            }
-            if (!found.found && there && seconds >= m_floorsAt && seconds >= m_farAt) {
-                found = anyFloor(mini);
-                m_floorsAt = seconds + FLOORS_EVERY;
-            }
-            if (found.found) spot = there ? bestLayer(mini, found, m_zooms) : found;
-            if (searched) *searched = true;
-            if (seconds < m_farAt) {
-                // the rest of it as soon as that's over
-                m_searchAt = m_farAt;
-            }
-            else {
-                m_searchWait = std::min(m_searchWait * 2.0, SEARCH_LAST);
-                m_searchAt = seconds + m_searchWait;
+        State state = lost(there, seconds);
+        // with a minimap on screen these two were tried as quick places
+        if (!spot.found && state == State::None && seconds >= m_searchAt) {
+            if (m_last.mapId != 0) spot = nearbyOn(mini, m_last, true, m_last.zoom);
+            if (!spot.found) spot = locate(grab, mini, false);
+            if (spot.found && searched) *searched = true;
+        }
+
+        // the rest takes long, seconds for the whole maps
+        if (!spot.found) {
+            Search search = wanted(state, mini, there, seconds);
+            if (search.due || search.area.mapId != 0) {
+                if (search.area.mapId != 0) m_areaAsked = mini;
+                Spot found = taken(find(search), mini, there, seconds, searched);
+                if (found.found) spot = found;
             }
         }
 
-        if (spot.found) {
-            m_last = spot;
-            m_searchWait = SEARCH_FIRST;
-            m_searchAt = 0.0;
-            m_floorsAt = 0.0;
-            m_area = Area();
-            m_areaMap.release();
-            m_areaDrawn.clear();
-        }
-        else {
-            // stays where it was last seen
-            m_last.found = false;
+        if (!spot.found) {
             m_last.score = spot.score;
+            return unfound(lost(there, seconds), seconds);
         }
+
+        m_last = spot;
+        m_last.state = State::Found;
+        m_last.age = 0.0;
+        m_foundAt = seconds;
+        m_searchWait = SEARCH_FIRST;
+        m_searchAt = 0.0;
+        m_floorsAt = 0.0;
+        m_empty = false;
+        m_area = Area();
+        m_areaAsked.release();
+        drop();
+        return m_last;
+    }
+
+    // not found at this look, the spot stays where it was last seen
+    const Spot& Watcher::unfound(State state, double seconds) {
+        m_last.found = false;
+        m_last.state = state;
+        m_last.age = m_last.mapId != 0 ? seconds - m_foundAt : 0.0;
         return m_last;
     }
 
@@ -794,6 +931,16 @@ namespace MiniMap {
 
     OneThread::~OneThread() {
         Concurrency::CurrentScheduler::Detach();
+    }
+
+    // when the player was last found, guarded by mutex like player
+    static double seenAt = 0.0;
+
+    // no minimap to read: the big map is open, or another window is in front
+    static void hide(Spot& spot) {
+        spot.found = false;
+        spot.state = State::None;
+        if (spot.mapId != 0) spot.age = now() - seenAt;
     }
 
     static void loop() {
@@ -814,14 +961,14 @@ namespace MiniMap {
             // in another window there's nothing to draw over
             if (!MapTracking::GameInFront()) {
                 std::lock_guard<std::mutex> lock(mutex);
-                player.found = false;
+                hide(player);
                 continue;
             }
             // the big map covers the minimap, no spot until it closes
             if (MapTracking::IsMapOpen()) {
                 wasOpen = true;
                 std::lock_guard<std::mutex> lock(mutex);
-                player.found = false;
+                hide(player);
                 continue;
             }
             // teleports start on the big map, so look everywhere soon after it closes
@@ -851,13 +998,14 @@ namespace MiniMap {
                 continue;
             }
             // maybe it shows a floor we don't have the picture of yet
-            if (watcher.Lost() && seconds >= fetchAt) {
+            if (!spot.found && spot.state != State::None && seconds >= fetchAt) {
                 fetchFloors(spot.mapId, spot.lat, spot.lng);
                 fetchAt = now() + FETCH_EVERY;
             }
             spot.square = rect(client);
             std::lock_guard<std::mutex> lock(mutex);
             player = spot;
+            if (spot.found) seenAt = seconds;
         }
     }
 
@@ -885,7 +1033,7 @@ namespace MiniMap {
         askedAt = now();
         std::lock_guard<std::mutex> lock(mutex);
         // right away, the thread may be in the middle of a search
-        if (MapTracking::IsMapOpen() || !MapTracking::GameInFront()) player.found = false;
+        if (MapTracking::IsMapOpen() || !MapTracking::GameInFront()) hide(player);
         return player;
     }
 }

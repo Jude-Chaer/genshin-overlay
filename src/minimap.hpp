@@ -24,9 +24,38 @@
 // Only runs while somebody asks, see GetPlayer.
 
 namespace MiniMap {
+    // What is known about where the player is, after a look.
+    enum class State {
+        // No minimap to read: a menu, a cutscene, a loading screen or the big
+        // map covers it. Nothing is searched while it's covered. Once it's
+        // back it's Found if the player is still at the last spot, Searching
+        // if not.
+        None,
+        // The minimap is on the map at the spot, right now.
+        Found,
+        // It was Found a moment ago, the minimap never left the screen and it
+        // doesn't fit anymore: a marker over it, or the zoom or the floor
+        // changing. The player is still about at the last spot, so only
+        // that's looked at. Searching after NEAR_FOR seconds of this.
+        Near,
+        // There's a minimap and the last spot doesn't help: the app just
+        // started, a teleport, out of a domain. The places it can be at are
+        // tried at every look and the whole map is being searched. Nowhere
+        // once that search comes back with nothing.
+        Searching,
+        // The whole map was searched and the minimap fits nowhere: a domain,
+        // or a place HoYoLAB has no map of. Still looked for like in
+        // Searching, the whole map less and less often.
+        Nowhere,
+    };
+
     struct Spot {
-        // the minimap was on screen and found on the map the last time we looked
+        // the same as state == State::Found
         bool found = false;
+        State state = State::None;
+        // Seconds since it was last Found, 0 while it is. The spot is where
+        // it was then. mapId is 0 as long as it never was.
+        double age = 0.0;
         int mapId = 0;
         // the floor the minimap shows under ground or water, 0 on the surface
         int groupId = 0;
@@ -67,18 +96,19 @@ namespace MiniMap {
     // its middle as the spot.
     typedef std::function<MapLocator::Result(const cv::Mat& grab)> Locate;
 
-    // Follows the player from one look at the minimap to the next: around the
-    // last spot first, anywhere when that fails, less and less often while
-    // it stays lost.
-    //
-    // The game zooms the minimap in some places. A zoom it doesn't know yet
-    // is found by trying a whole range of them at the last spot, and kept.
     // a part of a map, in map units
     struct Area {
         int mapId = 0;
         double left = 0.0, top = 0.0, right = 0.0, bottom = 0.0;
     };
 
+    // Follows the player from one look at the minimap to the next. Every
+    // look tries the cheap things first and stops at the first that finds
+    // it: around the last spot, then the quick places, then what a search
+    // answered. What's searched and how often goes by the State.
+    //
+    // The game zooms the minimap in some places. A zoom it doesn't know yet
+    // is found by trying a whole range of them at the last spot, and kept.
     class Watcher {
     public:
         explicit Watcher(Locate locate = nullptr) : m_locate(std::move(locate)) {}
@@ -89,40 +119,84 @@ namespace MiniMap {
         void SearchSoon(double seconds);
         // What the big map showed when it closed. A teleport lands somewhere
         // in there, so that's searched before the whole map.
-        void SearchFirst(const Area& area) { m_area = area; m_areaMap.release(); m_areaDrawn.clear(); }
-        // there's a minimap on screen and it wasn't found
-        bool Lost() const { return m_shown && !m_last.found; }
+        void SearchFirst(const Area& area);
 
     private:
+        // what a search is asked: the minimap, and what's known then
+        struct Search {
+            cv::Mat mini;
+            Spot last;
+            std::vector<double> zooms;
+            // the part of the map the big map showed last, if any
+            Area area;
+            // there's a minimap on screen
+            bool there = false;
+            // around the last spot at any zoom and on its other layers
+            bool around = false;
+            // the whole maps
+            bool everywhere = false;
+            // every floor at every zoom
+            bool floors = false;
+            // it was due, not only asked for the area
+            bool due = false;
+        };
+        struct Answer {
+            Spot spot;
+            Search search;
+        };
+
+        // the steps of a look, in their order
+        Spot around(const cv::Mat& mini, bool sign, double seconds);
+        void cameUp(double seconds);
+        Spot quick(const cv::Mat& grab, const cv::Mat& mini);
+        Spot taken(const Answer& answer, const cv::Mat& mini, bool there, double seconds, bool* searched);
+        State lost(bool there, double seconds) const;
+        Search wanted(State state, const cv::Mat& mini, bool there, double seconds) const;
+        const Spot& unfound(State state, double seconds);
+
         Spot locate(const cv::Mat& grab, const cv::Mat& mini, bool there);
-        Spot inArea(const cv::Mat& mini);
-        Spot anyZoom(const cv::Mat& mini);
-        Spot anyFloor(const cv::Mat& mini);
-        Spot settle(const cv::Mat& mini, Spot best);
+        void drop();
+        // these are the search
+        Answer find(const Search& search);
+        Spot inArea(const Search& search);
+        Spot anyZoom(const Search& search);
+        Spot anyFloor(const Search& search);
+        Spot settle(const Search& search, Spot best);
 
         Locate m_locate;
         Spot m_last;
         // the zooms seen so far
         std::vector<double> m_zooms{ 1.0, CITY_ZOOM };
         cv::Mat m_lastMini;
+        // the minimap the area was last searched for, it isn't searched twice
+        cv::Mat m_areaAsked;
+        // when it was last Found
+        double m_foundAt = 0.0;
+        // it's Near until then
+        double m_nearUntil = 0.0;
+        // When a search is due next, and how long after that one the next.
+        // The wait doubles with every whole map search that finds nothing.
         double m_searchAt = 0.0, m_searchWait = 1.0;
         // when every floor at every zoom may be searched again
         double m_floorsAt = 0.0;
-        // no whole map search before this, it was only just lost
-        double m_farAt = 0.0;
         // when the other layers at the spot get compared next
         double m_layersAt = 0.0;
         // how well it fit at the last look at the other layers
         double m_layerScore = 0.0;
         // there was a minimap in the last look
-        bool m_shown = false;
+        bool m_there = false;
         // The N or Paimon was there and went away: something covers the
         // minimap, the big map mostly. No spot until one of them is back.
         bool m_sign = false, m_covered = false;
+        // the whole map was searched since it got lost, and it wasn't there
+        bool m_empty = false;
         Area m_area;
-        // its whole map shrunk small, kept until the spot is found
+
+        // What the search keeps: the area it last looked at, its whole map
+        // shrunk small and the area drawn from the tiles, by zoom. Until
+        // it's dropped, which is also when the spot is found.
+        Area m_areaOf;
         cv::Mat m_areaMap;
-        // the same area drawn from the tiles, by zoom
         std::map<double, cv::Mat> m_areaDrawn;
     };
 
