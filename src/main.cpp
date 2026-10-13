@@ -94,38 +94,79 @@ static int locatePlayer(const std::string& imagePath) {
     return 0;
 }
 
-// genshin-overlay.exe --minimap-replay <folder> <out.tsv> [looks per second]
+// genshin-overlay.exe --minimap-replay <folder> <out.tsv> [pictures per second] [timed]
 // Follows the player through a folder of minimap pictures (the square
 // MiniMap::rect gives, in name order) like the live thread would, and writes
-// one line per picture.
-static int replayMinimap(const std::string& folder, const std::string& outPath, double perSecond) {
+// one line per look.
+//
+// Plain, every picture gets one look, however long it takes. Timed, the clock
+// runs like it does live: a look that takes 3 seconds misses the 3 seconds of
+// pictures after it, and a big map that was opened and closed meanwhile.
+// When the big map was open comes from events.tsv next to the folder, if
+// there is one: the first picture with it open, the first one after, the map
+// and the left, top, right, bottom it showed.
+static int replayMinimap(const std::string& folder, const std::string& outPath, double perSecond, bool timed) {
     std::vector<std::filesystem::path> pictures;
     for (const auto& entry : std::filesystem::directory_iterator(folder)) pictures.push_back(entry.path());
     std::sort(pictures.begin(), pictures.end());
     MiniMap::Load(Helpers::exeDirectory() / "map_data");
     MiniMap::OneThread alone;
 
+    struct Open {
+        size_t from = 0, to = 0;
+        MiniMap::Area area;
+    };
+    std::vector<Open> opens;
+    if (timed) {
+        std::ifstream file(std::filesystem::path(folder).parent_path() / "events.tsv");
+        Open open;
+        while (file >> open.from >> open.to >> open.area.mapId >> open.area.left >> open.area.top >> open.area.right >> open.area.bottom) opens.push_back(open);
+    }
+
     std::ofstream out(outPath);
     out << "picture\tseconds\tfound\tmap\tlat\tlng\tscore\tsearched\tms\tzoom\tfloor\n";
     MapLocator::Index index;
     MiniMap::Watcher watcher(locateWith(index));
-    for (size_t i = 0; i < pictures.size(); ++i) {
+    // the live thread looks every 50 ms
+    const double every = 0.05;
+    const Open* wasOpen = nullptr;
+    double seconds = 0.0;
+    for (size_t i = 0; i < pictures.size(); i = timed ? (size_t)(seconds * perSecond) : i + 1) {
+        if (!timed) seconds = i / perSecond;
+        // pictures are numbered from 1
+        const Open* open = nullptr;
+        for (const Open& one : opens) {
+            if (i + 1 >= one.from && i + 1 < one.to) open = &one;
+        }
+        if (open) {
+            wasOpen = open;
+            seconds += every;
+            continue;
+        }
+        if (wasOpen) {
+            watcher.SearchSoon(seconds);
+            watcher.SearchFirst(wasOpen->area);
+            wasOpen = nullptr;
+        }
+
         cv::Mat image = cv::imread(pictures[i].string(), cv::IMREAD_COLOR);
-        if (image.empty()) continue;
-        double seconds = i / perSecond;
-        bool searched = false;
-        auto start = std::chrono::steady_clock::now();
-        MiniMap::Spot spot = watcher.Look(image, seconds, &searched);
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        out << pictures[i].filename().string() << "\t" << seconds << "\t" << spot.found << "\t" << spot.mapId << "\t" << spot.lat << "\t" << spot.lng
-            << "\t" << spot.score << "\t" << searched << "\t" << ms << "\t" << spot.zoom << "\t" << spot.floorId << "\n";
+        double ms = 0.0;
+        if (!image.empty()) {
+            bool searched = false;
+            auto start = std::chrono::steady_clock::now();
+            MiniMap::Spot spot = watcher.Look(image, seconds, &searched);
+            ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            out << pictures[i].filename().string() << "\t" << seconds << "\t" << spot.found << "\t" << spot.mapId << "\t" << spot.lat << "\t" << spot.lng
+                << "\t" << spot.score << "\t" << searched << "\t" << ms << "\t" << spot.zoom << "\t" << spot.floorId << "\n";
+        }
+        seconds += std::max(every, ms / 1000.0);
     }
     return 0;
 }
 
 int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
-        return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0);
+        return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0, argc >= 6 && std::string(argv[5]) == "timed");
     }
     if (argc >= 3 && std::string(argv[1]) == "--locate") {
         return locateImage(argv[2]);
