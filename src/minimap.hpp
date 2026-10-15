@@ -1,8 +1,12 @@
 #pragma once
 #include <windows.h>
+#include <atomic>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <mutex>
+#include <thread>
 #include <vector>
 #include <opencv2/core.hpp>
 #include "locator/map_locator.hpp"
@@ -19,7 +23,8 @@
 // With no last spot (start, teleport) the part of the map the big map showed
 // last is searched first. Then the map matching is asked, the same index that
 // finds the big map. Where neither has it, the minimap is searched for on the
-// whole map shrunk small, which takes seconds.
+// whole map shrunk small, which takes seconds. That's done on a thread of its
+// own, the minimap is still looked at meanwhile.
 //
 // Only runs while somebody asks, see GetPlayer.
 
@@ -111,7 +116,13 @@ namespace MiniMap {
     // is found by trying a whole range of them at the last spot, and kept.
     class Watcher {
     public:
-        explicit Watcher(Locate locate = nullptr) : m_locate(std::move(locate)) {}
+        // With a thread of its own the searches that take long run there and
+        // Look comes back right away, with what they found at a later Look.
+        // Without, Look does them itself and takes as long as they take.
+        explicit Watcher(Locate locate = nullptr, bool ownThread = false);
+        ~Watcher();
+        Watcher(const Watcher&) = delete;
+        Watcher& operator=(const Watcher&) = delete;
         // Grab is the minimap's square as it was grabbed, seconds when.
         // Searched, if given, tells whether the whole map was searched.
         const Spot& Look(const cv::Mat& grab, double seconds, bool* searched = nullptr);
@@ -120,9 +131,12 @@ namespace MiniMap {
         // What the big map showed when it closed. A teleport lands somewhere
         // in there, so that's searched before the whole map.
         void SearchFirst(const Area& area);
+        // a search is running on its thread
+        bool Searching() const;
 
     private:
-        // what a search is asked: the minimap, and what's known then
+        // What a search is asked: the minimap as it was then and what was
+        // known then. It runs on another thread, so it gets its own copies.
         struct Search {
             cv::Mat mini;
             Spot last;
@@ -155,8 +169,11 @@ namespace MiniMap {
         const Spot& unfound(State state, double seconds);
 
         Spot locate(const cv::Mat& grab, const cv::Mat& mini, bool there);
+        void ask(Search search);
+        bool answered(Answer& answer);
         void drop();
-        // these are the search
+        void run();
+        // these are the search, on its thread
         Answer find(const Search& search);
         Spot inArea(const Search& search);
         Spot anyZoom(const Search& search);
@@ -192,9 +209,19 @@ namespace MiniMap {
         bool m_empty = false;
         Area m_area;
 
-        // What the search keeps: the area it last looked at, its whole map
-        // shrunk small and the area drawn from the tiles, by zoom. Until
-        // it's dropped, which is also when the spot is found.
+        std::thread m_thread;
+        mutable std::mutex m_mutex;
+        std::condition_variable m_wake;
+        // guarded by m_mutex
+        bool m_quit = false, m_asked = false, m_busy = false, m_done = false;
+        Search m_search;
+        Answer m_answer;
+        // the search that's running isn't wanted anymore
+        std::atomic<bool> m_dropped{ false };
+
+        // Only the search touches these. The area they're of, its whole map
+        // shrunk small and the area drawn from the tiles, by zoom. Kept until
+        // the search is dropped, which is also when the spot is found.
         Area m_areaOf;
         cv::Mat m_areaMap;
         std::map<double, cv::Mat> m_areaDrawn;

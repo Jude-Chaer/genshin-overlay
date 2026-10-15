@@ -1,5 +1,7 @@
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -299,6 +301,53 @@ TEST_CASE("a floor with a zoom of its own is found", "[minimap]") {
     CHECK(spot.lat == Approx(720.0).margin(2.0));
 }
 
+TEST_CASE("with a thread of its own the search doesn't hold up the looks", "[minimap]") {
+    loadData();
+    MiniMap::Watcher watcher(nullptr, true);
+    cv::Mat mini = miniAt(1400.0, 500.0);
+
+    // nowhere to look first, so the whole map: asked for, not waited for
+    MiniMap::Spot first = watcher.Look(mini, 0.0);
+    CHECK_FALSE(first.found);
+    CHECK(first.state == MiniMap::State::Searching);
+    CHECK(watcher.Searching());
+
+    MiniMap::Spot spot;
+    double seconds = 0.0;
+    while (!spot.found && seconds < 20.0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        seconds += 0.02;
+        spot = watcher.Look(mini, seconds);
+    }
+    REQUIRE(spot.found);
+    CHECK(spot.lng == Approx(1400.0).margin(1.5));
+    CHECK(spot.lat == Approx(500.0).margin(1.5));
+    CHECK(spot.state == MiniMap::State::Found);
+    CHECK_FALSE(watcher.Searching());
+}
+
+TEST_CASE("a search that isn't wanted anymore is dropped", "[minimap]") {
+    loadData();
+    MiniMap::Watcher watcher(nullptr, true);
+    REQUIRE(watcher.Look(miniAt(900.0, 700.0), 0.0).found == false);
+    REQUIRE(watcher.Searching());
+
+    // the big map closed meanwhile and showed where the player is now
+    watcher.SearchFirst({ MAP_ID, 1200.0, 300.0, 1600.0, 700.0 });
+    cv::Mat mini = miniAt(1400.0, 500.0);
+    MiniMap::Spot spot;
+    double seconds = 0.0;
+    while (!spot.found && seconds < 20.0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        seconds += 0.02;
+        spot = watcher.Look(mini, seconds);
+    }
+    // the answer to the first minimap would have been around 900, 700
+    REQUIRE(spot.found);
+    CHECK(spot.lng == Approx(1400.0).margin(1.5));
+    CHECK(spot.lat == Approx(500.0).margin(1.5));
+}
+
 TEST_CASE("a spot says how sure it is of the player", "[minimap]") {
     loadData();
     MiniMap::Watcher watcher;
@@ -343,4 +392,36 @@ TEST_CASE("a spot says how sure it is of the player", "[minimap]") {
     REQUIRE(spot.found);
     CHECK(spot.state == MiniMap::State::Found);
     CHECK(spot.age == 0.0);
+}
+
+TEST_CASE("after a teleport a minimap that stands still gets the big map's area searched", "[minimap]") {
+    loadData();
+    cv::Mat mini = miniAt(1400.0, 500.0);
+    // makes the small whole map, with threads the area would wait for it
+    MiniMap::anywhere(mini);
+
+    // The search for the first picture has to be still running when the
+    // second one comes, that's the case this is about. A few tries for it.
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        MiniMap::Watcher watcher(nullptr, true);
+        watcher.SearchFirst({ MAP_ID, 1200.0, 300.0, 1600.0, 700.0 });
+        // the game still fading the minimap in, then the minimap itself
+        watcher.Look(miniElsewhere(200.0, 200.0), 0.0);
+        MiniMap::Spot spot = watcher.Look(mini, 0.001);
+        bool overlapped = !spot.found && watcher.Searching();
+        if (!overlapped && attempt < 19) continue;
+
+        // The whole map isn't due before 1 second, so before that it can
+        // only come from the area.
+        double seconds = 0.001;
+        for (int i = 0; i < 500 && !spot.found; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            seconds += 0.001;
+            spot = watcher.Look(mini, seconds);
+        }
+        REQUIRE(spot.found);
+        CHECK(spot.lng == Approx(1400.0).margin(1.5));
+        CHECK(spot.lat == Approx(500.0).margin(1.5));
+        break;
+    }
 }

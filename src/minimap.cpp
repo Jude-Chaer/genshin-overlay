@@ -427,9 +427,10 @@ namespace MiniMap {
     // the zoom that fits it best. Rough, the pictures are small. The best
     // TRIES floors, best first, the score in the spot. With an area only the
     // floors that reach into it.
-    static std::vector<Spot> floorTries(const cv::Mat& mini, const std::vector<double>& zooms, const Area* area = nullptr) {
+    static std::vector<Spot> floorTries(const cv::Mat& mini, const std::vector<double>& zooms, const Area* area = nullptr, const std::atomic<bool>* dropped = nullptr) {
         std::vector<Spot> tries;
         for (size_t i = 0; i < floors.size(); ++i) {
+            if (dropped && *dropped) return {};
             const Floor& floor = floors[i];
             if (area && (floor.mapId != area->mapId || floor.right < area->left || floor.left > area->right || floor.bottom < area->top || floor.top > area->bottom)) continue;
             if (floorSmalls[i].empty()) floorSmalls[i] = MapData::readGray(floor.path, FLOOR_SMALL);
@@ -474,9 +475,9 @@ namespace MiniMap {
     }
 
     // looks for it on every floor picture that's on disk
-    static Spot anywhereFloors(const cv::Mat& mini, double zoom) {
+    static Spot anywhereFloors(const cv::Mat& mini, double zoom, const std::atomic<bool>* dropped) {
         Spot best;
-        for (const Spot& where : floorTries(mini, { zoom })) {
+        for (const Spot& where : floorTries(mini, { zoom }, nullptr, dropped)) {
             Spot spot = nearbyOn(mini, where, false, zoom);
             // open sea fits some floor or other at 0.35
             if (spot.found && spot.score < FOUND_ANY) spot.found = false;
@@ -542,16 +543,23 @@ namespace MiniMap {
         return bestOf(result, mini, mapId, zoom, n, part.x * shrunkBy - grid.originX, part.y * shrunkBy - grid.originY, shrunkBy);
     }
 
-    Spot anywhere(const cv::Mat& mini, double zoom) {
+    // Dropped, if given, is looked at between two maps: when it's set the
+    // search isn't wanted anymore and stops.
+    static Spot anywhereUntil(const cv::Mat& mini, double zoom, const std::atomic<bool>* dropped) {
         Spot best;
         for (const auto& [mapId, grid] : grids) {
+            if (dropped && *dropped) return Spot();
             // read every time and let go after, it's 11 MB for Teyvat and only needed after a teleport
             Spot spot = onMap(mini, wholeMap(mapId, grid), mapId, grid, zoom);
             if (better(spot, best)) best = spot;
         }
-        Spot floor = anywhereFloors(mini, zoom);
+        Spot floor = anywhereFloors(mini, zoom, dropped);
         if (better(floor, best)) best = floor;
         return best;
+    }
+
+    Spot anywhere(const cv::Mat& mini, double zoom) {
+        return anywhereUntil(mini, zoom, nullptr);
     }
 
     void Watcher::SearchSoon(double seconds) {
@@ -567,11 +575,95 @@ namespace MiniMap {
         drop();
     }
 
-    // lets go of what the search kept
+    Watcher::Watcher(Locate locate, bool ownThread) : m_locate(std::move(locate)) {
+        if (ownThread) m_thread = std::thread(&Watcher::run, this);
+    }
+
+    Watcher::~Watcher() {
+        if (!m_thread.joinable()) return;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_quit = true;
+            m_dropped = true;
+        }
+        m_wake.notify_all();
+        m_thread.join();
+    }
+
+    bool Watcher::Searching() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_busy;
+    }
+
+    // Starts a search. Only when none is running.
+    void Watcher::ask(Search search) {
+        if (!m_thread.joinable()) {
+            m_dropped = false;
+            m_answer = find(search);
+            m_done = true;
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_dropped = false;
+        m_search = std::move(search);
+        m_asked = m_busy = true;
+        m_done = false;
+        m_wake.notify_all();
+    }
+
+    // what the last search found, once
+    bool Watcher::answered(Answer& answer) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_done) return false;
+        m_done = false;
+        answer = std::move(m_answer);
+        return true;
+    }
+
+    // The search that's running, or its answer, isn't wanted anymore. It
+    // stops at the next map and lets go of what it kept.
     void Watcher::drop() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_done = false;
+        if (m_busy) {
+            m_dropped = true;
+            return;
+        }
         m_areaOf = Area();
         m_areaMap.release();
         m_areaDrawn.clear();
+    }
+
+    void Watcher::run() {
+        OneThread alone;
+        std::unique_lock<std::mutex> lock(m_mutex);
+        while (true) {
+            m_wake.wait(lock, [this]() { return m_quit || m_asked; });
+            if (m_quit) return;
+            Search search = m_search;
+            m_asked = false;
+            lock.unlock();
+            Answer answer;
+            try {
+                answer = find(search);
+            }
+            catch (...) {
+                // a search that goes wrong found nothing
+                answer = Answer();
+                answer.search = search;
+            }
+            lock.lock();
+            if (m_dropped) {
+                m_areaOf = Area();
+                m_areaMap.release();
+                m_areaDrawn.clear();
+            }
+            else {
+                m_answer = std::move(answer);
+                m_done = true;
+            }
+            m_busy = false;
+        }
     }
 
     // The likely places first: the part of the map the big map showed, then
@@ -585,7 +677,7 @@ namespace MiniMap {
         if (!found.found && search.around) found = anyZoom(search);
         // the zoomed ones double the work, so only with a minimap on screen
         for (double zoom : search.zooms) {
-            if (!found.found && search.everywhere && (search.there || zoom == 1.0)) found = anywhere(search.mini, zoom);
+            if (!found.found && search.everywhere && (search.there || zoom == 1.0)) found = anywhereUntil(search.mini, zoom, &m_dropped);
         }
         if (!found.found && search.floors) found = anyFloor(search);
         answer.spot = found;
@@ -610,6 +702,7 @@ namespace MiniMap {
         }
         if (m_areaMap.empty()) m_areaMap = wholeMap(grid->first, grid->second);
         for (double zoom : search.zooms) {
+            if (m_dropped) return Spot();
             Spot spot = onMap(mini, m_areaMap, grid->first, grid->second, zoom, &area);
             if (better(spot, best)) best = spot;
         }
@@ -617,7 +710,7 @@ namespace MiniMap {
         // small map and the right place doesn't make the best ones. So the
         // area drawn from the tiles, with the minimap as big as it is at zoom 1.
         for (double zoom : search.zooms) {
-            if (best.found || zoom < AREA_ZOOM) continue;
+            if (best.found || zoom < AREA_ZOOM || m_dropped) continue;
             double perPixel = UNITS_ACROSS / zoom / AREA_MINI;
             double across = std::max(area.right - area.left, area.bottom - area.top) + UNITS_ACROSS / zoom;
             int side = (int)std::ceil(across / perPixel);
@@ -632,7 +725,7 @@ namespace MiniMap {
             if (better(spot, best)) best = spot;
         }
         // and the floors under it, a teleport can go under ground or water
-        for (const Spot& where : floorTries(mini, search.zooms, &area)) {
+        for (const Spot& where : floorTries(mini, search.zooms, &area, &m_dropped)) {
             Spot spot = nearbyOn(mini, where, true, where.zoom);
             if (better(spot, best)) best = spot;
         }
@@ -673,6 +766,7 @@ namespace MiniMap {
     Spot Watcher::anyZoom(const Search& search) {
         Spot best;
         for (double zoom = ZOOM_FIRST; zoom <= ZOOM_LAST; zoom *= ZOOM_STEP) {
+            if (m_dropped) return Spot();
             Spot spot = nearbyOn(search.mini, search.last, false, zoom);
             if (spot.found && spot.score > best.score) best = spot;
         }
@@ -680,6 +774,7 @@ namespace MiniMap {
 
         for (const Spot& layer : layersAt(search.last)) {
             for (double zoom = ZOOM_FIRST; zoom <= ZOOM_LAST; zoom *= ZOOM_STEP) {
+                if (m_dropped) return Spot();
                 Spot spot = nearbyOn(search.mini, layer, false, zoom);
                 if (spot.found && spot.score >= FOUND_ANY && spot.score > best.score) best = spot;
             }
@@ -711,7 +806,7 @@ namespace MiniMap {
         for (double zoom = ZOOM_FIRST; zoom <= ZOOM_LAST; zoom *= ZOOM_ROUGH) zooms.push_back(zoom);
 
         Spot best;
-        for (const Spot& where : floorTries(search.mini, zooms)) {
+        for (const Spot& where : floorTries(search.mini, zooms, nullptr, &m_dropped)) {
             for (int i = -6; i <= 6; ++i) {
                 Spot spot = nearbyOn(search.mini, where, false, where.zoom * (1.0 + i * 0.01));
                 if (spot.found && spot.score >= FOUND_ANY && spot.score > best.score) best = spot;
@@ -775,9 +870,11 @@ namespace MiniMap {
         return found;
     }
 
-    // what a search found, and when the next one is due
+    // What a search found, and when the next one is due. Its answer is to
+    // the minimap it was asked about, the player went on since.
     Spot Watcher::taken(const Answer& answer, const cv::Mat& mini, bool there, double seconds, bool* searched) {
         Spot found = answer.spot;
+        if (found.found && !same(mini, answer.search.mini)) found = nearbyOn(mini, found, true, found.zoom);
         if (found.found) {
             if (std::find(m_zooms.begin(), m_zooms.end(), found.zoom) == m_zooms.end()) m_zooms.push_back(found.zoom);
             if (there) found = bestLayer(mini, found, m_zooms);
@@ -879,6 +976,12 @@ namespace MiniMap {
             if (!there) m_searchAt = std::max(m_searchAt, seconds + SEARCH_FIRST);
         }
 
+        Answer answer;
+        if (!spot.found && answered(answer)) {
+            Spot found = taken(answer, mini, there, seconds, searched);
+            if (found.found) spot = found;
+        }
+
         State state = lost(there, seconds);
         // with a minimap on screen these two were tried as quick places
         if (!spot.found && state == State::None && seconds >= m_searchAt) {
@@ -887,13 +990,18 @@ namespace MiniMap {
             if (spot.found && searched) *searched = true;
         }
 
-        // the rest takes long, seconds for the whole maps
-        if (!spot.found) {
+        // The rest takes long, so it's asked for and Look goes on. One
+        // search at a time.
+        if (!spot.found && !Searching()) {
             Search search = wanted(state, mini, there, seconds);
             if (search.due || search.area.mapId != 0) {
                 if (search.area.mapId != 0) m_areaAsked = mini;
-                Spot found = taken(find(search), mini, there, seconds, searched);
-                if (found.found) spot = found;
+                ask(search);
+                // without a thread it's done already
+                if (answered(answer)) {
+                    Spot found = taken(answer, mini, there, seconds, searched);
+                    if (found.found) spot = found;
+                }
             }
         }
 
@@ -945,7 +1053,7 @@ namespace MiniMap {
 
     static void loop() {
         OneThread alone;
-        Watcher watcher(MapTracking::Locate);
+        Watcher watcher(MapTracking::Locate, true);
         bool wasOpen = false;
         double fetchAt = 0.0;
         while (true) {

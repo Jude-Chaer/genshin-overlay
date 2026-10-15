@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 #include <opencv2/imgcodecs.hpp>
 #include "overlay.hpp"
@@ -126,7 +127,7 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
     std::ofstream out(outPath);
     out << "picture\tseconds\tfound\tmap\tlat\tlng\tscore\tsearched\tms\tzoom\tfloor\n";
     MapLocator::Index index;
-    MiniMap::Watcher watcher(locateWith(index));
+    MiniMap::Watcher watcher(locateWith(index), timed);
     // the live thread looks every 50 ms
     const double every = 0.05;
     const Open* wasOpen = nullptr;
@@ -159,6 +160,8 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
             out << pictures[i].filename().string() << "\t" << seconds << "\t" << spot.found << "\t" << spot.mapId << "\t" << spot.lat << "\t" << spot.lng
                 << "\t" << spot.score << "\t" << searched << "\t" << ms << "\t" << spot.zoom << "\t" << spot.floorId << "\n";
         }
+        // a search on its thread takes the time it takes, so the clock has to be the real one meanwhile
+        if (watcher.Searching() && ms < every * 1000.0) std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(every * 1000.0 - ms));
         seconds += std::max(every, ms / 1000.0);
     }
     return 0;
