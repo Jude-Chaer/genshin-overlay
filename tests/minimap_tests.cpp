@@ -408,6 +408,24 @@ TEST_CASE("a search that isn't wanted anymore is dropped", "[minimap]") {
     CHECK(spot.lat == Approx(500.0).margin(1.5));
 }
 
+TEST_CASE("a minimap that fits two places as well is found at neither", "[minimap]") {
+    // the same land twice, side by side
+    static constexpr int TWINS_ID = 5;
+    cv::Mat twice;
+    cv::hconcat(map(), map(), twice);
+    std::filesystem::path folder = std::filesystem::temp_directory_path() / "genshin-overlay-tests" / "minimap_twins";
+    TestMap::save(twice, folder, TWINS_ID, TILE);
+    MiniMap::Load(folder);
+    cv::Mat mini = miniAt(900.0, 700.0);
+
+    // searching the whole map something always fits best, that isn't enough
+    CHECK_FALSE(MiniMap::anywhere(mini).found);
+    // around the last spot there's only one of the two
+    MiniMap::Spot spot = MiniMap::nearby(mini, TWINS_ID, 705.0, 895.0);
+    REQUIRE(spot.found);
+    CHECK(spot.lng == Approx(900.0).margin(1.5));
+}
+
 TEST_CASE("a spot says how sure it is of the player", "[minimap]") {
     loadData();
     MiniMap::Watcher watcher;

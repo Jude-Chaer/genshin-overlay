@@ -401,6 +401,35 @@ namespace MiniMap {
         return spot.found > than.found || (spot.found == than.found && spot.score > than.score);
     }
 
+    // What a search over many places came up with: the best one, and how
+    // well the next best one somewhere else fit. Searching a whole map,
+    // something always fits best. It's only the place when it stands out
+    // from the rest by SHARP, like it has to from what's around it.
+    struct Best {
+        Spot spot;
+        double next = 0.0;
+
+        void take(const Spot& one) {
+            // the same place come by another way, or the floor right under it
+            bool same = spot.mapId == one.mapId
+                && std::hypot(spot.lat - one.lat, spot.lng - one.lng) < UNITS_ACROSS / std::max(spot.zoom, one.zoom) / 2.0;
+            if (better(one, spot)) {
+                if (!same) next = std::max(next, spot.score);
+                spot = one;
+            }
+            else if (!same) next = std::max(next, one.score);
+        }
+        void take(const Best& many) {
+            next = std::max(next, many.next);
+            take(many.spot);
+        }
+        Spot alone() const {
+            Spot one = spot;
+            if (one.score - next < SHARP) one.found = false;
+            return one;
+        }
+    };
+
     // The other layers there are at a spot: the floors under the surface, or
     // the surface and the other floors when it's on one.
     static std::vector<Spot> layersAt(const Spot& last) {
@@ -482,13 +511,13 @@ namespace MiniMap {
     }
 
     // looks for it on every floor picture that's on disk
-    static Spot anywhereFloors(const cv::Mat& mini, double zoom, const std::atomic<bool>* dropped) {
-        Spot best;
+    static Best anywhereFloors(const cv::Mat& mini, double zoom, const std::atomic<bool>* dropped) {
+        Best best;
         for (const Spot& where : floorTries(mini, { zoom }, nullptr, dropped)) {
             Spot spot = nearbyOn(mini, where, false, zoom);
             // open sea fits some floor or other at 0.35
             if (spot.found && spot.score < FOUND_ANY) spot.found = false;
-            if (better(spot, best)) best = spot;
+            best.take(spot);
         }
         return best;
     }
@@ -513,15 +542,15 @@ namespace MiniMap {
     // The best TRIES places of a rough search, checked against the tiles,
     // which tells for sure. The result's first sample is a minimap of n
     // pixels with its corner at left, top.
-    static Spot bestOf(cv::Mat& result, const cv::Mat& mini, int mapId, double zoom, int n, double left, double top, double perPixel) {
-        Spot best;
+    static Best bestOf(cv::Mat& result, const cv::Mat& mini, int mapId, double zoom, int n, double left, double top, double perPixel) {
+        Best best;
         for (int i = 0; i < TRIES; ++i) {
             double score = 0.0;
             cv::Point at;
             cv::minMaxLoc(result, nullptr, &score, nullptr, &at);
             if (score <= 0.0) break;
             Spot spot = nearby(mini, mapId, top + (at.y + n / 2.0) * perPixel, left + (at.x + n / 2.0) * perPixel, false, zoom);
-            if (better(spot, best)) best = spot;
+            best.take(spot);
             cv::circle(result, at, n, cv::Scalar(-1.0), cv::FILLED);
         }
         return best;
@@ -529,8 +558,8 @@ namespace MiniMap {
 
     // Looks for the minimap on a whole map shrunk small, or only on a part
     // of it, in map units.
-    static Spot onMap(const cv::Mat& mini, const cv::Mat& whole, int mapId, const Grid& grid, double zoom, const Area* area = nullptr) {
-        Spot best;
+    static Best onMap(const cv::Mat& mini, const cv::Mat& whole, int mapId, const Grid& grid, double zoom, const Area* area = nullptr) {
+        Best best;
         if (whole.empty() || mini.cols != SIZE || mini.rows != SIZE || zoom <= 0.0) return best;
         double shrunkBy = (double)grid.cols * grid.tileSize / whole.cols;
         int n = (int)std::lround(UNITS_ACROSS / zoom / shrunkBy);
@@ -553,16 +582,14 @@ namespace MiniMap {
     // Dropped, if given, is looked at between two maps: when it's set the
     // search isn't wanted anymore and stops.
     static Spot anywhereUntil(const cv::Mat& mini, double zoom, const std::atomic<bool>* dropped) {
-        Spot best;
+        Best best;
         for (const auto& [mapId, grid] : grids) {
             if (dropped && *dropped) return Spot();
             // read every time and let go after, it's 11 MB for Teyvat and only needed after a teleport
-            Spot spot = onMap(mini, wholeMap(mapId, grid), mapId, grid, zoom);
-            if (better(spot, best)) best = spot;
+            best.take(onMap(mini, wholeMap(mapId, grid), mapId, grid, zoom));
         }
-        Spot floor = anywhereFloors(mini, zoom, dropped);
-        if (better(floor, best)) best = floor;
-        return best;
+        best.take(anywhereFloors(mini, zoom, dropped));
+        return best.alone();
     }
 
     Spot anywhere(const cv::Mat& mini, double zoom) {
@@ -709,11 +736,11 @@ namespace MiniMap {
 
     // the part of the map the big map showed last, at the zooms we know
     Spot Watcher::inArea(const Search& search) {
-        Spot best;
+        Best best;
         const cv::Mat& mini = search.mini;
         const Area& area = search.area;
         auto grid = grids.find(area.mapId);
-        if (grid == grids.end()) return best;
+        if (grid == grids.end()) return Spot();
         if (!sameArea(area, m_areaOf)) {
             m_areaOf = area;
             m_areaMap.release();
@@ -722,14 +749,13 @@ namespace MiniMap {
         if (m_areaMap.empty()) m_areaMap = wholeMap(grid->first, grid->second);
         for (double zoom : search.zooms) {
             if (m_dropped) return Spot();
-            Spot spot = onMap(mini, m_areaMap, grid->first, grid->second, zoom, &area);
-            if (better(spot, best)) best = spot;
+            best.take(onMap(mini, m_areaMap, grid->first, grid->second, zoom, &area));
         }
         // Zoomed in, like in a city, the minimap is a few pixels on that
         // small map and the right place doesn't make the best ones. So the
         // area drawn from the tiles, with the minimap as big as it is at zoom 1.
         for (double zoom : search.zooms) {
-            if (best.found || zoom < AREA_ZOOM || m_dropped) continue;
+            if (best.alone().found || zoom < AREA_ZOOM || m_dropped) continue;
             double perPixel = UNITS_ACROSS / zoom / AREA_MINI;
             double across = std::max(area.right - area.left, area.bottom - area.top) + UNITS_ACROSS / zoom;
             int side = (int)std::ceil(across / perPixel);
@@ -740,15 +766,13 @@ namespace MiniMap {
             cv::Mat little;
             cv::resize(mini, little, cv::Size(AREA_MINI, AREA_MINI), 0, 0, cv::INTER_AREA);
             cv::Mat result = fit(drawn, details(little, AREA_MINI), ring(AREA_MINI), false);
-            Spot spot = bestOf(result, mini, grid->first, zoom, AREA_MINI, left, top, perPixel);
-            if (better(spot, best)) best = spot;
+            best.take(bestOf(result, mini, grid->first, zoom, AREA_MINI, left, top, perPixel));
         }
         // and the floors under it, a teleport can go under ground or water
         for (const Spot& where : floorTries(mini, search.zooms, &area, &m_dropped)) {
-            Spot spot = nearbyOn(mini, where, true, where.zoom);
-            if (better(spot, best)) best = spot;
+            best.take(nearbyOn(mini, where, true, where.zoom));
         }
-        return best;
+        return best.alone();
     }
 
     // Asks the map matching where the minimap is: map, floor and zoom in
@@ -824,15 +848,19 @@ namespace MiniMap {
         std::vector<double> zooms;
         for (double zoom = ZOOM_FIRST; zoom <= ZOOM_LAST; zoom *= ZOOM_ROUGH) zooms.push_back(zoom);
 
-        Spot best;
+        Best best;
         for (const Spot& where : floorTries(search.mini, zooms, nullptr, &m_dropped)) {
+            Spot floor;
             for (int i = -6; i <= 6; ++i) {
                 Spot spot = nearbyOn(search.mini, where, false, where.zoom * (1.0 + i * 0.01));
-                if (spot.found && spot.score >= FOUND_ANY && spot.score > best.score) best = spot;
+                if (spot.found && spot.score < FOUND_ANY) spot.found = false;
+                if (better(spot, floor)) floor = spot;
             }
+            best.take(floor);
         }
-        if (!best.found) return best;
-        return settle(search, best);
+        Spot found = best.alone();
+        if (!found.found) return found;
+        return settle(search, found);
     }
 
     // the same picture, give or take the noise of a grab
