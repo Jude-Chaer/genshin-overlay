@@ -301,6 +301,23 @@ TEST_CASE("a floor with a zoom of its own is found", "[minimap]") {
     CHECK(spot.lat == Approx(720.0).margin(2.0));
 }
 
+TEST_CASE("a minimap that wasn't found isn't asked about again until it changes", "[minimap]") {
+    loadData();
+    int asked = 0;
+    MiniMap::Watcher watcher([&asked](const cv::Mat&) { ++asked; return MapLocator::Result(); });
+    REQUIRE(watcher.Look(miniAt(900.0, 700.0), 0.0).found);
+
+    CHECK_FALSE(watcher.Look(miniElsewhere(200.0, 200.0), 0.2).found);
+    int once = asked;
+    CHECK(once > 0);
+    CHECK_FALSE(watcher.Look(miniElsewhere(200.0, 200.0), 0.25).found);
+    CHECK(asked == once);
+
+    // it moved
+    CHECK_FALSE(watcher.Look(miniElsewhere(260.0, 200.0), 0.3).found);
+    CHECK(asked > once);
+}
+
 TEST_CASE("with a thread of its own the search doesn't hold up the looks", "[minimap]") {
     loadData();
     MiniMap::Watcher watcher(nullptr, true);

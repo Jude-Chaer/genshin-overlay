@@ -571,6 +571,7 @@ namespace MiniMap {
 
     void Watcher::SearchFirst(const Area& area) {
         m_area = area;
+        m_missed.release();
         m_areaAsked.release();
         drop();
     }
@@ -963,9 +964,11 @@ namespace MiniMap {
         if (there && !m_there) cameUp(seconds);
         m_there = there;
 
-        if (!spot.found && there) {
+        // every look that shows something new
+        if (!spot.found && there && !same(mini, m_missed)) {
             Spot found = quick(grab, mini);
             if (found.found) spot = found;
+            else m_missed = mini;
         }
 
         if (!spot.found && m_last.found) {
@@ -1019,6 +1022,7 @@ namespace MiniMap {
         m_floorsAt = 0.0;
         m_empty = false;
         m_area = Area();
+        m_missed.release();
         m_areaAsked.release();
         drop();
         return m_last;

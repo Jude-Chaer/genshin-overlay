@@ -185,7 +185,9 @@ namespace MiniMap {
         // the zooms seen so far
         std::vector<double> m_zooms{ 1.0, CITY_ZOOM };
         cv::Mat m_lastMini;
-        // the minimap the area was last searched for, it isn't searched twice
+        // the minimap the quick places didn't have, they aren't asked twice
+        cv::Mat m_missed;
+        // the minimap the area was last searched for, the same here
         cv::Mat m_areaAsked;
         // when it was last Found
         double m_foundAt = 0.0;
