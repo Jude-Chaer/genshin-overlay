@@ -479,7 +479,12 @@ namespace MiniMap {
                 if (more > 1.0) cv::resize(whole, whole, cv::Size(std::max(1, (int)(whole.cols / more)), std::max(1, (int)(whole.rows / more))), 0, 0, cv::INTER_AREA);
                 double shrunkBy = (floor.right - floor.left) / whole.cols;
                 int n = (int)std::lround(UNITS_ACROSS / zoom / shrunkBy);
-                if (n < 8 || whole.cols <= n || whole.rows <= n) continue;
+                if (n < 8) continue;
+                // Half a minimap of nothing on every side. Some pictures are
+                // smaller than what the minimap shows, and near a picture's
+                // edge the minimap hangs over it.
+                int over = n / 2;
+                cv::copyMakeBorder(whole, whole, over, over, over, over, cv::BORDER_CONSTANT, cv::Scalar(0));
 
                 cv::Mat little;
                 cv::resize(mini, little, cv::Size(n, n), 0, 0, cv::INTER_AREA);
@@ -491,8 +496,8 @@ namespace MiniMap {
                 kept.mapId = floor.mapId;
                 kept.groupId = floor.groupId;
                 kept.floorId = floor.floorId;
-                kept.lng = floor.left + (at.x + n / 2.0) * shrunkBy;
-                kept.lat = floor.top + (at.y + n / 2.0) * shrunkBy;
+                kept.lng = floor.left + (at.x - over + n / 2.0) * shrunkBy;
+                kept.lat = floor.top + (at.y - over + n / 2.0) * shrunkBy;
                 kept.zoom = zoom;
                 kept.score = score;
             }

@@ -426,6 +426,17 @@ TEST_CASE("a minimap that fits two places as well is found at neither", "[minima
     CHECK(spot.lng == Approx(900.0).margin(1.5));
 }
 
+TEST_CASE("the player is found near a floor's edge with no last spot", "[minimap]") {
+    loadData();
+
+    // most of the minimap hangs over the picture's left and top
+    MiniMap::Spot spot = MiniMap::anywhere(miniOnFloor(FLOOR_LEFT + 60.0, FLOOR_TOP + 80.0));
+    REQUIRE(spot.found);
+    CHECK(spot.floorId == FLOOR_ID);
+    CHECK(spot.lng == Approx(FLOOR_LEFT + 60.0).margin(2.0));
+    CHECK(spot.lat == Approx(FLOOR_TOP + 80.0).margin(2.0));
+}
+
 TEST_CASE("a spot says how sure it is of the player", "[minimap]") {
     loadData();
     MiniMap::Watcher watcher;
