@@ -9,6 +9,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <thread>
 #include <concrt.h>
 #include <opencv2/imgcodecs.hpp>
@@ -99,6 +100,12 @@ namespace MiniMap {
     // AREA_SIDE pixels a side at most.
     static constexpr double AREA_ZOOM = 1.5;
     static constexpr int AREA_MINI = 43, AREA_SIDE = 3000;
+    // This many places it was followed at are remembered. Closer together
+    // than PLACE_APART map units is the same place.
+    static constexpr size_t PLACES = 4;
+    static constexpr double PLACE_APART = 100.0;
+    // They're written next to the map data this often, for the next start.
+    static constexpr double PLACES_EVERY = 10.0;
 
     using MapData::Grid;
     using MapData::Floor;
@@ -562,6 +569,17 @@ namespace MiniMap {
         return anywhereUntil(mini, zoom, nullptr);
     }
 
+    static bool samePlace(const Spot& a, const Spot& b) {
+        return a.mapId == b.mapId && a.groupId == b.groupId && a.floorId == b.floorId && a.zoom == b.zoom
+            && std::hypot(a.lat - b.lat, a.lng - b.lng) < PLACE_APART;
+    }
+
+    void Watcher::Remember(const Spot& spot) {
+        m_places.erase(std::remove_if(m_places.begin(), m_places.end(), [&spot](const Spot& place) { return samePlace(place, spot); }), m_places.end());
+        if (m_places.size() >= PLACES) m_places.erase(m_places.begin());
+        m_places.push_back(spot);
+    }
+
     void Watcher::SearchSoon(double seconds) {
         m_searchAt = seconds;
         m_searchWait = SEARCH_FIRST;
@@ -853,19 +871,25 @@ namespace MiniMap {
     }
 
     // A minimap that just came up (loading screen over, menu closed) is
-    // searched for right away. After the big map the area it showed gets its
-    // turn before that, the minimap can still be fading in.
+    // searched for right away. With somewhere to look first the quick places
+    // get their turns before that, the minimap can still be fading in.
     void Watcher::cameUp(double seconds) {
         SearchSoon(seconds);
-        if (m_area.mapId != 0) m_searchAt = seconds + SEARCH_FIRST;
+        if (m_area.mapId != 0 || !m_places.empty()) m_searchAt = seconds + SEARCH_FIRST;
     }
 
     // The quick places, for a minimap that isn't around the last spot:
-    // further around it, and the map matching. One miss shouldn't cost
-    // seconds of searching the whole map.
+    // further around it, the places it was followed at, and the map
+    // matching. One miss shouldn't cost seconds of searching the whole map.
     Spot Watcher::quick(const cv::Mat& grab, const cv::Mat& mini) {
         Spot found;
         if (m_last.mapId != 0) found = nearbyOn(mini, m_last, true, m_last.zoom);
+        // Where it was followed before. Leaving a domain puts the player
+        // back at its door, and a wrong find in between has taken the last
+        // spot's place.
+        for (size_t i = m_places.size(); i-- > 0 && !found.found;) {
+            if (!samePlace(m_places[i], m_last)) found = nearbyOn(mini, m_places[i], true, m_places[i].zoom);
+        }
         if (!found.found) found = locate(grab, mini, true);
         if (found.found) found = bestLayer(mini, found, m_zooms);
         return found;
@@ -960,6 +984,8 @@ namespace MiniMap {
         m_lastMini = mini;
 
         Spot spot = around(mini, sign, seconds);
+        // on from the look before, not a find out of nowhere
+        bool followed = spot.found && m_last.found;
         bool there = spot.found || sign;
         if (there && !m_there) cameUp(seconds);
         m_there = there;
@@ -1013,6 +1039,7 @@ namespace MiniMap {
             return unfound(lost(there, seconds), seconds);
         }
 
+        if (followed) Remember(spot);
         m_last = spot;
         m_last.state = State::Found;
         m_last.age = 0.0;
@@ -1045,6 +1072,25 @@ namespace MiniMap {
         Concurrency::CurrentScheduler::Detach();
     }
 
+    // The places of the last run. The game starts the player where they
+    // logged out, so mostly one of them is right and the first look has it.
+    static std::vector<Spot> readPlaces() {
+        std::vector<Spot> places;
+        std::ifstream file(folder / "places.tsv");
+        Spot place;
+        while (file >> place.mapId >> place.groupId >> place.floorId >> place.lat >> place.lng >> place.zoom) places.push_back(place);
+        return places;
+    }
+
+    static std::string placesText(const std::vector<Spot>& places) {
+        std::ostringstream text;
+        text.precision(10);
+        for (const Spot& place : places) {
+            text << place.mapId << "\t" << place.groupId << "\t" << place.floorId << "\t" << place.lat << "\t" << place.lng << "\t" << place.zoom << "\n";
+        }
+        return text.str();
+    }
+
     // when the player was last found, guarded by mutex like player
     static double seenAt = 0.0;
 
@@ -1058,8 +1104,10 @@ namespace MiniMap {
     static void loop() {
         OneThread alone;
         Watcher watcher(MapTracking::Locate, true);
+        for (const Spot& place : readPlaces()) watcher.Remember(place);
+        std::string written = placesText(watcher.Places());
         bool wasOpen = false;
-        double fetchAt = 0.0;
+        double fetchAt = 0.0, placesAt = 0.0;
         while (true) {
             {
                 std::unique_lock<std::mutex> lock(mutex);
@@ -1113,6 +1161,12 @@ namespace MiniMap {
             if (!spot.found && spot.state != State::None && seconds >= fetchAt) {
                 fetchFloors(spot.mapId, spot.lat, spot.lng);
                 fetchAt = now() + FETCH_EVERY;
+            }
+            if (spot.found && seconds >= placesAt) {
+                placesAt = seconds + PLACES_EVERY;
+                std::string text = placesText(watcher.Places());
+                if (text != written) MapData::writeFile(folder / "places.tsv", text);
+                written = text;
             }
             spot.square = rect(client);
             std::lock_guard<std::mutex> lock(mutex);

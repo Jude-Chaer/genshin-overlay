@@ -60,6 +60,8 @@ namespace MapData {
     // Makes sure a file is on disk, downloaded if it isn't yet. False if it
     // couldn't be. What HoYoLAB doesn't have is kept as an empty file.
     extern bool fetch(const std::string& url, const std::filesystem::path& path);
+    // Written under another name first, so a file that's there is whole.
+    extern bool writeFile(const std::filesystem::path& path, const std::string& data);
     extern bool fetchTile(int mapId, const Grid& grid, int x, int y);
 
     // A picture as gray, shrunk. Black where it's see-through, like where

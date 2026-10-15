@@ -185,8 +185,10 @@ TEST_CASE("the player is followed from one look to the next", "[minimap]") {
     CHECK_FALSE(spot.found);
     CHECK(spot.lng == Approx(915.0).margin(1.5));
 
-    // and it's found again after a teleport
-    spot = watcher.Look(miniAt(1400.0, 500.0), 20.0, &searched);
+    // And it's found again after a teleport. Where it was before gets a
+    // second first.
+    CHECK_FALSE(watcher.Look(miniAt(1400.0, 500.0), 20.0).found);
+    spot = watcher.Look(miniAt(1400.0, 500.0), 21.5, &searched);
     REQUIRE(spot.found);
     CHECK(searched);
     CHECK(spot.lng == Approx(1400.0).margin(1.5));
@@ -299,6 +301,47 @@ TEST_CASE("a floor with a zoom of its own is found", "[minimap]") {
     CHECK(spot.zoom == Approx(2.0).epsilon(0.02));
     CHECK(spot.lng == Approx(980.0).margin(2.0));
     CHECK(spot.lat == Approx(720.0).margin(2.0));
+}
+
+TEST_CASE("the player is found at once back at a place they were followed at", "[minimap]") {
+    loadData();
+    MiniMap::Watcher watcher;
+    cv::Mat black(MiniMap::SIZE, MiniMap::SIZE, CV_8U, cv::Scalar(0));
+    bool searched = false;
+
+    REQUIRE(watcher.Look(miniAt(900.0, 700.0), 0.0).found);
+    REQUIRE(watcher.Look(miniAt(915.0, 690.0), 0.2).found);
+    watcher.Look(black, 0.4);
+
+    // one find far away, like the wrong one in a domain
+    watcher.Look(miniAt(1400.0, 500.0), 20.0);
+    REQUIRE(watcher.Look(miniAt(1400.0, 500.0), 21.5, &searched).found);
+    CHECK(searched);
+    watcher.Look(black, 21.7);
+
+    // out again, near where it went in
+    MiniMap::Spot spot = watcher.Look(miniAt(930.0, 680.0), 23.0, &searched);
+    REQUIRE(spot.found);
+    CHECK_FALSE(searched);
+    CHECK(spot.lng == Approx(930.0).margin(1.5));
+    CHECK(spot.lat == Approx(680.0).margin(1.5));
+}
+
+TEST_CASE("a place from the last run is found on the first look", "[minimap]") {
+    loadData();
+    MiniMap::Watcher watcher;
+    MiniMap::Spot place;
+    place.mapId = MAP_ID;
+    place.lat = 690.0;
+    place.lng = 915.0;
+    watcher.Remember(place);
+
+    bool searched = true;
+    MiniMap::Spot spot = watcher.Look(miniAt(930.0, 680.0), 0.0, &searched);
+    REQUIRE(spot.found);
+    CHECK_FALSE(searched);
+    CHECK(spot.lng == Approx(930.0).margin(1.5));
+    CHECK(spot.lat == Approx(680.0).margin(1.5));
 }
 
 TEST_CASE("a minimap that wasn't found isn't asked about again until it changes", "[minimap]") {

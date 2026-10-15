@@ -54,7 +54,7 @@ namespace MapData {
 		return text.str();
 	}
 
-	static bool writeFile(const fs::path& path, const std::string& data) {
+	bool writeFile(const fs::path& path, const std::string& data) {
 		std::error_code ec;
 		fs::create_directories(path.parent_path(), ec);
 		fs::path tmp = path;

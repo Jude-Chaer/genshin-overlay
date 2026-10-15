@@ -20,8 +20,9 @@
 // Under ground and under water the minimap shows a floor instead. HoYoLAB has
 // a picture of every floor, those are tried when the tiles don't fit.
 //
-// With no last spot (start, teleport) the part of the map the big map showed
-// last is searched first. Then the map matching is asked, the same index that
+// When it isn't around the last spot (start, teleport) the places it was
+// followed at lately are tried, then the part of the map the big map showed
+// last. Then the map matching is asked, the same index that
 // finds the big map. Where neither has it, the minimap is searched for on the
 // whole map shrunk small, which takes seconds. That's done on a thread of its
 // own, the minimap is still looked at meanwhile.
@@ -131,6 +132,10 @@ namespace MiniMap {
         // What the big map showed when it closed. A teleport lands somewhere
         // in there, so that's searched before the whole map.
         void SearchFirst(const Area& area);
+        // A place it was followed at, the newest last. The quick places look
+        // around these too, the last spot can be a wrong find.
+        void Remember(const Spot& spot);
+        const std::vector<Spot>& Places() const { return m_places; }
         // a search is running on its thread
         bool Searching() const;
 
@@ -185,6 +190,7 @@ namespace MiniMap {
         // the zooms seen so far
         std::vector<double> m_zooms{ 1.0, CITY_ZOOM };
         cv::Mat m_lastMini;
+        std::vector<Spot> m_places;
         // the minimap the quick places didn't have, they aren't asked twice
         cv::Mat m_missed;
         // the minimap the area was last searched for, the same here
