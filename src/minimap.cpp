@@ -486,8 +486,21 @@ namespace MiniMap {
         double lat = where.lat, lng = where.lng;
         if (grayMini.cols != SIZE || grayMini.rows != SIZE || zoom <= 0.0) return spot;
         static const cv::Mat mask = ring(SIZE);
-        cv::Mat mini = details(grayMini, SIZE);
-        double detail = contrast(mini, mask);
+        // A look compares one minimap with a lot of places, its details are
+        // only worked out for the first. The picture is held on to, so its
+        // memory can't have become another picture's by the next compare.
+        struct Kept {
+            cv::Mat of, details;
+            double detail = 0.0;
+        };
+        static thread_local Kept kept;
+        if (kept.of.data != grayMini.data) {
+            kept.of = grayMini;
+            kept.details = details(grayMini, SIZE);
+            kept.detail = contrast(kept.details, mask);
+        }
+        const cv::Mat& mini = kept.details;
+        double detail = kept.detail;
         if (detail < FLAT) return spot;
 
         // drawn at the minimap's size: SIZE plus the reach on every side
