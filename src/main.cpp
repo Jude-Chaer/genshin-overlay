@@ -202,9 +202,10 @@ int main(int argc, char** argv) {
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
+    // first, it grabs the game and asks the map matching, which the tracker closes
+    MiniMap::Stop();
     MapTracking::Stop();
     MapCheck::Stop();
-    MiniMap::Stop();
     MapTiles::Shutdown();
     Overlay::Shutdown();
 
