@@ -243,7 +243,7 @@ namespace MiniMap {
         ~OneThread();
     };
 
-    // Load, and starts the thread
+    // starts the thread, it loads the map data once that was checked
     extern void Start(const std::filesystem::path& dataFolder);
     extern void Stop();
     // Where the player is. The minimap is only watched while this gets called,

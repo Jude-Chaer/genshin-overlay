@@ -55,6 +55,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             gh release create map-index --prerelease --latest=false --title "Map index" --notes "Map data for the overlay, downloaded by the app. Not an app release."
           }
-          # the index first, then the file that points to it
+          # the index and the small whole maps first, then the file that points to them
           gh release upload map-index map_index\out\map-index.bin.gz --clobber
+          gh release upload map-index (Get-ChildItem map_index\out\whole_*.png).FullName --clobber
           gh release upload map-index map_index\out\map-index.json --clobber

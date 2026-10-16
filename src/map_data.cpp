@@ -22,9 +22,11 @@ namespace MapData {
 	static const std::string API = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc";
 	static const std::string STATIC_API = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc";
 	static const std::string TILES = "https://act-webstatic.hoyoverse.com/map_manage/map/";
-	static const std::string RELEASE ="https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
+	static const std::string RELEASE = "https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
 	static const std::string INDEX_FILE = "map-index.bin.gz";
 	static const std::string META_FILE = "map-index.json";
+	// the small whole maps: whole_<map>_<version>.png on disk, whole_<map>.png on the release
+	static const std::string WHOLE = "whole_";
 	static constexpr int META_FORMAT = 1;
 	static constexpr int DOWNLOAD_THREADS = 16;
 
@@ -120,11 +122,15 @@ namespace MapData {
 		return response.status == 200 && writeFile(path, response.body);
 	}
 
-	bool fetchTile(int mapId, const Grid& grid, int x, int y) {
+	// HoYoLAB's address of a grid's tile
+	static std::string tileUrl(int mapId, const Grid& grid, int x, int y) {
 		// dir is tiles/<id>_<version>
 		std::string dir = grid.dir.filename().string();
-		return fetch(TILES + std::to_string(mapId) + "/" + dir.substr(dir.find('_') + 1) + "/" + std::to_string(x) + "_" + std::to_string(y) + "_P0.webp",
-			tilePath(grid, x, y));
+		return TILES + std::to_string(mapId) + "/" + dir.substr(dir.find('_') + 1) + "/" + std::to_string(x) + "_" + std::to_string(y) + "_P0.webp";
+	}
+
+	bool fetchTile(int mapId, const Grid& grid, int x, int y) {
+		return fetch(tileUrl(mapId, grid, x, y), tilePath(grid, x, y));
 	}
 
 	cv::Mat readGray(const fs::path& path, int shrunkBy) {
@@ -197,6 +203,36 @@ namespace MapData {
 	void Tiles::Clear() {
 		m_tiles.clear();
 		m_order.clear();
+	}
+
+	fs::path wholeMapPath(const fs::path& folder, const Grid& grid) {
+		return folder / (WHOLE + grid.dir.filename().string() + ".png");
+	}
+
+	bool makeWholeMap(const fs::path& folder, int mapId, const Grid& grid, const std::atomic<bool>* cancel) {
+		std::string dir = "tiles/" + grid.dir.filename().string() + "/";
+		std::vector<File> files;
+		for (int y = 0; y < grid.rows; ++y) {
+			for (int x = 0; x < grid.cols; ++x) {
+				files.push_back({ tileUrl(mapId, grid, x, y), dir + std::to_string(x) + "_" + std::to_string(y) + ".webp" });
+			}
+		}
+		// with a tile missing it would have a black hole in it for good
+		if (!downloadMissing(folder, files, nullptr, cancel)) return false;
+
+		int size = grid.tileSize / SMALL_BY;
+		cv::Mat whole(grid.rows * size, grid.cols * size, CV_8U, cv::Scalar(0));
+		for (int y = 0; y < grid.rows; ++y) {
+			for (int x = 0; x < grid.cols; ++x) {
+				if (cancel && cancel->load()) return false;
+				cv::Mat image = readGray(tilePath(grid, x, y));
+				if (image.empty()) continue;
+				cv::resize(image, whole(cv::Rect(x * size, y * size, size, size)), cv::Size(size, size), 0, 0, cv::INTER_AREA);
+			}
+		}
+		std::vector<uchar> bytes;
+		if (!cv::imencode(".png", whole, bytes)) return false;
+		return writeFile(wholeMapPath(folder, grid), std::string(bytes.begin(), bytes.end()));
 	}
 
 	bool makePlan(Plan& plan) {
@@ -387,6 +423,42 @@ namespace MapData {
 		return MapLocator::IndexMatchesManifest(index, plan.manifest);
 	}
 
+	// The small whole maps that aren't on disk, from the release if it has
+	// them for this map. What's still missing after, the app makes from the
+	// tiles when it needs it, see makeWholeMap.
+	static void downloadWholeMaps(const fs::path& folder, const Plan& plan) {
+		std::set<std::string> wanted;
+		for (const std::string& dir : plan.tileDirs) wanted.insert(WHOLE + dir + ".png");
+		// The ones of maps HoYoLAB has replaced. And they were called small_
+		// before, made from whatever tiles happened to be on disk.
+		std::error_code ec;
+		std::vector<fs::path> old;
+		for (const auto& entry : fs::directory_iterator(folder, ec)) {
+			std::string name = entry.path().filename().string();
+			bool whole = name.rfind(WHOLE, 0) == 0 || name.rfind("small_", 0) == 0;
+			if (whole && entry.path().extension() == ".png" && wanted.count(name) == 0) old.push_back(entry.path());
+		}
+		for (const fs::path& path : old) fs::remove(path, ec);
+
+		std::vector<std::string> missing;
+		for (const std::string& dir : plan.tileDirs) {
+			if (!fs::exists(folder / (WHOLE + dir + ".png"))) missing.push_back(dir);
+		}
+		if (missing.empty()) return;
+
+		json meta;
+		if (!fetchPublishedMeta(meta) || meta.value("manifest", "") != plan.manifest) return;
+		if (!meta.contains("whole") || !meta["whole"].is_object()) return;
+		for (const std::string& dir : missing) {
+			std::string id = dir.substr(0, dir.find('_'));
+			json hash = meta["whole"].value(id, json());
+			Net::Response response;
+			if (!hash.is_string() || !Net::get(RELEASE + WHOLE + id + ".png", response) || response.status != 200) continue;
+			if (sha256(response.body) != hash.get<std::string>()) continue;
+			writeFile(folder / (WHOLE + dir + ".png"), response.body);
+		}
+	}
+
 	bool ensure(const fs::path& folder, const Progress& progress, const std::atomic<bool>* cancel) {
 		fs::path manifestPath = folder / "manifest.tsv";
 
@@ -410,12 +482,14 @@ namespace MapData {
 		}
 		writeFile(folder / "overlay_urls.tsv", overlayUrls);
 
-		if (MapLocator::IndexMatchesManifest(folder / "index.bin", plan.manifest)) return true;
-		if (downloadPrebuiltIndex(folder, plan, progress)) return true;
-
-		// no matching index published yet, get the images and build it here
-		removeOldTiles(folder, plan);
-		return downloadMissing(folder, plan.files, progress, cancel);
+		bool ready = MapLocator::IndexMatchesManifest(folder / "index.bin", plan.manifest) || downloadPrebuiltIndex(folder, plan, progress);
+		if (!ready) {
+			// no matching index published yet, get the images and build it here
+			removeOldTiles(folder, plan);
+			ready = downloadMissing(folder, plan.files, progress, cancel);
+		}
+		if (ready) downloadWholeMaps(folder, plan);
+		return ready;
 	}
 
 	int makeIndex(const fs::path& folder) {
@@ -432,7 +506,8 @@ namespace MapData {
 		}
 
 		json published;
-		if (fetchPublishedMeta(published) && published.value("manifest", "") == plan.manifest) {
+		// an index published before the small whole maps were gets made again with them
+		if (fetchPublishedMeta(published) && published.value("manifest", "") == plan.manifest && published.contains("whole")) {
 			std::cout << "The published index is already current" << std::endl;
 			return 3;
 		}
@@ -481,8 +556,17 @@ namespace MapData {
 		};
 
 		fs::path out = folder / "out";
+		std::cout << "Making the small whole maps..." << std::endl;
+		meta["whole"] = json::object();
+		for (const auto& [id, grid] : readManifest(folder).grids) {
+			if (!makeWholeMap(folder, id, grid)) return 1;
+			std::string picture = readText(wholeMapPath(folder, grid));
+			if (picture.empty() || !writeFile(out / (WHOLE + std::to_string(id) + ".png"), picture)) return 1;
+			meta["whole"][std::to_string(id)] = sha256(picture);
+		}
+
 		if (!writeFile(out / INDEX_FILE, packed) || !writeFile(out / META_FILE, meta.dump(1))) return 1;
-		std::cout << "Wrote " << INDEX_FILE << " (" << packed.size() / 1000000.0 << " MB) and " << META_FILE << std::endl;
+		std::cout << "Wrote " << INDEX_FILE << " (" << packed.size() / 1000000.0 << " MB), " << META_FILE << " and the small whole maps" << std::endl;
 		return 0;
 	}
 

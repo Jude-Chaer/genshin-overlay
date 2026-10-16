@@ -61,7 +61,7 @@ namespace MiniMap {
     // how well Paimon's corner has to fit: 0.93 and up on minimaps, 0.43 at most on anything else
     static constexpr double CORNER = 0.7;
     // a whole map is searched shrunk by this
-    static constexpr int SMALL = 8;
+    static constexpr int SMALL = MapData::SMALL_BY;
     // Floor pictures are kept shrunk by this for searching, 6 MB for all of
     // them. Less than SMALL, they're searched at zooms where shrunk by 8
     // leaves too little of the minimap.
@@ -138,31 +138,16 @@ namespace MiniMap {
         return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
-    // A whole map shrunk by SMALL, for searching all of it. Made from the
-    // tiles the first time and kept next to them, Teyvat takes a few seconds.
-    static cv::Mat wholeMap(int mapId, const Grid& grid) {
-        std::filesystem::path path = folder / (L"small_" + grid.dir.filename().wstring() + L".png");
+    // A whole map shrunk by SMALL, for searching all of it. They come with
+    // the map index. One that didn't is made from the tiles, which downloads
+    // the tiles that are missing: for Teyvat that's all of them, once.
+    // Empty if it couldn't be.
+    static cv::Mat wholeMap(int mapId, const Grid& grid, const std::atomic<bool>* dropped) {
+        std::filesystem::path path = MapData::wholeMapPath(folder, grid);
         cv::Mat whole = MapData::readGray(path);
-        // a black one was made before the tiles were there
-        if (!whole.empty() && cv::countNonZero(whole) > 0) return whole;
-        static std::set<int> made;
-        if (!made.insert(mapId).second) return whole;
-
-        int size = grid.tileSize / SMALL;
-        whole = cv::Mat(grid.rows * size, grid.cols * size, CV_8U, cv::Scalar(0));
-        for (int y = 0; y < grid.rows; ++y) {
-            for (int x = 0; x < grid.cols; ++x) {
-                cv::Mat image = MapData::readGray(MapData::tilePath(grid, x, y));
-                if (image.empty()) continue;
-                cv::resize(image, whole(cv::Rect(x * size, y * size, size, size)), cv::Size(size, size), 0, 0, cv::INTER_AREA);
-            }
-        }
-        std::vector<uchar> bytes;
-        if (cv::imencode(".png", whole, bytes)) {
-            std::ofstream file(path, std::ios::binary);
-            file.write((const char*)bytes.data(), (std::streamsize)bytes.size());
-        }
-        return whole;
+        if (!whole.empty()) return whole;
+        if (!MapData::makeWholeMap(folder, mapId, grid, dropped)) return {};
+        return MapData::readGray(path);
     }
 
     // one floor's picture shrunk by SHRINK, empty while it isn't on disk
@@ -591,7 +576,7 @@ namespace MiniMap {
         for (const auto& [mapId, grid] : grids) {
             if (dropped && *dropped) return Spot();
             // read every time and let go after, it's 11 MB for Teyvat and only needed after a teleport
-            best.take(onMap(mini, wholeMap(mapId, grid), mapId, grid, zoom));
+            best.take(onMap(mini, wholeMap(mapId, grid, dropped), mapId, grid, zoom));
         }
         best.take(anywhereFloors(mini, zoom, dropped));
         return best.alone();
@@ -751,7 +736,7 @@ namespace MiniMap {
             m_areaMap.release();
             m_areaDrawn.clear();
         }
-        if (m_areaMap.empty()) m_areaMap = wholeMap(grid->first, grid->second);
+        if (m_areaMap.empty()) m_areaMap = wholeMap(grid->first, grid->second, &m_dropped);
         for (double zoom : search.zooms) {
             if (m_dropped) return Spot();
             best.take(onMap(mini, m_areaMap, grid->first, grid->second, zoom, &area));
@@ -1148,8 +1133,10 @@ namespace MiniMap {
             }
             double seconds = now();
             if (seconds - askedAt.load() > ASKED_FOR) continue;
-            // on the first start the map data is still downloading
-            if (grids.empty() && MapTracking::GetStatus() == MapTracking::Status::Ready) Load(folder);
+            // The map data is still being checked, or downloaded on the
+            // first start. A whole map made now would be made for nothing.
+            if (MapTracking::GetStatus() == MapTracking::Status::Downloading) continue;
+            if (grids.empty()) Load(folder);
             if (grids.empty()) continue;
             // in another window there's nothing to draw over
             if (!MapTracking::GameInFront()) {
@@ -1210,7 +1197,8 @@ namespace MiniMap {
 
     void Start(const std::filesystem::path& dataFolder) {
         if (worker.joinable()) return;
-        Load(dataFolder);
+        // loaded by the thread, once the map data was checked
+        folder = dataFolder;
         stopping = false;
         worker = std::thread(loop);
     }

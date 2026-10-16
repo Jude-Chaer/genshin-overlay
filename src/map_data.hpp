@@ -19,6 +19,10 @@
 // from the same manifest we download that (~26 MB). If not, for example right
 // after a game update, we download the map images (~120 MB) and the index is
 // built locally the first time it's loaded.
+//
+// The release also has every map shrunk small, for finding the minimap on a
+// whole map. Those are downloaded too. One that isn't there, or is of an
+// older map, the app makes from the tiles when it's needed.
 
 namespace MapData {
     struct File {
@@ -68,6 +72,13 @@ namespace MapData {
     // there's no tile. Empty if it isn't on disk.
     extern cv::Mat readGray(const std::filesystem::path& path, int shrunkBy = 1);
 
+    // a whole map is kept shrunk by this
+    constexpr int SMALL_BY = 8;
+    extern std::filesystem::path wholeMapPath(const std::filesystem::path& folder, const Grid& grid);
+    // Makes that picture from the map's tiles, downloading the ones that
+    // aren't on disk. False, and nothing saved, if a tile couldn't be got.
+    extern bool makeWholeMap(const std::filesystem::path& folder, int mapId, const Grid& grid, const std::atomic<bool>* cancel = nullptr);
+
     // Draws a part of a map from its tiles, the way the game should show it
     // there. Keeps the tiles it read, so every thread has its own.
     class Tiles {
@@ -106,6 +117,6 @@ namespace MapData {
     extern bool ensure(const std::filesystem::path& folder, const Progress& progress, const std::atomic<bool>* cancel = nullptr);
 
     // --make-index: downloads everything, builds the index and writes the two
-    // release files to folder/out. Returns 3 when the published index is already current.
+    // release files and the small whole maps to folder/out. Returns 3 when the published index is already current.
     extern int makeIndex(const std::filesystem::path& folder);
 }
