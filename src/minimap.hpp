@@ -199,6 +199,8 @@ namespace MiniMap {
         cv::Mat m_missed;
         // the minimap the area was last searched for, the same here
         cv::Mat m_areaAsked;
+        // where a search found a minimap that had changed by the time it answered
+        Spot m_answered;
         // when it was last Found
         double m_foundAt = 0.0;
         // it's Near until then

@@ -1074,6 +1074,12 @@ namespace MiniMap {
         for (size_t i = m_places.size(); i-- > 0 && !found.found;) {
             if (!samePlace(m_places[i], m_last)) found = nearbyOn(mini, m_places[i], true, m_places[i].zoom);
         }
+        // What a search found for a minimap before this one. This one can
+        // be the first after it that isn't half faded.
+        if (!found.found && m_answered.mapId != 0) {
+            found = nearbyOn(mini, m_answered, true, m_answered.zoom);
+            if (found.found && std::find(m_zooms.begin(), m_zooms.end(), found.zoom) == m_zooms.end()) m_zooms.push_back(found.zoom);
+        }
         if (!found.found) found = locate(grab, mini, true);
         if (found.found) found = bestLayer(mini, found, m_zooms);
         return found;
@@ -1083,7 +1089,11 @@ namespace MiniMap {
     // the minimap it was asked about, the player went on since.
     Spot Watcher::taken(const Answer& answer, const cv::Mat& mini, bool there, double seconds, bool* searched) {
         Spot found = answer.spot;
-        if (found.found && !same(mini, answer.search.mini)) found = nearbyOn(mini, found, true, found.zoom);
+        if (found.found && !same(mini, answer.search.mini)) {
+            // kept for the quick places, one look that doesn't fit doesn't throw it away
+            m_answered = found;
+            found = nearbyOn(mini, found, true, found.zoom);
+        }
         if (found.found) {
             if (std::find(m_zooms.begin(), m_zooms.end(), found.zoom) == m_zooms.end()) m_zooms.push_back(found.zoom);
             if (there) found = bestLayer(mini, found, m_zooms);
@@ -1247,6 +1257,7 @@ namespace MiniMap {
         m_floorsAt = 0.0;
         m_empty = false;
         m_area = Area();
+        m_answered = Spot();
         m_missed.release();
         m_areaAsked.release();
         drop();
