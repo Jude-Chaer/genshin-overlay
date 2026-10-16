@@ -1358,15 +1358,21 @@ namespace MiniMap {
             HWND game = Capture::findGameWindow();
             RECT client;
             cv::Mat grab;
-            if (!game || IsIconic(game) || !Capture::getClientRectOnScreen(game, client)) continue;
-            if (!Capture::grabGame(game, rect(client), grab) || grab.empty()) continue;
-
+            bool looked = false;
             Spot spot;
-            try {
-                spot = watcher.Look(grab, seconds);
+            if (game && !IsIconic(game) && Capture::getClientRectOnScreen(game, client) && Capture::grabGame(game, rect(client), grab) && !grab.empty()) {
+                try {
+                    spot = watcher.Look(grab, seconds);
+                    looked = true;
+                }
+                catch (...) {
+                    // a look that goes wrong is skipped
+                }
             }
-            catch (...) {
-                // a look that goes wrong is skipped
+            // nothing was looked at, the spot is the last look's and can be old
+            if (!looked) {
+                std::lock_guard<std::mutex> lock(mutex);
+                hide(player);
                 continue;
             }
             if (spot.found && seconds >= placesAt) {
