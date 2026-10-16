@@ -57,8 +57,9 @@ namespace MapData {
 	bool writeFile(const fs::path& path, const std::string& data) {
 		std::error_code ec;
 		fs::create_directories(path.parent_path(), ec);
+		// two threads can be saving the same file
 		fs::path tmp = path;
-		tmp += ".part";
+		tmp += "." + std::to_string(GetCurrentThreadId()) + ".part";
 		{
 			std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
 			if (!file) return false;
@@ -66,7 +67,9 @@ namespace MapData {
 			if (!file) return false;
 		}
 		fs::rename(tmp, path, ec);
-		return !ec;
+		if (!ec) return true;
+		fs::remove(tmp, ec);
+		return false;
 	}
 
 	Manifest readManifest(const fs::path& folder) {
