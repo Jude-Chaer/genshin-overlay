@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -108,6 +109,8 @@ namespace MiniMap {
         double left = 0.0, top = 0.0, right = 0.0, bottom = 0.0;
     };
 
+    class Loader;
+
     // Follows the player from one look at the minimap to the next. Every
     // look tries the cheap things first and stops at the first that finds
     // it: around the last spot, then the quick places, then what a search
@@ -117,10 +120,11 @@ namespace MiniMap {
     // is found by trying a whole range of them at the last spot, and kept.
     class Watcher {
     public:
-        // With a thread of its own the searches that take long run there and
-        // Look comes back right away, with what they found at a later Look.
-        // Without, Look does them itself and takes as long as they take.
-        explicit Watcher(Locate locate = nullptr, bool ownThread = false);
+        // With threads of its own a look never waits: the searches that take
+        // long run on one and Look gets what they found at a later Look,
+        // pictures that aren't in memory are read or downloaded on another.
+        // Without, Look does all of it itself and takes as long as it takes.
+        explicit Watcher(Locate locate = nullptr, bool ownThreads = false);
         ~Watcher();
         Watcher(const Watcher&) = delete;
         Watcher& operator=(const Watcher&) = delete;
@@ -165,7 +169,7 @@ namespace MiniMap {
         };
 
         // the steps of a look, in their order
-        Spot around(const cv::Mat& mini, bool sign, double seconds);
+        Spot around(const cv::Mat& mini, bool sign, double seconds, bool loaded);
         void cameUp(double seconds);
         Spot quick(const cv::Mat& grab, const cv::Mat& mini);
         Spot taken(const Answer& answer, const cv::Mat& mini, bool there, double seconds, bool* searched);
@@ -216,6 +220,13 @@ namespace MiniMap {
         // the whole map was searched since it got lost, and it wasn't there
         bool m_empty = false;
         Area m_area;
+
+        // reads and downloads for the looks, none without threads
+        std::unique_ptr<Loader> m_loader;
+        // how much of its work was done at the last look
+        int m_loaded = 0;
+        // when the floor pictures around the spot get asked for next
+        double m_fetchAt = 0.0;
 
         std::thread m_thread;
         mutable std::mutex m_mutex;

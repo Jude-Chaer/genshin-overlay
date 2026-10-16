@@ -83,9 +83,11 @@ namespace MapData {
     // there. Keeps the tiles it read, so every thread has its own.
     class Tiles {
     public:
-        // how many decoded tiles stay in memory, and if a tile that isn't on
-        // disk gets downloaded
-        explicit Tiles(size_t kept, bool fetch = false) : m_kept(kept), m_fetch(fetch) {}
+        // gets a tile that isn't on disk, true if it's there now
+        typedef std::function<bool(int mapId, const Grid& grid, int x, int y)> Fetch;
+        // How many decoded tiles stay in memory. Without a fetch a tile that
+        // isn't on disk is drawn black.
+        explicit Tiles(size_t kept, Fetch fetch = nullptr) : m_kept(kept), m_fetch(std::move(fetch)) {}
         // side x side pixels of perPixel map units, the first one's corner at
         // left, top. From tiles shrunk by shrunkBy, black where there are none.
         cv::Mat Draw(int mapId, const Grid& grid, double left, double top, int side, double perPixel, int shrunkBy);
@@ -95,7 +97,7 @@ namespace MapData {
         const cv::Mat& tile(int mapId, const Grid& grid, int x, int y, int shrunkBy);
 
         size_t m_kept;
-        bool m_fetch;
+        Fetch m_fetch;
         using Key = std::tuple<int, int, int, int>;  // map, x, y, shrunk by
         std::map<Key, cv::Mat> m_tiles;
         std::deque<Key> m_order;

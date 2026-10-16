@@ -163,8 +163,11 @@ namespace MapData {
 		auto it = m_tiles.find(key);
 		if (it != m_tiles.end()) return it->second;
 
-		if (m_fetch) fetchTile(mapId, grid, x, y);
-		cv::Mat image = readGray(tilePath(grid, x, y), shrunkBy);
+		// not kept while it isn't on disk, it can be there at the next draw
+		static const cv::Mat none;
+		fs::path path = tilePath(grid, x, y);
+		if (!fs::exists(path) && !(m_fetch && m_fetch(mapId, grid, x, y))) return none;
+		cv::Mat image = readGray(path, shrunkBy);
 
 		if (m_order.size() >= m_kept) {
 			m_tiles.erase(m_order.front());

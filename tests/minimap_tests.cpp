@@ -514,3 +514,33 @@ TEST_CASE("after a teleport a minimap that stands still gets the big map's area 
         break;
     }
 }
+
+TEST_CASE("with threads of its own a floor's picture is read without holding up the looks", "[minimap]") {
+    loadData();
+    MiniMap::Watcher watcher(nullptr, true);
+    watcher.Remember([]() {
+        MiniMap::Spot place;
+        place.mapId = MAP_ID;
+        place.lat = 700.0;
+        place.lng = 1000.0;
+        return place;
+    }());
+    REQUIRE(watcher.Look(miniAt(1000.0, 700.0), 0.0).found);
+
+    // Down to the floor. Its picture isn't in memory, so this look goes
+    // without it and one soon after has it.
+    cv::Mat mini = miniOnFloor(1005.0, 700.0);
+    MiniMap::Spot spot = watcher.Look(mini, 0.05);
+    CHECK_FALSE(spot.found);
+    CHECK(spot.state == MiniMap::State::Near);
+    double seconds = 0.05;
+    for (int i = 0; i < 100 && !spot.found; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        seconds += 0.005;
+        spot = watcher.Look(mini, seconds);
+    }
+    REQUIRE(spot.found);
+    CHECK(spot.floorId == FLOOR_ID);
+    CHECK(spot.lng == Approx(1005.0).margin(1.5));
+    CHECK(spot.lat == Approx(700.0).margin(1.5));
+}

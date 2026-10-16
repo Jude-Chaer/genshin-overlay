@@ -78,8 +78,9 @@ namespace MiniMap {
     // a lot of chances to fit by accident, so those have to fit this well.
     // The real ones are 0.6 and up.
     static constexpr double FOUND_ANY = 0.5;
-    // floor pictures kept in memory for following, up to 2.6 MB each
-    static constexpr size_t FLOORS_KEPT = 3;
+    // Floor pictures kept in memory, up to 2.6 MB each: this many for a
+    // search, and for the looks as many as there can be layers at one spot.
+    static constexpr size_t FLOORS_KEPT = 3, FLOORS_LOOKED = 6;
     // Floor pictures that aren't on disk are downloaded this many at a time
     // while the minimap is on screen and not found, FETCH_EVERY seconds apart.
     static constexpr int FETCH = 20;
@@ -95,6 +96,10 @@ namespace MiniMap {
     // Lost with the minimap on screen all the time, the player is taken to
     // be near the last spot for this long. Then the whole map gets searched.
     static constexpr double NEAR_FOR = 1.0;
+    // a download that failed, or a picture that isn't there, is tried again after this many seconds
+    static constexpr double RETRY = 5.0;
+    // the same for making a small whole map, which is a lot of downloads
+    static constexpr double SMALL_RETRY = 60.0;
     // From this zoom on the area the big map showed is searched drawn from
     // the tiles, the minimap AREA_MINI pixels wide, if that picture is
     // AREA_SIDE pixels a side at most.
@@ -116,10 +121,47 @@ namespace MiniMap {
     static std::vector<Floor> floors;
     // each one whole, shrunk by FLOOR_SMALL, read when it's first searched
     static std::vector<cv::Mat> floorSmalls;
-    // Floors by their place in that list, shrunk by SHRINK. The search has
-    // its own, it runs on another thread.
-    static thread_local std::map<int, cv::Mat> floorPictures;
-    static thread_local std::deque<int> floorOrder;
+    // Floor pictures in memory, shrunk by SHRINK, by their place in that
+    // list.
+    struct FloorPictures {
+        explicit FloorPictures(size_t kept) : m_kept(kept) {}
+        // empty if it isn't there
+        cv::Mat Get(int index) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            auto it = m_pictures.find(index);
+            if (it == m_pictures.end()) return {};
+            m_order.erase(std::find(m_order.begin(), m_order.end(), index));
+            m_order.push_back(index);
+            return it->second;
+        }
+        // the one that wasn't used for longest makes room
+        void Put(int index, const cv::Mat& picture) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_pictures.count(index)) return;
+            if (m_order.size() >= m_kept) {
+                m_pictures.erase(m_order.front());
+                m_order.pop_front();
+            }
+            m_order.push_back(index);
+            m_pictures[index] = picture;
+        }
+        void Clear() {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_pictures.clear();
+            m_order.clear();
+        }
+
+    private:
+        size_t m_kept;
+        std::mutex m_mutex;
+        std::map<int, cv::Mat> m_pictures;
+        std::deque<int> m_order;
+    };
+    // The ones the looks of a Watcher with threads follow on, its loader
+    // puts them there. A search goes through a lot of floors and would push
+    // these out, so every other thread has its own.
+    static FloorPictures floorsLooked(FLOORS_LOOKED);
+    static thread_local FloorPictures floorsOwn(FLOORS_KEPT);
     static std::filesystem::path folder;
     static std::thread worker;
     static std::mutex mutex;
@@ -130,41 +172,154 @@ namespace MiniMap {
     // when GetPlayer was last called, steady_clock seconds
     static std::atomic<double> askedAt{ -1000.0 };
 
-    // The app only downloads the tiles the big map shows, so the ones
-    // missing here get fetched. One for every thread, like the floors.
-    static thread_local MapData::Tiles tiles(TILES_KEPT, true);
-
     static double now() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    // Work a look can't wait for: downloads, and reading big pictures. Done
+    // on two threads of its own, so one long download doesn't hold up the
+    // rest.
+    class Loader {
+    public:
+        // quit is set when the work should stop early
+        typedef std::function<bool(const std::atomic<bool>& quit)> Work;
+
+        Loader() {
+            for (std::thread& thread : m_threads) thread = std::thread(&Loader::run, this);
+        }
+        ~Loader() {
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_quit = true;
+            }
+            m_wake.notify_all();
+            for (std::thread& thread : m_threads) thread.join();
+        }
+        // Work is done once, however often it's asked for under the same
+        // name. If it comes back false (offline, the file isn't there, or
+        // there was nothing to get) it can be asked for again after retry
+        // seconds.
+        void Ask(const std::string& name, Work work, double retry = RETRY) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            auto asked = m_asked.find(name);
+            if (asked != m_asked.end() && now() < asked->second) return;
+            m_asked[name] = 1e300;
+            m_work.push_back({ name, std::move(work), retry });
+            m_wake.notify_one();
+        }
+        // how many came back true so far, to see that something new is there
+        int Done() const { return m_done; }
+
+    private:
+        struct Job {
+            std::string name;
+            Work work;
+            double retry = RETRY;
+        };
+
+        void run() {
+            OneThread alone;
+            std::unique_lock<std::mutex> lock(m_mutex);
+            while (true) {
+                m_wake.wait(lock, [this]() { return m_quit || !m_work.empty(); });
+                if (m_quit) return;
+                Job job = std::move(m_work.front());
+                m_work.pop_front();
+                lock.unlock();
+                bool done = false;
+                try {
+                    done = job.work(m_quit);
+                }
+                catch (...) {
+                    // a picture that can't be read, tried again later
+                }
+                lock.lock();
+                if (done) {
+                    m_asked.erase(job.name);
+                    ++m_done;
+                }
+                else m_asked[job.name] = now() + job.retry;
+            }
+        }
+
+        std::mutex m_mutex;
+        std::condition_variable m_wake;
+        std::deque<Job> m_work;
+        // The names waiting or being worked on, and the ones that failed
+        // with when they can be asked for again.
+        std::map<std::string, double> m_asked;
+        std::atomic<bool> m_quit{ false };
+        std::atomic<int> m_done{ 0 };
+        std::thread m_threads[2];
+    };
+
+    // The loader of the look that's running on this thread. Whatever isn't
+    // in memory then is asked of it and the look goes on without. Nothing
+    // on any other thread, and in a Watcher without threads: those read and
+    // download what they need right there.
+    static thread_local Loader* later = nullptr;
+
+    // A tile that isn't on disk. The app only downloads the tiles the big
+    // map shows, so the ones missing here get fetched.
+    static bool fetchTile(int mapId, const Grid& grid, int x, int y) {
+        if (later) {
+            later->Ask("tile " + MapData::tilePath(grid, x, y).string(), [mapId, grid, x, y](const std::atomic<bool>&) { return MapData::fetchTile(mapId, grid, x, y); });
+            return false;
+        }
+        // offline, not every tile of a search has to find that out by itself
+        static std::atomic<double> againAt{ 0.0 };
+        if (now() < againAt) return false;
+        if (MapData::fetchTile(mapId, grid, x, y)) return true;
+        againAt = now() + RETRY;
+        return false;
+    }
+
+    // one for every thread that draws
+    static thread_local MapData::Tiles tiles(TILES_KEPT, fetchTile);
+
+    // makes the small whole maps that aren't on disk
+    static bool makeSmallMaps(const std::atomic<bool>& quit) {
+        bool all = true;
+        for (const auto& [mapId, grid] : grids) {
+            if (!std::filesystem::exists(MapData::wholeMapPath(folder, grid)) && !MapData::makeWholeMap(folder, mapId, grid, &quit)) all = false;
+        }
+        return all;
     }
 
     // A whole map shrunk by SMALL, for searching all of it. They come with
     // the map index. One that didn't is made from the tiles, which downloads
     // the tiles that are missing: for Teyvat that's all of them, once.
-    // Empty if it couldn't be.
-    static cv::Mat wholeMap(int mapId, const Grid& grid, const std::atomic<bool>* dropped) {
+    // Empty until it's there.
+    static cv::Mat wholeMap(int mapId, const Grid& grid, Loader* loader, const std::atomic<bool>* dropped) {
         std::filesystem::path path = MapData::wholeMapPath(folder, grid);
         cv::Mat whole = MapData::readGray(path);
         if (!whole.empty()) return whole;
+        if (loader) {
+            loader->Ask("small maps", makeSmallMaps, SMALL_RETRY);
+            return {};
+        }
         if (!MapData::makeWholeMap(folder, mapId, grid, dropped)) return {};
         return MapData::readGray(path);
     }
 
-    // one floor's picture shrunk by SHRINK, empty while it isn't on disk
-    static const cv::Mat& floorPicture(int index) {
-        auto it = floorPictures.find(index);
-        if (it != floorPictures.end()) return it->second;
-
-        static const cv::Mat nothing;
+    // reads a floor's picture into memory, false if it isn't on disk
+    static bool readFloor(int index, FloorPictures& kept) {
         cv::Mat image = MapData::readGray(floors[index].path, SHRINK);
-        if (image.empty()) return nothing;
+        if (image.empty()) return false;
+        kept.Put(index, image);
+        return true;
+    }
 
-        if (floorOrder.size() >= FLOORS_KEPT) {
-            floorPictures.erase(floorOrder.front());
-            floorOrder.pop_front();
+    // one floor's picture shrunk by SHRINK, empty while it isn't there
+    static cv::Mat floorPicture(int index) {
+        if (later) {
+            cv::Mat image = floorsLooked.Get(index);
+            if (image.empty()) later->Ask("floor " + std::to_string(index), [index](const std::atomic<bool>&) { return readFloor(index, floorsLooked); });
+            return image;
         }
-        floorOrder.push_back(index);
-        return floorPictures[index] = image;
+        cv::Mat image = floorsOwn.Get(index);
+        if (image.empty() && readFloor(index, floorsOwn)) image = floorsOwn.Get(index);
+        return image;
     }
 
     // which floor of the list a spot is on, -1 on the surface
@@ -290,8 +445,8 @@ namespace MiniMap {
     void Load(const std::filesystem::path& dataFolder) {
         folder = dataFolder;
         tiles.Clear();
-        floorPictures.clear();
-        floorOrder.clear();
+        floorsLooked.Clear();
+        floorsOwn.Clear();
 
         MapData::Manifest manifest = MapData::readManifest(dataFolder);
         grids = manifest.grids;
@@ -305,7 +460,7 @@ namespace MiniMap {
     // A floor's picture around a spot, side pixels each way with perPixel map
     // units to the pixel. Empty while it isn't on disk.
     static cv::Mat drawFloor(int index, double lat, double lng, int side, double perPixel) {
-        const cv::Mat& image = floorPicture(index);
+        cv::Mat image = floorPicture(index);
         if (image.empty()) return {};
         const Floor& floor = floors[index];
         // map units to one pixel of the picture as it's kept
@@ -515,7 +670,8 @@ namespace MiniMap {
     // Downloads floor pictures that aren't on disk, the ones closest to a
     // spot first. Most players never go under most of them, so they're only
     // fetched once the minimap is on screen and the tiles don't have it.
-    static void fetchFloors(int mapId, double lat, double lng) {
+    // True if any came in.
+    static bool fetchFloors(int mapId, double lat, double lng, const std::atomic<bool>& quit) {
         std::vector<std::pair<double, const Floor*>> missing;
         for (const Floor& floor : floors) {
             if (floor.url.empty() || std::filesystem::exists(floor.path)) continue;
@@ -523,10 +679,9 @@ namespace MiniMap {
         }
         std::sort(missing.begin(), missing.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 
-        for (size_t i = 0; i < missing.size() && i < (size_t)FETCH; ++i) {
-            // offline, try again later
-            if (!MapData::fetch(missing[i].second->url, missing[i].second->path)) return;
-        }
+        size_t got = 0;
+        while (got < missing.size() && got < (size_t)FETCH && !quit && MapData::fetch(missing[got].second->url, missing[got].second->path)) ++got;
+        return got > 0;
     }
 
     // The best TRIES places of a rough search, checked against the tiles,
@@ -571,19 +726,19 @@ namespace MiniMap {
 
     // Dropped, if given, is looked at between two maps: when it's set the
     // search isn't wanted anymore and stops.
-    static Spot anywhereUntil(const cv::Mat& mini, double zoom, const std::atomic<bool>* dropped) {
+    static Spot anywhereUntil(const cv::Mat& mini, double zoom, Loader* loader, const std::atomic<bool>* dropped) {
         Best best;
         for (const auto& [mapId, grid] : grids) {
             if (dropped && *dropped) return Spot();
             // read every time and let go after, it's 11 MB for Teyvat and only needed after a teleport
-            best.take(onMap(mini, wholeMap(mapId, grid, dropped), mapId, grid, zoom));
+            best.take(onMap(mini, wholeMap(mapId, grid, loader, dropped), mapId, grid, zoom));
         }
         best.take(anywhereFloors(mini, zoom, dropped));
         return best.alone();
     }
 
     Spot anywhere(const cv::Mat& mini, double zoom) {
-        return anywhereUntil(mini, zoom, nullptr);
+        return anywhereUntil(mini, zoom, nullptr, nullptr);
     }
 
     static bool samePlace(const Spot& a, const Spot& b) {
@@ -611,11 +766,14 @@ namespace MiniMap {
         drop();
     }
 
-    Watcher::Watcher(Locate locate, bool ownThread) : m_locate(std::move(locate)) {
-        if (ownThread) m_thread = std::thread(&Watcher::run, this);
+    Watcher::Watcher(Locate locate, bool ownThreads) : m_locate(std::move(locate)) {
+        if (!ownThreads) return;
+        m_loader = std::make_unique<Loader>();
+        m_thread = std::thread(&Watcher::run, this);
     }
 
     Watcher::~Watcher() {
+        if (later == m_loader.get()) later = nullptr;
         if (!m_thread.joinable()) return;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -713,9 +871,15 @@ namespace MiniMap {
         if (!found.found && search.around) found = anyZoom(search);
         // the zoomed ones double the work, so only with a minimap on screen
         for (double zoom : search.zooms) {
-            if (!found.found && search.everywhere && (search.there || zoom == 1.0)) found = anywhereUntil(search.mini, zoom, &m_dropped);
+            if (!found.found && search.everywhere && (search.there || zoom == 1.0)) found = anywhereUntil(search.mini, zoom, m_loader.get(), &m_dropped);
         }
         if (!found.found && search.floors) found = anyFloor(search);
+        // the looks go on from there, so they get the floor's picture along with it
+        int floor = found.found ? floorOf(found) : -1;
+        if (floor >= 0 && m_loader) {
+            cv::Mat picture = floorsOwn.Get(floor);
+            if (!picture.empty()) floorsLooked.Put(floor, picture);
+        }
         answer.spot = found;
         return answer;
     }
@@ -736,7 +900,7 @@ namespace MiniMap {
             m_areaMap.release();
             m_areaDrawn.clear();
         }
-        if (m_areaMap.empty()) m_areaMap = wholeMap(grid->first, grid->second, &m_dropped);
+        if (m_areaMap.empty()) m_areaMap = wholeMap(grid->first, grid->second, m_loader.get(), &m_dropped);
         for (double zoom : search.zooms) {
             if (m_dropped) return Spot();
             best.take(onMap(mini, m_areaMap, grid->first, grid->second, zoom, &area));
@@ -859,8 +1023,8 @@ namespace MiniMap {
     }
 
     // Around the last spot: where it was, at the zooms we know and on the
-    // other layers there.
-    Spot Watcher::around(const cv::Mat& mini, bool sign, double seconds) {
+    // other layers there. Loaded says a picture that was missing came in.
+    Spot Watcher::around(const cv::Mat& mini, bool sign, double seconds, bool loaded) {
         Spot spot;
         if (m_last.mapId == 0) return spot;
         spot = nearbyOn(mini, m_last, false, m_last.zoom);
@@ -874,8 +1038,10 @@ namespace MiniMap {
             }
         }
         // Went under ground or water, or came back up. Only the moment it's
-        // lost, reading floor pictures every look would cost too much.
-        if (!spot.found && there && m_last.found) spot = otherLayer(mini, m_last, m_zooms);
+        // lost, every look would cost too much. And once more when a floor's
+        // picture wasn't in memory then and is now.
+        bool justLost = m_last.found || (loaded && seconds < m_nearUntil);
+        if (!spot.found && there && justLost) spot = otherLayer(mini, m_last, m_zooms);
         // While it's followed the other layers get a look now and then. And
         // at once when it fits a lot worse than at the last look there:
         // after a teleport under water the game shows the surface first and
@@ -984,6 +1150,7 @@ namespace MiniMap {
 
     const Spot& Watcher::Look(const cv::Mat& grab, double seconds, bool* searched) {
         if (searched) *searched = false;
+        later = m_loader.get();
         cv::Mat mini = shrink(grab);
         bool sign = shown(mini);
         if (sign) m_covered = false;
@@ -1001,7 +1168,14 @@ namespace MiniMap {
         }
         m_lastMini = mini;
 
-        Spot spot = around(mini, sign, seconds);
+        // a picture the looks before went without is in memory now
+        bool loaded = m_loader && m_loader->Done() != m_loaded;
+        if (loaded) {
+            m_loaded = m_loader->Done();
+            m_missed.release();
+        }
+
+        Spot spot = around(mini, sign, seconds, loaded);
         // on from the look before, not a find out of nowhere
         bool followed = spot.found && m_last.found;
         bool there = spot.found || sign;
@@ -1053,6 +1227,12 @@ namespace MiniMap {
         }
 
         if (!spot.found) {
+            // maybe it shows a floor we don't have the picture of yet
+            if (m_loader && there && seconds >= m_fetchAt) {
+                m_fetchAt = seconds + FETCH_EVERY;
+                Spot at = m_last;
+                m_loader->Ask("floors", [at](const std::atomic<bool>& quit) { return fetchFloors(at.mapId, at.lat, at.lng, quit); });
+            }
             m_last.score = spot.score;
             return unfound(lost(there, seconds), seconds);
         }
@@ -1125,7 +1305,7 @@ namespace MiniMap {
         for (const Spot& place : readPlaces()) watcher.Remember(place);
         std::string written = placesText(watcher.Places());
         bool wasOpen = false;
-        double fetchAt = 0.0, placesAt = 0.0;
+        double placesAt = 0.0;
         while (true) {
             {
                 std::unique_lock<std::mutex> lock(mutex);
@@ -1176,11 +1356,6 @@ namespace MiniMap {
             catch (...) {
                 // a look that goes wrong is skipped
                 continue;
-            }
-            // maybe it shows a floor we don't have the picture of yet
-            if (!spot.found && spot.state != State::None && seconds >= fetchAt) {
-                fetchFloors(spot.mapId, spot.lat, spot.lng);
-                fetchAt = now() + FETCH_EVERY;
             }
             if (spot.found && seconds >= placesAt) {
                 placesAt = seconds + PLACES_EVERY;
