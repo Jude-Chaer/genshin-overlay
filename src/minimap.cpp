@@ -91,8 +91,9 @@ namespace MiniMap {
     // GetPlayer wasn't called for this long: nobody needs it, stop looking
     static constexpr double ASKED_FOR = 2.0;
     // Seconds between two whole map searches while the minimap isn't found.
-    // Doubles every time up to SEARCH_LAST, a menu or a cutscene can stay for long.
-    static constexpr double SEARCH_FIRST = 1.0, SEARCH_LAST = 10.0;
+    // Doubles every time up to SEARCH_LAST: in a domain it fits nowhere for
+    // minutes, and every one of them is seconds of a cpu core.
+    static constexpr double SEARCH_FIRST = 1.0, SEARCH_LAST = 30.0;
     // Lost with the minimap on screen all the time, the player is taken to
     // be near the last spot for this long. Then the whole map gets searched.
     static constexpr double NEAR_FOR = 1.0;
