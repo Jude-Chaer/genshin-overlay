@@ -117,7 +117,8 @@ namespace MiniMap {
     // answered. What's searched and how often goes by the State.
     //
     // The game zooms the minimap in some places. A zoom it doesn't know yet
-    // is found by trying a whole range of them at the last spot, and kept.
+    // is found by trying a whole range of them at the last spot, and kept
+    // if it stays.
     class Watcher {
     public:
         // With threads of its own a look never waits: the searches that take
@@ -171,13 +172,15 @@ namespace MiniMap {
         // the steps of a look, in their order
         Spot around(const cv::Mat& mini, bool sign, double seconds, bool loaded);
         void cameUp(double seconds);
-        Spot quick(const cv::Mat& grab, const cv::Mat& mini);
+        Spot quick(const cv::Mat& grab, const cv::Mat& mini, double seconds);
         Spot taken(const Answer& answer, const cv::Mat& mini, bool there, double seconds, bool* searched);
         State lost(bool there, double seconds) const;
         Search wanted(State state, const cv::Mat& mini, bool there, double seconds) const;
         const Spot& unfound(State state, double seconds);
 
-        Spot locate(const cv::Mat& grab, const cv::Mat& mini, bool there);
+        Spot locate(const cv::Mat& grab, const cv::Mat& mini, bool there, double seconds);
+        void keep(double zoom, double seconds);
+        void forgetNew();
         void ask(Search search);
         bool answered(Answer& answer);
         void drop();
@@ -193,6 +196,8 @@ namespace MiniMap {
         Spot m_last;
         // the zooms seen so far
         std::vector<double> m_zooms{ 1.0, CITY_ZOOM };
+        // The newest of them and when it was found, 0 once it stays.
+        double m_newZoom = 0.0, m_newZoomAt = 0.0;
         cv::Mat m_lastMini;
         std::vector<Spot> m_places;
         // the minimap the quick places didn't have, they aren't asked twice

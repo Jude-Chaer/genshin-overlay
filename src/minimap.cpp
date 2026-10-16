@@ -37,6 +37,11 @@ namespace MiniMap {
     // Zooms tried when none of the known ones fit, each ZOOM_STEP times the
     // one before. A zoom within SAME of a known one is that one.
     static constexpr double ZOOM_FIRST = 0.5, ZOOM_LAST = 5.0, ZOOM_STEP = 1.05, SAME = 0.04;
+    // A new zoom is kept once it's still the zoom this many seconds later.
+    // The game zooms the minimap over a second or two, and a look in the
+    // middle of that finds a zoom that's never seen again. The longest one
+    // on the way was followed for 1.4 seconds.
+    static constexpr double ZOOM_STAYS = 3.0;
     // the N at the top of the minimap is there when that spot looks this much like one
     static constexpr double NORTH = 0.45;
     // Only the details are compared, what's left after taking away the picture
@@ -947,7 +952,7 @@ namespace MiniMap {
     // one go. It finds the big map in a picture just as well, so the look
     // around there has to agree, and a zoom we don't know only counts with a
     // minimap on screen.
-    Spot Watcher::locate(const cv::Mat& grab, const cv::Mat& mini, bool there) {
+    Spot Watcher::locate(const cv::Mat& grab, const cv::Mat& mini, bool there, double seconds) {
         Spot spot;
         if (!m_locate) return spot;
         MapLocator::Result result = m_locate(grab);
@@ -968,8 +973,24 @@ namespace MiniMap {
         spot.lat = result.lat;
         spot.lng = result.lng;
         spot = nearbyOn(mini, spot, false, zoom);
-        if (spot.found && isNew) m_zooms.push_back(zoom);
+        if (spot.found) keep(zoom, seconds);
         return spot;
+    }
+
+    // A zoom the minimap was found at. One that isn't known yet is new
+    // until it stayed for ZOOM_STAYS, see Look.
+    void Watcher::keep(double zoom, double seconds) {
+        if (std::find(m_zooms.begin(), m_zooms.end(), zoom) != m_zooms.end()) return;
+        // the new one before it was on the way to this one
+        forgetNew();
+        m_zooms.push_back(zoom);
+        m_newZoom = zoom;
+        m_newZoomAt = seconds;
+    }
+
+    void Watcher::forgetNew() {
+        m_zooms.erase(std::remove(m_zooms.begin(), m_zooms.end(), m_newZoom), m_zooms.end());
+        m_newZoom = 0.0;
     }
 
     // The minimap at the last spot, at whatever zoom fits. On the other
@@ -1079,7 +1100,7 @@ namespace MiniMap {
     // The quick places, for a minimap that isn't around the last spot:
     // further around it, the places it was followed at, and the map
     // matching. One miss shouldn't cost seconds of searching the whole map.
-    Spot Watcher::quick(const cv::Mat& grab, const cv::Mat& mini) {
+    Spot Watcher::quick(const cv::Mat& grab, const cv::Mat& mini, double seconds) {
         Spot found;
         if (m_last.mapId != 0) found = nearbyOn(mini, m_last, true, m_last.zoom);
         // Where it was followed before. Leaving a domain puts the player
@@ -1092,9 +1113,9 @@ namespace MiniMap {
         // be the first after it that isn't half faded.
         if (!found.found && m_answered.mapId != 0) {
             found = nearbyOn(mini, m_answered, true, m_answered.zoom);
-            if (found.found && std::find(m_zooms.begin(), m_zooms.end(), found.zoom) == m_zooms.end()) m_zooms.push_back(found.zoom);
+            if (found.found) keep(found.zoom, seconds);
         }
-        if (!found.found) found = locate(grab, mini, true);
+        if (!found.found) found = locate(grab, mini, true, seconds);
         if (found.found) found = bestLayer(mini, found, m_zooms);
         return found;
     }
@@ -1109,7 +1130,7 @@ namespace MiniMap {
             found = nearbyOn(mini, found, true, found.zoom);
         }
         if (found.found) {
-            if (std::find(m_zooms.begin(), m_zooms.end(), found.zoom) == m_zooms.end()) m_zooms.push_back(found.zoom);
+            keep(found.zoom, seconds);
             if (there) found = bestLayer(mini, found, m_zooms);
         }
         if (!answer.search.due) return found;
@@ -1208,7 +1229,7 @@ namespace MiniMap {
 
         // every look that shows something new
         if (!spot.found && there && !same(mini, m_missed)) {
-            Spot found = quick(grab, mini);
+            Spot found = quick(grab, mini, seconds);
             if (found.found) spot = found;
             else m_missed = mini;
         }
@@ -1231,7 +1252,7 @@ namespace MiniMap {
         // with a minimap on screen these two were tried as quick places
         if (!spot.found && state == State::None && seconds >= m_searchAt) {
             if (m_last.mapId != 0) spot = nearbyOn(mini, m_last, true, m_last.zoom);
-            if (!spot.found) spot = locate(grab, mini, false);
+            if (!spot.found) spot = locate(grab, mini, false, seconds);
             if (spot.found && searched) *searched = true;
         }
 
@@ -1261,7 +1282,11 @@ namespace MiniMap {
             return unfound(lost(there, seconds), seconds);
         }
 
-        if (followed) Remember(spot);
+        // A new zoom stays once it lasted. When another zoom took over
+        // before that, the game was still zooming.
+        if (m_newZoom != 0.0 && spot.zoom != m_newZoom) forgetNew();
+        else if (seconds - m_newZoomAt >= ZOOM_STAYS) m_newZoom = 0.0;
+        if (followed && spot.zoom != m_newZoom) Remember(spot);
         m_last = spot;
         m_last.state = State::Found;
         m_last.age = 0.0;

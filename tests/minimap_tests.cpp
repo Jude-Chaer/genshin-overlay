@@ -225,14 +225,41 @@ TEST_CASE("a zoom nobody told it about is worked out and kept", "[minimap]") {
     CHECK(spot.zoom == Approx(1.8).epsilon(0.02));
     CHECK(spot.lng == Approx(905.0).margin(2.0));
     CHECK(spot.lat == Approx(700.0).margin(2.0));
+    REQUIRE(watcher.Look(miniAt(906.0, 700.0, 1.8), 3.3).found);
 
     // back out and in again, now without a search
-    REQUIRE(watcher.Look(miniAt(910.0, 700.0), 0.4).found);
+    REQUIRE(watcher.Look(miniAt(910.0, 700.0), 3.5).found);
     bool searched = true;
-    spot = watcher.Look(miniAt(915.0, 700.0, 1.8), 0.6, &searched);
+    spot = watcher.Look(miniAt(915.0, 700.0, 1.8), 3.7, &searched);
     REQUIRE(spot.found);
     CHECK_FALSE(searched);
     CHECK(spot.lng == Approx(915.0).margin(2.0));
+}
+
+TEST_CASE("a zoom the game only passed through isn't kept", "[minimap]") {
+    loadData();
+    MiniMap::Watcher watcher;
+    REQUIRE(watcher.Look(miniAt(900.0, 700.0), 0.0).found);
+
+    // zooming in to 1.8, caught on the way there
+    MiniMap::Spot spot = watcher.Look(miniAt(900.0, 700.0, 1.4), 0.2);
+    REQUIRE(spot.found);
+    CHECK(spot.zoom == Approx(1.4).epsilon(0.02));
+    spot = watcher.Look(miniAt(900.0, 700.0, 1.8), 0.4);
+    REQUIRE(spot.found);
+    CHECK(spot.zoom == Approx(1.8).epsilon(0.02));
+    REQUIRE(watcher.Look(miniAt(901.0, 700.0, 1.8), 3.5).found);
+    // and it's no place the player was followed at
+    for (const MiniMap::Spot& place : watcher.Places()) CHECK(place.zoom == Approx(1.8).epsilon(0.02));
+
+    // 1.8 is known now, 1.4 has to be searched for again
+    REQUIRE(watcher.Look(miniAt(905.0, 700.0), 3.7).found);
+    bool searched = true;
+    REQUIRE(watcher.Look(miniAt(910.0, 700.0, 1.8), 3.9, &searched).found);
+    CHECK_FALSE(searched);
+    REQUIRE(watcher.Look(miniAt(915.0, 700.0), 4.1).found);
+    REQUIRE(watcher.Look(miniAt(920.0, 700.0, 1.4), 4.3, &searched).found);
+    CHECK(searched);
 }
 
 TEST_CASE("the player is followed down to a floor and back up", "[minimap]") {
