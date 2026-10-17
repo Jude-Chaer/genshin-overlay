@@ -73,7 +73,7 @@ namespace MiniMap {
     static constexpr int FLOOR_SMALL = 4;
     // The zoom steps of searching the floors without knowing the zoom. That
     // search is a few seconds of work, so FLOORS_EVERY seconds apart.
-    static constexpr double ZOOM_ROUGH = 1.1;
+    static constexpr double ZOOM_ROUGH = 1.2;
     static constexpr double FLOORS_EVERY = 30.0;
     // While it's followed, the other layers at the spot get a look this many
     // seconds apart. Diving, the surface can keep passing for the minimap.
