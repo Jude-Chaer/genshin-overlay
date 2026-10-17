@@ -598,6 +598,24 @@ namespace MapData {
 		return true;
 	}
 
+	// Some of HoYoLAB's icons are over 1000 px and 3 MB, to be drawn at about 30 px.
+	// Shrunk to fit ICON_SIZE and saved as png, so a few hundred loaded stay small.
+	static constexpr int ICON_SIZE = 64;
+	static bool shrinkIcon(const std::string& body, std::string& png) {
+		std::vector<uchar> bytes(body.begin(), body.end());
+		cv::Mat image = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
+		if (image.empty()) return false;
+		int longest = std::max(image.cols, image.rows);
+		if (longest > ICON_SIZE) {
+			double scale = (double)ICON_SIZE / longest;
+			cv::resize(image, image, cv::Size(std::max(1, (int)std::lround(image.cols * scale)), std::max(1, (int)std::lround(image.rows * scale))), 0, 0, cv::INTER_AREA);
+		}
+		std::vector<uchar> out;
+		if (!cv::imencode(".png", image, out)) return false;
+		png.assign(out.begin(), out.end());
+		return true;
+	}
+
 	// Need to implement for other maps (Not just map 2)
 	bool downloadItemIcons(int map_id) {
 		json data;
@@ -623,12 +641,8 @@ namespace MapData {
 				int id = node["id"].get<int>();
 				std::string url = node["icon"].get<std::string>();
 				if (id > 0 && !url.empty()) {
-					std::string ext = ".png";
-					size_t dot = url.find_last_of('.'), slash = url.find_last_of('/');
-					if (dot != std::string::npos && slash != std::string::npos && dot > slash && url.size() - dot <= 5) {
-						ext = url.substr(dot);
-					}
-					icons.emplace(id, Icon{ url, (folder / (std::to_string(id) + ext)).string() });
+					// always saved as png, see shrinkIcon
+					icons.emplace(id, Icon{ url, (folder / (std::to_string(id) + ".png")).string() });
 				}
 			}
 
@@ -659,8 +673,9 @@ namespace MapData {
 				bool ok = false;
 				for (int attempt = 0; attempt < 3 && !ok; attempt++) {
 					Net::Response response;
-					if (Net::get(todo[i]->url, response, true) && response.status == 200 && !response.body.empty()) {
-						ok = writeFile(fs::u8path(todo[i]->path), response.body);
+					std::string icon;
+					if (Net::get(todo[i]->url, response, true) && response.status == 200 && shrinkIcon(response.body, icon)) {
+						ok = writeFile(fs::u8path(todo[i]->path), icon);
 					}
 				}
 				if (ok) saved++;
