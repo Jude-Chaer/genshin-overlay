@@ -1,5 +1,5 @@
 metadata = {
-    name = "Player position",
+    name = "Minimap",
     description = "Shows where you are on the map, read from the minimap.",
     author = "genshin-overlay",
     version = "1.3.0",
