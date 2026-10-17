@@ -248,10 +248,13 @@ end
 
 -- A round badge like the game's map icons: light ring, dark inside, the
 -- item in the middle. Done ones get a grey ring and the whole badge fades.
-local function drawMarker(x, y, half, icon, isDone)
+-- The one whose guide is open gets a blue ring.
+local function drawMarker(x, y, half, icon, isDone, isOpen)
     local a = isDone and DONE_OPACITY or 1.0
+    local ring = isOpen and 0x4FB8FFFF or isDone and 0x969696FF or 0xECE5D8FF
+    if isOpen then a = 1.0 end
     DrawCircle(x, y + half * 0.08, half, faded(0x00000050, a))
-    DrawCircle(x, y, half * 0.94, faded(isDone and 0x969696FF or 0xECE5D8FF, a))
+    DrawCircle(x, y, half * 0.94, faded(ring, a))
     DrawCircle(x, y, half * 0.8, faded(0x3B4255FF, a))
     local item = half * 0.6
     DrawImage(icon, x - item, y - item, x + item, y + item, a)
@@ -672,11 +675,13 @@ local function drawOnMap(view)
         for _, group in ipairs(mergeOnScreen(reach)) do
             local first = group[1]
             local x, y = onScreen.x[first], onScreen.y[first]
-            local allDone = true
+            local allDone, isOpen = true, false
             for _, i in ipairs(group) do
-                if not done[onScreen.point[i].id] then allDone = false end
+                local id = onScreen.point[i].id
+                if not done[id] then allDone = false end
+                if openGuide and openGuide.id == id then isOpen = true end
             end
-            drawMarker(x, y, half, iconOf(onScreen.type[first]), allDone)
+            drawMarker(x, y, half, iconOf(onScreen.type[first]), allDone, isOpen)
             if #group > 1 then drawCount(x, y, half, #group, allDone) end
             if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
                 and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
@@ -685,14 +690,20 @@ local function drawOnMap(view)
         end
     else
         -- each on its own spot, a tap takes every one that overlaps the tapped one
-        local tapped
+        local tapped, open
         for i = 1, n do
             local x, y = onScreen.x[i], onScreen.y[i]
-            drawMarker(x, y, half, iconOf(onScreen.type[i]), done[onScreen.point[i].id])
+            local point = onScreen.point[i]
+            if openGuide and openGuide.id == point.id then open = i end
+            drawMarker(x, y, half, iconOf(onScreen.type[i]), done[point.id])
             if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
                 and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
                 tapped = i
             end
+        end
+        -- the open one again on top, so its blue ring isn't under the others
+        if open then
+            drawMarker(onScreen.x[open], onScreen.y[open], half, iconOf(onScreen.type[open]), done[onScreen.point[open].id], true)
         end
         if tapped then
             local group = { tapped }
