@@ -22,6 +22,8 @@ local regions = {}
 -- what the user picked
 local selected = {}  -- type id -> true
 local hidden = {}    -- type id -> true, turned off from the bar on the map
+-- while "hide all" is on: the ones that were hidden before it, to go back to
+local hiddenBefore
 local regionOn = {}  -- region id -> true, none means everywhere
 local onlyHere = false
 -- groups open in the menu: group id -> true
@@ -107,6 +109,8 @@ local function saveSelection()
     WriteFile(SELECTION_FILE, JSON_Encode({
         types = keys(selected),
         hidden = keys(hidden),
+        hideAll = hiddenBefore ~= nil,
+        hiddenBefore = keys(hiddenBefore or {}),
         regions = keys(regionOn),
         onlyHere = onlyHere,
         openGroups = keys(openGroups),
@@ -154,6 +158,10 @@ function Init()
     end
     if saved then
         for _, id in ipairs(ids(saved.hidden)) do hidden[id] = true end
+        if saved.hideAll then
+            hiddenBefore = {}
+            for _, id in ipairs(ids(saved.hiddenBefore)) do hiddenBefore[id] = true end
+        end
         for _, id in ipairs(ids(saved.regions)) do regionOn[id] = true end
         onlyHere = saved.onlyHere == true
         for _, id in ipairs(ids(saved.openGroups)) do openGroups[id] = true end
@@ -220,21 +228,37 @@ local function shown(id)
     return selected[id] and not hidden[id] and points[id]
 end
 
+-- Hides every type on the bar, or brings back the ones that were showing
+-- before it was tapped
+local function toggleHideAll()
+    if hiddenBefore then
+        hidden, hiddenBefore = hiddenBefore, nil
+    else
+        hiddenBefore = {}
+        for id in pairs(hidden) do hiddenBefore[id] = true end
+        for _, id in ipairs(barTypes) do hidden[id] = true end
+    end
+    saveSelection()
+end
+
 -- The picked types as badges along the top of the map. Tapping one hides
--- its markers until it's tapped again.
+-- its markers until it's tapped again. With more than one there's a
+-- "hide all" badge first.
 local BAR_BADGE = 40
 local BAR_GAP = 6
 local BAR_PAD = 7
 
 local function drawBar(view)
     if not GetSetting("mapBar") or #barTypes == 0 then return end
+    local allButton = #barTypes > 1 and 1 or 0
 
     -- as many as fit, the rest stay in the menu
     local room = view.right - view.left - 80
-    local fit = math.max(1, math.floor((room - BAR_PAD * 2 + BAR_GAP) / (BAR_BADGE + BAR_GAP)))
+    local fit = math.max(1, math.floor((room - BAR_PAD * 2 + BAR_GAP) / (BAR_BADGE + BAR_GAP)) - allButton)
     local count = math.min(#barTypes, fit)
+    local slots = count + allButton
 
-    local width = count * BAR_BADGE + (count - 1) * BAR_GAP + BAR_PAD * 2
+    local width = slots * BAR_BADGE + (slots - 1) * BAR_GAP + BAR_PAD * 2
     local height = BAR_BADGE + BAR_PAD * 2
     local x0 = view.centerX - width / 2
     local y0 = view.top + 18
@@ -244,29 +268,45 @@ local function drawBar(view)
     DrawRect(x0, y0, x0 + width, y0 + height, 0x1C2030D0, height / 2)
     DrawRect(x0, y0, x0 + width, y0 + height, 0xD3BC8E60, height / 2, 1.5)
 
-    local hoveredId, hoveredX
+    local label, labelX
+    local y = y0 + height / 2
+    local half = BAR_BADGE / 2
+
+    if allButton == 1 then
+        local x = x0 + BAR_PAD + half
+        local clicked, hovered = ClickArea(x - half, y - half, x + half, y + half)
+        if clicked then toggleHideAll() end
+        drawMarker(x, y, hovered and half * 1.08 or half, 0, hiddenBefore ~= nil)
+        local w, h = TextSize("All", 15)
+        DrawText("All", x - w / 2, y - h / 2, 15, hiddenBefore and faded(0xECE5D8FF, DONE_OPACITY) or 0xECE5D8FF)
+        if hovered then
+            label, labelX = hiddenBefore and "Show the ones from before" or "Hide all", x - half
+        end
+    end
+
     for i = 1, count do
         local id = barTypes[i]
-        local x = x0 + BAR_PAD + (i - 1) * (BAR_BADGE + BAR_GAP) + BAR_BADGE / 2
-        local y = y0 + height / 2
-        local half = BAR_BADGE / 2
+        local x = x0 + BAR_PAD + (i - 1 + allButton) * (BAR_BADGE + BAR_GAP) + half
         local clicked, hovered = ClickArea(x - half, y - half, x + half, y + half)
         if clicked then
             hidden[id] = not hidden[id] or nil
+            -- picking by hand after "hide all" leaves it
+            hiddenBefore = nil
             saveSelection()
         end
         -- hidden ones look like done markers, a bit bigger under the mouse
         drawMarker(x, y, hovered and half * 1.08 or half, iconOf(id), hidden[id])
-        if hovered then hoveredId, hoveredX = id, x - half end
+        if hovered then
+            label, labelX = typeNames[id] .. (hidden[id] and "  (hidden)" or ""), x - half
+        end
     end
 
     -- the name under the badge the mouse is on
-    if hoveredId then
-        local label = typeNames[hoveredId] .. (hidden[hoveredId] and "  (hidden)" or "")
+    if label then
         local w, h = TextSize(label, 16)
         local ty = y0 + height + 8
-        DrawRect(hoveredX - 8, ty - 5, hoveredX + w + 8, ty + h + 5, 0x1C2030E0, 6)
-        DrawText(label, hoveredX, ty, 16, 0xECE5D8FF)
+        DrawRect(labelX - 8, ty - 5, labelX + w + 8, ty + h + 5, 0x1C2030E0, 6)
+        DrawText(label, labelX, ty, 16, 0xECE5D8FF)
     end
 end
 
@@ -415,7 +455,7 @@ function Menu()
     if count > 0 then
         ImGUI_SameLine()
         ImGUI_Button("Clear", function()
-            selected, hidden = {}, {}
+            selected, hidden, hiddenBefore = {}, {}, nil
             updateBar()
             saveSelection()
         end)
