@@ -90,6 +90,46 @@ namespace Extensions {
 		}
 	}
 
+	// Slider, and next to it the number, drag on it for small steps.
+	// No typing, the overlay never gets the keyboard, the game keeps it.
+	template <typename T>
+	static bool sliderRow(ExtensionSetting& setting) {
+		bool done = false;
+		T& value = std::get<T>(setting.value);
+		ImGui::PushID(setting.id.c_str());
+		ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10);
+		if constexpr (std::is_same_v<T, int>) {
+			int low = (int)*setting.min, high = (int)*setting.max;
+			ImGui::SliderInt("##slider", &value, low, high, "", ImGuiSliderFlags_NoInput);
+			done |= ImGui::IsItemDeactivatedAfterEdit();
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4);
+			ImGui::DragInt("##number", &value, 0.2f, low, high, "%d",
+				ImGuiSliderFlags_NoInput | ImGuiSliderFlags_AlwaysClamp);
+		}
+		else {
+			ImGui::SliderFloat("##slider", &value, *setting.min, *setting.max, "", ImGuiSliderFlags_NoInput);
+			done |= ImGui::IsItemDeactivatedAfterEdit();
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4);
+			float step = (*setting.max - *setting.min) / 200.0f;
+			ImGui::DragFloat("##number", &value, step, *setting.min, *setting.max, "%.2f",
+				ImGuiSliderFlags_NoInput | ImGuiSliderFlags_AlwaysClamp);
+		}
+		done |= ImGui::IsItemDeactivatedAfterEdit();
+		ImGui::SameLine();
+		ImGui::TextUnformatted(setting.label.c_str());
+		ImGui::SameLine();
+		ImGui::BeginDisabled(value == std::get<T>(setting.defaultValue));
+		if (ImGui::SmallButton("Reset")) {
+			value = std::get<T>(setting.defaultValue);
+			done = true;
+		}
+		ImGui::EndDisabled();
+		ImGui::PopID();
+		return done;
+	}
+
 	// true once a change is done (let go of the slider, clicked, ...), so it gets saved then
 	static bool drawSetting(ExtensionSetting& setting) {
 		bool done = false;
@@ -98,34 +138,17 @@ namespace Extensions {
 			done = ImGui::Checkbox(setting.label.c_str(), &std::get<bool>(setting.value));
 			break;
 		case ExtensionSettingTypes::Int:
-			ImGui::InputInt(setting.label.c_str(), &std::get<int>(setting.value));
-			done = ImGui::IsItemDeactivatedAfterEdit();
+			if (setting.min && setting.max) {
+				done = sliderRow<int>(setting);
+			}
+			else {
+				ImGui::InputInt(setting.label.c_str(), &std::get<int>(setting.value));
+				done = ImGui::IsItemDeactivatedAfterEdit();
+			}
 			break;
 		case ExtensionSettingTypes::Float:
 			if (setting.min && setting.max) {
-				// Slider, and next to it the number, drag on it for small steps.
-				// No typing, the overlay never gets the keyboard, the game keeps it.
-				float& value = std::get<float>(setting.value);
-				ImGui::PushID(setting.id.c_str());
-				ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10);
-				ImGui::SliderFloat("##slider", &value, *setting.min, *setting.max, "", ImGuiSliderFlags_NoInput);
-				done |= ImGui::IsItemDeactivatedAfterEdit();
-				ImGui::SameLine();
-				ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4);
-				float step = (*setting.max - *setting.min) / 200.0f;
-				ImGui::DragFloat("##number", &value, step, *setting.min, *setting.max, "%.2f",
-					ImGuiSliderFlags_NoInput | ImGuiSliderFlags_AlwaysClamp);
-				done |= ImGui::IsItemDeactivatedAfterEdit();
-				ImGui::SameLine();
-				ImGui::TextUnformatted(setting.label.c_str());
-				ImGui::SameLine();
-				ImGui::BeginDisabled(value == std::get<float>(setting.defaultValue));
-				if (ImGui::SmallButton("Reset")) {
-					value = std::get<float>(setting.defaultValue);
-					done = true;
-				}
-				ImGui::EndDisabled();
-				ImGui::PopID();
+				done = sliderRow<float>(setting);
 			}
 			else {
 				ImGui::InputFloat(setting.label.c_str(), &std::get<float>(setting.value));
