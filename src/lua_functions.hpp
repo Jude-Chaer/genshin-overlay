@@ -34,6 +34,16 @@ namespace LuaFunctions {
         { "LuaFunctions::ListDirectory", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
         { "LuaFunctions::GetPointGuide", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::GetWebImage", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::HoyolabAccountInfo", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabLogIn", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabLogOut", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabShowMap", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabFetchMarks", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabFetchRoles", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabChangeMarks", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabRestoreBackup", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabResult", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::HoyolabBackups", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
     };
 
     struct LuaInterval
@@ -111,5 +121,17 @@ namespace LuaFunctions {
     void ClearInterval(int id);
     void UpdateIntervals();
     std::tuple<int, int> GetMousePosition();
+    bool HasPermission(const std::string& name);
+    void AskForPermission(const std::string& name);
+    sol::table HoyolabAccountInfo(sol::this_state state);
+    void HoyolabLogIn();
+    void HoyolabLogOut();
+    void HoyolabShowMap();
+    int HoyolabFetchMarks(sol::optional<bool> backup);
+    int HoyolabFetchRoles();
+    int HoyolabChangeMarks(sol::table add, sol::table remove);
+    int HoyolabRestoreBackup(const std::string& name);
+    sol::object HoyolabResult(int job, sol::this_state state);
+    sol::table HoyolabBackups(sol::this_state state);
 
 }

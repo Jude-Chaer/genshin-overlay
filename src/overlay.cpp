@@ -3,6 +3,7 @@
 #include "overlay.hpp"
 #include "keybindings.hpp"
 #include "extensions.hpp"
+#include "hoyolab_marks.hpp"
 #include "helpers.hpp"
 #include "map_tiles.hpp"
 #include "web_images.hpp"
@@ -500,7 +501,9 @@ namespace Overlay {
             Stats::Update();
 
             // map and menu closed: nothing to show, so don't draw at all
-            bool showing = Overlay::menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;
+            // a question for the user waits too
+            bool showing = Overlay::menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0
+                || HoyolabMarks::NeedsDrawing() || Extensions::permissionQuestionOpen();
             // an extension that follows the player has things to draw with the map closed too
             bool forPlayer = !showing && MiniMap::Wanted();
             if (!showing && !forPlayer) {
@@ -536,6 +539,9 @@ namespace Overlay {
             if (Overlay::menuOpen) {
                 DrawMenu();
             }
+            // on top of the menu
+            Extensions::drawPermissionQuestion();
+            HoyolabMarks::DrawConfirm();
 
             ImGui::Render();
 

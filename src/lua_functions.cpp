@@ -7,6 +7,8 @@
 #include "map_tiles.hpp"
 #include "point_guides.hpp"
 #include "web_images.hpp"
+#include "hoyolab_account.hpp"
+#include "hoyolab_marks.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include <imgui.h>
@@ -91,6 +93,18 @@ namespace LuaFunctions {
 		luaState.set_function("ClearInterval", ClearInterval);
 		luaState.set_function("GetOSTimeMS", GetOSTimeMS);
 		luaState.set_function("GetMousePosition", GetMousePosition);
+		luaState.set_function("HasPermission", HasPermission);
+		luaState.set_function("AskForPermission", AskForPermission);
+		luaState.set_function("HoYoLAB_Account", HoyolabAccountInfo);
+		luaState.set_function("HoYoLAB_LogIn", HoyolabLogIn);
+		luaState.set_function("HoYoLAB_LogOut", HoyolabLogOut);
+		luaState.set_function("HoYoLAB_ShowMap", HoyolabShowMap);
+		luaState.set_function("HoYoLAB_FetchMarks", HoyolabFetchMarks);
+		luaState.set_function("HoYoLAB_FetchCharacters", HoyolabFetchRoles);
+		luaState.set_function("HoYoLAB_ChangeMarks", HoyolabChangeMarks);
+		luaState.set_function("HoYoLAB_RestoreBackup", HoyolabRestoreBackup);
+		luaState.set_function("HoYoLAB_Result", HoyolabResult);
+		luaState.set_function("HoYoLAB_Backups", HoyolabBackups);
 		luaState["KeybindFlags"] = luaState.create_table_with(
 			"None", Keybindings::KeybindFlags_None,
 			"ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -1212,5 +1226,135 @@ namespace LuaFunctions {
 		CHECK_PERMISSIONS();
 		WebImages::Image image = WebImages::Get(url);
 		return { image.texture, image.width, image.height };
+	}
+	bool HasPermission(const std::string& name)
+	{
+		auto* ext = Extensions::currentExtension;
+		Extensions::ExtensionPermissionTypes permission = Extensions::permissionNamed(name);
+		return ext && permission != Extensions::ExtensionPermissionTypes::None && ext->extensionPermissions.count(permission) > 0;
+	}
+
+	// asks the user in a window of its own, HasPermission tells once they said yes
+	void AskForPermission(const std::string& name)
+	{
+		Extensions::askForPermission(Extensions::currentExtension, Extensions::permissionNamed(name));
+	}
+
+	// HoYoLAB: the login stays in C++, extensions get what's marked and can change it
+
+	sol::table HoyolabAccountInfo(sol::this_state state)
+	{
+		CHECK_PERMISSIONS();
+		sol::state_view lua(state);
+		return lua.create_table_with(
+			"loggedIn", HoyolabAccount::LoggedIn(),
+			"account", HoyolabAccount::Account(),
+			"windowOpen", HoyolabAccount::WindowOpen(),
+			"error", HoyolabAccount::LastError(),
+			"busy", HoyolabMarks::Busy());
+	}
+
+	void HoyolabLogIn()
+	{
+		CHECK_PERMISSIONS();
+		HoyolabAccount::LogIn();
+	}
+
+	void HoyolabLogOut()
+	{
+		CHECK_PERMISSIONS();
+		HoyolabAccount::LogOut();
+	}
+
+	void HoyolabShowMap()
+	{
+		CHECK_PERMISSIONS();
+		HoyolabAccount::ShowMap();
+	}
+
+	// point ids from a Lua list, 17.0 counts as 17
+	static std::vector<int64_t> pointIds(const sol::table& list)
+	{
+		std::vector<int64_t> ids;
+		for (size_t i = 1; i <= list.size(); i++) {
+			sol::object value = list[i];
+			if (value.get_type() != sol::type::number) continue;
+			double number = value.as<double>();
+			if (number == (double)(int64_t)number) ids.push_back((int64_t)number);
+		}
+		return ids;
+	}
+
+	// with backup true the marks are saved to a backup on the way, its name comes with the result
+	int HoyolabFetchMarks(sol::optional<bool> backup)
+	{
+		CHECK_PERMISSIONS();
+		return HoyolabMarks::Fetch(backup.value_or(false));
+	}
+
+	// the Genshin characters on the account, one per server
+	int HoyolabFetchRoles()
+	{
+		CHECK_PERMISSIONS();
+		return HoyolabMarks::Roles();
+	}
+
+	// marks the points in add and unmarks the ones in remove, unmarking asks the user first
+	int HoyolabChangeMarks(sol::table add, sol::table remove)
+	{
+		CHECK_PERMISSIONS();
+		return HoyolabMarks::Change(pointIds(add), pointIds(remove));
+	}
+
+	int HoyolabRestoreBackup(const std::string& name)
+	{
+		CHECK_PERMISSIONS();
+		return HoyolabMarks::Restore(name);
+	}
+
+	static sol::table idList(sol::state_view& lua, const std::vector<int64_t>& ids)
+	{
+		sol::table list = lua.create_table((int)ids.size(), 0);
+		for (size_t i = 0; i < ids.size(); i++) list[i + 1] = ids[i];
+		return list;
+	}
+
+	// nil while it runs, then { ok, error, captcha, marks, added, removed, kept, unknown, backup, characters } once
+	sol::object HoyolabResult(int job, sol::this_state state)
+	{
+		CHECK_PERMISSIONS();
+		HoyolabMarks::Result result;
+		if (!HoyolabMarks::GetResult(job, result)) return sol::lua_nil;
+		sol::state_view lua(state);
+		sol::table table = lua.create_table();
+		table["ok"] = result.ok;
+		table["error"] = result.error;
+		table["captcha"] = result.captcha;
+		table["marks"] = idList(lua, result.marks);
+		table["added"] = result.added;
+		table["removed"] = result.removed;
+		table["kept"] = idList(lua, result.kept);
+		table["unknown"] = idList(lua, result.unknown);
+		table["backup"] = result.backup;
+		sol::table roles = lua.create_table();
+		for (size_t i = 0; i < result.roles.size(); i++) {
+			const HoyolabMarks::Role& role = result.roles[i];
+			roles[i + 1] = lua.create_table_with("uid", role.uid, "nickname", role.nickname, "server", role.server, "level", role.level);
+		}
+		table["characters"] = roles;
+		return table;
+	}
+
+	// { name, count }, newest first
+	sol::table HoyolabBackups(sol::this_state state)
+	{
+		CHECK_PERMISSIONS();
+		sol::state_view lua(state);
+		sol::table list = lua.create_table();
+		std::vector<HoyolabMarks::Backup> backups = HoyolabMarks::Backups();
+		for (size_t i = 0; i < backups.size(); i++) {
+			list[i + 1] = lua.create_table_with("name", backups[i].name, "count", backups[i].count);
+		}
+		return list;
 	}
 }

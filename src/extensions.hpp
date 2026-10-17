@@ -28,7 +28,8 @@ namespace Extensions {
 		NetworkAccess,
 		DisplayOverlay,
 		DisplayRead,
-		Keybinds
+		Keybinds,
+		HoyolabAccount
 	};
 
 	inline const std::unordered_map<ExtensionPermissionTypes, std::string> allPermissions = {
@@ -40,7 +41,8 @@ namespace Extensions {
 		{ExtensionPermissionTypes::NetworkAccess, "Network Access"},
 		{ExtensionPermissionTypes::DisplayOverlay, "Display Overlay"},
 		{ExtensionPermissionTypes::DisplayRead, "Display Read"},
-		{ExtensionPermissionTypes::Keybinds, "Keybinds" }
+		{ExtensionPermissionTypes::Keybinds, "Keybinds" },
+		{ExtensionPermissionTypes::HoyolabAccount, "HoYoLAB account" }
 	};
 
 	inline const std::unordered_set<ExtensionPermissionTypes> defaultPermissions = {
@@ -103,4 +105,11 @@ namespace Extensions {
 	extern void runForExtension(Extension* ext, const std::function<void()>& function);
 	extern void drawExtensionPermissionMenu();
 	extern void loadExtensionPermissions(Extension* ext);
+	// the permission by the name the menu shows, None when there's no such one
+	extern ExtensionPermissionTypes permissionNamed(const std::string& name);
+	// An extension asking for a permission it doesn't have. The user answers in
+	// a window drawn by drawPermissionQuestion, the extension can't.
+	extern void askForPermission(Extension* ext, ExtensionPermissionTypes permission);
+	extern void drawPermissionQuestion();
+	extern bool permissionQuestionOpen();
 }

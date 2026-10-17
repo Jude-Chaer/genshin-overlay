@@ -18,6 +18,7 @@
 #include "map_tiles.hpp"
 #include "point_guides.hpp"
 #include "hoyolab_account.hpp"
+#include "hoyolab_marks.hpp"
 #include "web_images.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
@@ -207,6 +208,7 @@ int main(int argc, char** argv) {
     WebImages::Init();
     PointGuides::Init();
     HoyolabAccount::Init();
+    HoyolabMarks::Init();
     MapCheck::Start(Helpers::exeDirectory() / "map_data");
     MiniMap::Start(Helpers::exeDirectory() / "map_data");
     Extensions::initExtensions();
@@ -216,6 +218,7 @@ int main(int argc, char** argv) {
     MiniMap::Stop();
     MapTracking::Stop();
     MapCheck::Stop();
+    HoyolabMarks::Shutdown();
     HoyolabAccount::Shutdown();
     PointGuides::Shutdown();
     WebImages::Shutdown();

@@ -2,6 +2,7 @@
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "lua_functions.hpp"
+#include "overlay.hpp"
 #include "settings.hpp"
 #include <imgui.h>
 #include <iostream>
@@ -428,5 +429,52 @@ namespace Extensions {
 	}
 	void loadExtensionPermissions(Extension* ext) {
 		ext->extensionPermissions = Settings::LoadExtensionPermissions(ext->extensionHash);
+	}
+
+	ExtensionPermissionTypes permissionNamed(const std::string& name) {
+		for (const auto& [permission, permissionName] : allPermissions) {
+			if (permissionName == name) return permission;
+		}
+		return ExtensionPermissionTypes::None;
+	}
+
+	static Extension* asking = nullptr;
+	static ExtensionPermissionTypes askedFor = ExtensionPermissionTypes::None;
+
+	void askForPermission(Extension* ext, ExtensionPermissionTypes permission) {
+		if (!ext || permission == ExtensionPermissionTypes::None || asking) return;
+		if (ext->extensionPermissions.count(permission)) return;
+		asking = ext;
+		askedFor = permission;
+	}
+
+	bool permissionQuestionOpen() {
+		return asking != nullptr;
+	}
+
+	void drawPermissionQuestion() {
+		if (!asking) return;
+		ImGuiIO& io = ImGui::GetIO();
+		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.4f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowFocus();
+		ImGui::Begin("Permission##extensionAsks", nullptr,
+			ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove);
+		ImGui::Text("%s (%s) asks for: %s", asking->name.c_str(), asking->author.c_str(), allPermissions.at(askedFor).c_str());
+		if (askedFor == ExtensionPermissionTypes::HoyolabAccount) {
+			ImGui::TextDisabled("It could read and change what's marked on your HoYoLAB map. It never sees your login.");
+		}
+		ImGui::TextDisabled("You can take it back in Settings.");
+		bool answered = false;
+		if (ImGui::Button("Allow")) {
+			asking->extensionPermissions.insert(askedFor);
+			Settings::SaveExtensionPermissions(asking->extensionHash, asking->extensionPermissions);
+			answered = true;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Don't allow")) answered = true;
+		ImVec2 position = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+		Overlay::ClaimMouse(position.x, position.y, position.x + size.x, position.y + size.y);
+		ImGui::End();
+		if (answered) asking = nullptr;
 	}
 }
