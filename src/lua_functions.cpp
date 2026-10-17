@@ -45,6 +45,10 @@ namespace LuaFunctions {
 		luaState.set_function("ImGUI_SameLine", ImGUI_SameLine);
 		luaState.set_function("ImGUI_Tooltip", ImGUI_Tooltip);
 		luaState.set_function("ImGUI_Separator", ImGUI_Separator);
+		luaState.set_function("ImGUI_TextDisabled", ImGUI_TextDisabled);
+		luaState.set_function("ImGUI_CollapsingHeader", ImGUI_CollapsingHeader);
+		luaState.set_function("ImGUI_IconToggle", ImGUI_IconToggle);
+		luaState.set_function("ImGUI_Chip", ImGUI_Chip);
 		luaState.set_function("IsProgramHidden", IsProgramHidden);
 		luaState.set_function("RegisterKeybind", RegisterKeybind);
 		luaState.set_function("DeleteKeybind", DeleteKeybind);
@@ -183,6 +187,114 @@ namespace LuaFunctions {
 	void ImGUI_Separator()
 	{
 		ImGui::Separator();
+	}
+
+	void ImGUI_TextDisabled(const std::string& str)
+	{
+		ImGui::TextDisabled("%s", str.c_str());
+	}
+
+	// open tells if it starts open, after that the user decides. True while it's open.
+	bool ImGUI_CollapsingHeader(const std::string& label, sol::optional<bool> open)
+	{
+		ImGui::SetNextItemOpen(open.value_or(false), ImGuiCond_Once);
+		return ImGui::CollapsingHeader(label.c_str());
+	}
+
+	// Game colors for the tiles and chips below
+	static const ImU32 TILE_OFF = IM_COL32(43, 48, 62, 255);
+	static const ImU32 TILE_HOVER = IM_COL32(56, 62, 79, 255);
+	static const ImU32 TILE_ON = IM_COL32(74, 68, 54, 255);
+	static const ImU32 GOLD = IM_COL32(211, 188, 142, 255);
+	static const ImU32 CREAM = IM_COL32(236, 229, 216, 255);
+	static const ImU32 NAVY = IM_COL32(59, 66, 85, 255);
+	static const ImU32 GREY = IM_COL32(150, 150, 150, 255);
+
+	// Tiles and chips sit side by side and go to the next row when there's no room left.
+	// One right after another counts as the same row, anything else in between starts a new one.
+	static ImGuiID lastFlowItem = 0;
+
+	static void flowPlace(float width)
+	{
+		if (lastFlowItem == 0 || ImGui::GetItemID() != lastFlowItem) return;
+
+		// still at the start of the next line here, so this is the right edge
+		float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+		ImGui::SameLine();
+		if (ImGui::GetCursorScreenPos().x + width > right)
+			ImGui::NewLine();
+	}
+
+	// One type to pick: its icon in a badge, the name and how many there are. Lit up
+	// while it's on. Gives back the new value.
+	bool ImGUI_IconToggle(const std::string& id, GLuint texture, const std::string& name, int count, bool on)
+	{
+		const float width = 172.0f, height = 34.0f;
+		flowPlace(width);
+
+		ImVec2 p0 = ImGui::GetCursorScreenPos();
+		ImVec2 p1(p0.x + width, p0.y + height);
+		ImGui::PushID(id.c_str());
+		bool clicked = ImGui::InvisibleButton("##tile", ImVec2(width, height));
+		ImGui::PopID();
+		bool hovered = ImGui::IsItemHovered();
+		lastFlowItem = ImGui::GetItemID();
+		if (clicked) on = !on;
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(p0, p1, on ? TILE_ON : hovered ? TILE_HOVER : TILE_OFF, 6.0f);
+		if (on) draw->AddRect(p0, p1, GOLD, 6.0f, 0, 1.5f);
+
+		// the same badge as on the map
+		ImVec2 badge(p0.x + height / 2, p0.y + height / 2);
+		draw->AddCircleFilled(badge, 13.0f, on ? CREAM : GREY);
+		draw->AddCircleFilled(badge, 11.0f, NAVY);
+		if (texture != 0)
+			draw->AddImage((ImTextureID)(intptr_t)texture, ImVec2(badge.x - 8, badge.y - 8), ImVec2(badge.x + 8, badge.y + 8));
+
+		std::string countText = std::to_string(count);
+		ImVec2 countSize = ImGui::CalcTextSize(countText.c_str());
+		float textY = p0.y + (height - countSize.y) / 2;
+		float countX = p1.x - 8 - countSize.x;
+		draw->AddText(ImVec2(countX, textY), on ? GOLD : GREY, countText.c_str());
+
+		// long names are cut, the whole name shows on hover
+		float nameX = p0.x + height + 2;
+		ImVec2 nameSize = ImGui::CalcTextSize(name.c_str());
+		bool cut = nameX + nameSize.x > countX - 6;
+		draw->PushClipRect(ImVec2(nameX, p0.y), ImVec2(countX - 6, p1.y), true);
+		draw->AddText(ImVec2(nameX, textY), on ? CREAM : IM_COL32(200, 200, 200, 255), name.c_str());
+		draw->PopClipRect();
+
+		if (hovered && cut)
+			ImGui::SetTooltip("%s", name.c_str());
+
+		return on;
+	}
+
+	// A round-ended chip that turns on and off, for things like regions. Gives back the new value.
+	// Like other ImGui labels, anything after ## isn't shown, it only keeps chips apart.
+	bool ImGUI_Chip(const std::string& label, bool on)
+	{
+		std::string text = label.substr(0, label.find("##"));
+		ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
+		float width = textSize.x + 24.0f, height = textSize.y + 10.0f;
+		flowPlace(width);
+
+		ImVec2 p0 = ImGui::GetCursorScreenPos();
+		ImVec2 p1(p0.x + width, p0.y + height);
+		ImGui::PushID(label.c_str());
+		bool clicked = ImGui::InvisibleButton("##chip", ImVec2(width, height));
+		ImGui::PopID();
+		bool hovered = ImGui::IsItemHovered();
+		lastFlowItem = ImGui::GetItemID();
+		if (clicked) on = !on;
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(p0, p1, on ? GOLD : hovered ? TILE_HOVER : TILE_OFF, height / 2);
+		draw->AddText(ImVec2(p0.x + 12, p0.y + 5), on ? NAVY : CREAM, text.c_str());
+
+		return on;
 	}
 
 	// hidden means the menu is closed
