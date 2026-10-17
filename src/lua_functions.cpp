@@ -367,13 +367,14 @@ namespace LuaFunctions {
 		case MiniMap::State::Near: return "near";
 		case MiniMap::State::Searching: return "searching";
 		case MiniMap::State::Nowhere: return "nowhere";
+		case MiniMap::State::Domain: return "domain";
 		default: return "none";
 		}
 	}
 
 	// Where the player is on the map, read from the minimap. Always a table:
 	// found says if the spot is where the player is right now. If not, state
-	// says why ("none", "near", "searching", "nowhere", see MiniMap::State),
+	// says why ("none", "near", "searching", "nowhere", "domain", see MiniMap::State),
 	// the spot is where they were last seen and age how many seconds ago
 	// that was. mapId is 0 until they were seen once. The minimap is only
 	// watched while this gets called, so the first calls aren't found.

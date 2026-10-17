@@ -77,7 +77,9 @@ function Update()
         elseif player.state == "searching" then
             text = "searching the map"
         elseif player.state == "nowhere" then
-            text = "not on the map, in a domain?"
+            text = "not on the map"
+        elseif player.state == "domain" then
+            text = "in a domain"
         end
         if not player.found and player.mapId ~= 0 then
             text = text .. string.format("   (last seen %.0f s ago)", player.age)

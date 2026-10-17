@@ -7,6 +7,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include "minimap.hpp"
+#include "minimap_corner.hpp"
+#include "minimap_door.hpp"
 #include "test_map.hpp"
 
 using Catch::Approx;
@@ -386,6 +388,29 @@ TEST_CASE("a minimap that wasn't found isn't asked about again until it changes"
     // it moved
     CHECK_FALSE(watcher.Look(miniElsewhere(260.0, 200.0), 0.3).found);
     CHECK(asked > once);
+}
+
+TEST_CASE("in a domain nothing is searched, and out of it the player is at its door", "[minimap]") {
+    loadData();
+    int asked = 0;
+    MiniMap::Watcher watcher([&asked](const cv::Mat&) { ++asked; return MapLocator::Result(); });
+    REQUIRE(watcher.Look(miniAt(900.0, 700.0), 0.0).found);
+    asked = 0;
+
+    // the door out where Paimon was, over a minimap with no map
+    cv::Mat door(MiniMap::CORNER_HEIGHT, MiniMap::CORNER_WIDTH, CV_8U, (void*)MiniMap::DOOR_PIXELS);
+    for (double seconds = 1.0; seconds < 60.0; seconds += 0.5) {
+        cv::Mat mini = miniElsewhere(200.0 + seconds, 200.0);
+        door.copyTo(mini(cv::Rect(0, 0, MiniMap::CORNER_WIDTH, MiniMap::CORNER_HEIGHT)));
+        MiniMap::Spot spot = watcher.Look(mini, seconds);
+        CHECK(spot.state == MiniMap::State::Domain);
+        CHECK(spot.lng == Approx(900.0).margin(1.5));
+    }
+    CHECK(asked == 0);
+    CHECK_FALSE(watcher.Searching());
+
+    MiniMap::Spot spot = watcher.Look(miniAt(900.0, 700.0), 60.0);
+    CHECK(spot.found);
 }
 
 TEST_CASE("with a thread of its own the search doesn't hold up the looks", "[minimap]") {

@@ -18,6 +18,7 @@
 #include "map_data.hpp"
 #include "map_tracking.hpp"
 #include "minimap_corner.hpp"
+#include "minimap_door.hpp"
 
 namespace MiniMap {
     // Where the minimap is in a 1080 high game: the square around its circle.
@@ -44,7 +45,7 @@ namespace MiniMap {
     static constexpr double ZOOM_STAYS = 3.0;
     // The map matching is asked again only once the minimap changed this many
     // gray levels on average since it last found nothing, around the arrow.
-    // In a domain or standing still it's the same picture and the same no.
+    // Standing still where it isn't on the map it's the same picture and the same no.
     // The ones it found after a no had changed by 13 and more.
     static constexpr double CHANGED = 4.0;
     // the N at the top of the minimap is there when that spot looks this much like one
@@ -68,7 +69,9 @@ namespace MiniMap {
     static constexpr size_t TILES_KEPT = 40;
     // spots tried from the whole map search, best first
     static constexpr int TRIES = 8;
-    // how well Paimon's corner has to fit: 0.93 and up on minimaps, 0.43 at most on anything else
+    // How well Paimon's corner has to fit: 0.93 and up on minimaps, 0.43 at
+    // most on anything else. The door out of a domain fits 0.95 and up in
+    // domains, 0.52 at most anywhere else.
     static constexpr double CORNER = 0.7;
     // a whole map is searched shrunk by this
     static constexpr int SMALL = MapData::SMALL_BY;
@@ -102,8 +105,8 @@ namespace MiniMap {
     // GetPlayer wasn't called for this long: nobody needs it, stop looking
     static constexpr double ASKED_FOR = 2.0;
     // Seconds between two whole map searches while the minimap isn't found.
-    // Doubles every time up to SEARCH_LAST: in a domain it fits nowhere for
-    // minutes, and every one of them is seconds of a cpu core.
+    // Doubles every time up to SEARCH_LAST: where HoYoLAB has no map it fits
+    // nowhere for minutes, and every one of them is seconds of a cpu core.
     static constexpr double SEARCH_FIRST = 1.0, SEARCH_LAST = 30.0;
     // Lost with the minimap on screen all the time, the player is taken to
     // be near the last spot for this long. Then the whole map gets searched.
@@ -421,6 +424,16 @@ namespace MiniMap {
         return letter;
     }
 
+    // the icon in the top left corner of the minimap's square, with a pixel of slack each way
+    static bool inCorner(const cv::Mat& mini, const cv::Mat& icon) {
+        cv::Mat around, result;
+        cv::copyMakeBorder(mini(cv::Rect(0, 0, CORNER_WIDTH + 1, CORNER_HEIGHT + 1)), around, 1, 0, 1, 0, cv::BORDER_REPLICATE);
+        cv::matchTemplate(around, icon, result, cv::TM_CCOEFF_NORMED);
+        double best = 0.0;
+        cv::minMaxLoc(result, nullptr, &best);
+        return best >= CORNER;
+    }
+
     // Is there a minimap in this picture at all? Anything else that's ever
     // in that corner has no N at the top and no Paimon next to it. One of
     // the two is enough, a marker can sit on the N.
@@ -431,13 +444,16 @@ namespace MiniMap {
         cv::minMaxLoc(result, nullptr, &best);
         if (best >= NORTH) return true;
 
-        // a pixel of slack each way
         static const cv::Mat paimon(CORNER_HEIGHT, CORNER_WIDTH, CV_8U, (void*)CORNER_PIXELS);
-        cv::Mat around;
-        cv::copyMakeBorder(mini(cv::Rect(0, 0, CORNER_WIDTH + 1, CORNER_HEIGHT + 1)), around, 1, 0, 1, 0, cv::BORDER_REPLICATE);
-        cv::matchTemplate(around, paimon, result, cv::TM_CCOEFF_NORMED);
-        cv::minMaxLoc(result, nullptr, &best);
-        return best >= CORNER;
+        return inCorner(mini, paimon);
+    }
+
+    // In a domain the door out of it is where Paimon was. The minimap there
+    // shows no map, only the arrow and its cone over the game or a dark
+    // circle, and the cone alone can fit some floor.
+    static bool inDomain(const cv::Mat& mini) {
+        static const cv::Mat door(CORNER_HEIGHT, CORNER_WIDTH, CV_8U, (void*)DOOR_PIXELS);
+        return inCorner(mini, door);
     }
 
     RECT rect(const RECT& game) {
@@ -1222,6 +1238,7 @@ namespace MiniMap {
             search.everywhere = seconds >= m_nearUntil;
             break;
         case State::Found:
+        case State::Domain:
             break;
         }
         return search;
@@ -1239,6 +1256,13 @@ namespace MiniMap {
             m_there = false;
             drop();
             return unfound(State::None, seconds);
+        }
+        // Nothing to search for. Out of it the minimap comes up like after
+        // a menu, and the last spot is the door.
+        if (inDomain(mini)) {
+            m_there = false;
+            drop();
+            return unfound(State::Domain, seconds);
         }
         // nothing moved, not even the arrow
         if (m_last.found && same(mini, m_lastMini)) {

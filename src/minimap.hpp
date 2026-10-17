@@ -50,10 +50,13 @@ namespace MiniMap {
         // tried at every look and the whole map is being searched. Nowhere
         // once that search comes back with nothing.
         Searching,
-        // The whole map was searched and the minimap fits nowhere: a domain,
-        // or a place HoYoLAB has no map of. Still looked for like in
-        // Searching, the whole map less and less often.
+        // The whole map was searched and the minimap fits nowhere: a place
+        // HoYoLAB has no map of. Still looked for like in Searching, the
+        // whole map less and less often.
         Nowhere,
+        // In a domain, the door out of it is where Paimon was. Nothing is
+        // searched until it's gone.
+        Domain,
     };
 
     struct Spot {

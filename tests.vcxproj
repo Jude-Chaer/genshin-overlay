@@ -125,6 +125,7 @@
     <ClInclude Include="src\map_tracking.hpp" />
     <ClInclude Include="src\minimap.hpp" />
     <ClInclude Include="src\minimap_corner.hpp" />
+    <ClInclude Include="src\minimap_door.hpp" />
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\settings.hpp" />
