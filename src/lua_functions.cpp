@@ -493,8 +493,13 @@ namespace LuaFunctions {
 		case sol::type::boolean:
 			return obj.as<bool>();
 
-		case sol::type::number:
-			return obj.as<double>();
+		case sol::type::number: {
+			// whole numbers stay whole, ids came out as 17.0 otherwise
+			double value = obj.as<double>();
+			if (value == std::floor(value) && std::abs(value) < 9007199254740992.0)
+				return static_cast<int64_t>(value);
+			return value;
+		}
 
 		case sol::type::string:
 			return obj.as<std::string>();
