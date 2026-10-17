@@ -106,6 +106,33 @@ local function keys(set)
     return list
 end
 
+local function setOf(list)
+    local set = {}
+    for _, id in ipairs(ids(list)) do set[id] = true end
+    return set
+end
+
+-- Sync is kept per side, so more places can join later with the same rule.
+-- base is what both had after the last sync, nil until the first one.
+local SYNC_FILE = "sync.json"
+local sync = { hoyolab = { on = false, last = 0 } }
+
+local function saveSync()
+    local h = sync.hoyolab
+    WriteFile(SYNC_FILE, JSON_Encode({
+        hoyolab = { on = h.on, base = h.base and keys(h.base), last = h.last },
+    }))
+end
+
+local function loadSync()
+    local saved = FileExists(SYNC_FILE) and JSON_Decode(ReadFile(SYNC_FILE))
+    local h = saved and saved.hoyolab
+    if type(h) ~= "table" then return end
+    sync.hoyolab.on = h.on == true
+    sync.hoyolab.base = h.on == true and h.base and setOf(h.base) or nil
+    sync.hoyolab.last = tonumber(h.last) or 0
+end
+
 local function updateBar()
     barTypes = {}
     for _, group in ipairs(groups) do
@@ -208,6 +235,7 @@ function Init()
     if FileExists(DONE_FILE) then
         for _, id in ipairs(ids(JSON_Decode(ReadFile(DONE_FILE)))) do done[id] = true end
     end
+    loadSync()
 end
 
 -- the region a spot on a map is in. The boxes overlap at the edges, the smallest one wins.
@@ -351,8 +379,16 @@ local function drawBar(view)
     end
 end
 
-local function saveDone()
+local function writeDone()
     WriteFile(DONE_FILE, JSON_Encode(keys(done)))
+end
+
+-- when the last change by hand was, sync sends them a few seconds later together
+local changedAt
+
+local function saveDone()
+    writeDone()
+    changedAt = GetOSTimeMS()
 end
 
 local LIGHT = 0xECE5D8FF
@@ -748,6 +784,355 @@ local function drawOnMinimap(player)
     end
 end
 
+-- Sync with files and HoYoLAB. The login and anything that unmarks on
+-- HoYoLAB stays in the overlay: it asks first and backs the marks up.
+
+local HOYOLAB = "HoYoLAB account"
+-- taps are sent together once nothing changed for this long
+local SEND_AFTER = 3000
+
+-- the HoYoLAB job running and the file dialog open, with what to do after
+local hoyoJob, fileJob
+-- what the sync page asks before changing anything: { lines, actions = { { label, fn } } }
+local question
+-- the last thing that happened: { text, error, captcha }
+local status
+local syncedThisRun = false
+local lastAccountCheck = 0
+local backupList
+-- the account's Genshin characters, one per server: { account, list, error }
+local characters, charactersJob
+
+-- what's in a and not in b, as a list
+local function minus(a, b)
+    local list = {}
+    for id in pairs(a) do
+        if not b[id] then list[#list + 1] = id end
+    end
+    return list
+end
+
+local function copy(set)
+    local out = {}
+    for id in pairs(set) do out[id] = true end
+    return out
+end
+
+local function plural(n, one, many)
+    return n .. " " .. (n == 1 and one or many)
+end
+
+local function startHoyo(id, after)
+    hoyoJob = { id = id, after = after }
+end
+
+-- what to say about the points HoYoLAB couldn't take and the unmarks said no to
+local function notes(r)
+    local text = ""
+    if #r.kept > 0 then text = text .. ", kept " .. #r.kept .. " marked" end
+    if #r.unknown > 0 then text = text .. ", skipped " .. #r.unknown .. " not in the item files" end
+    return text
+end
+
+-- Sets collected to what sync decided and makes HoYoLAB the same. base
+-- ends up as what both have, unmarks said no to stay collected on both.
+local function settle(final, remote)
+    local h = sync.hoyolab
+    done = copy(final)
+    writeDone()
+    local add, remove = minus(final, remote), minus(remote, final)
+    local function finish(r)
+        local base = copy(final)
+        for _, id in ipairs(r and r.kept or {}) do
+            base[id], done[id] = true, true
+        end
+        -- not sent, so HoYoLAB still has what it had
+        for _, id in ipairs(r and r.unknown or {}) do base[id] = remote[id] end
+        if r and #r.kept > 0 then writeDone() end
+        h.base, h.last = base, GetOSTimeMS()
+        saveSync()
+        local sent = r and (", marked " .. r.added .. " and unmarked " .. r.removed .. " on HoYoLAB" .. notes(r)) or ""
+        status = { text = "In sync, " .. #keys(done) .. " collected" .. sent }
+    end
+    if #add == 0 and #remove == 0 then
+        finish(nil)
+    else
+        startHoyo(HoYoLAB_ChangeMarks(add, remove), finish)
+    end
+end
+
+-- Per point: when both sides agree that's it, otherwise the side that
+-- changed since the last sync wins. The first sync only adds, both ways.
+local function fullSync()
+    local h = sync.hoyolab
+    syncedThisRun = true
+    status = { text = "Syncing with HoYoLAB..." }
+    startHoyo(HoYoLAB_FetchMarks(), function(r)
+        local remote = setOf(r.marks)
+        if not h.base then
+            local toSend, toGet = minus(done, remote), minus(remote, done)
+            status = nil
+            question = {
+                lines = {
+                    "First sync, nothing gets unmarked anywhere.",
+                    plural(#toSend, "collected one here goes", "collected ones here go") .. " to HoYoLAB.",
+                    plural(#toGet, "mark on HoYoLAB comes", "marks on HoYoLAB come") .. " here.",
+                },
+                actions = {
+                    { "Start syncing", function()
+                        local union = copy(done)
+                        for id in pairs(remote) do union[id] = true end
+                        settle(union, remote)
+                    end },
+                    { "Cancel", function()
+                        h.on = false
+                        saveSync()
+                    end },
+                },
+            }
+            return
+        end
+        local final = {}
+        local function decide(id)
+            local here, there, before = done[id] == true, remote[id] == true, h.base[id] == true
+            if here == there then
+                final[id] = here or nil
+            elseif here ~= before then
+                final[id] = here or nil
+            else
+                final[id] = there or nil
+            end
+        end
+        for id in pairs(done) do decide(id) end
+        for id in pairs(remote) do decide(id) end
+        for id in pairs(h.base) do decide(id) end
+        settle(final, remote)
+    end)
+end
+
+-- sends what changed here since the last sync
+local function sendChanges()
+    local h = sync.hoyolab
+    changedAt = nil
+    local add, remove = minus(done, h.base), minus(h.base, done)
+    if #add == 0 and #remove == 0 then return end
+    startHoyo(HoYoLAB_ChangeMarks(add, remove), function(r)
+        local skipped = setOf(r.unknown)
+        for _, id in ipairs(add) do
+            if not skipped[id] then h.base[id] = true end
+        end
+        for _, id in ipairs(remove) do h.base[id] = nil end
+        for _, id in ipairs(r.kept) do
+            h.base[id], done[id] = true, true
+        end
+        if #r.kept > 0 then writeDone() end
+        h.last = GetOSTimeMS()
+        saveSync()
+        status = { text = "Sent to HoYoLAB: marked " .. r.added .. ", unmarked " .. r.removed .. notes(r) }
+    end)
+end
+
+-- Get and Send back up both sides before showing anything: the overlay
+-- saves HoYoLAB's marks, this saves collected under the same name.
+local function backUpCollected(r)
+    local file = "collected_" .. r.backup .. ".json"
+    local ok, wrote = pcall(WriteFile, file, JSON_Encode(keys(done)))
+    if not ok or not wrote then
+        status = { text = "Couldn't back up collected to " .. file .. ", nothing was changed.", error = true }
+        return nil
+    end
+    return "Backed up both: hoyolab-backups\\" .. r.backup .. ".json and " .. file .. " in the Markers folder."
+end
+
+-- one way, with sync off: HoYoLAB's marks into collected
+local function getFromHoyolab()
+    status = { text = "Getting your HoYoLAB marks..." }
+    startHoyo(HoYoLAB_FetchMarks(true), function(r)
+        local saved = backUpCollected(r)
+        if not saved then return end
+        local remote = setOf(r.marks)
+        local new, extra = minus(remote, done), minus(done, remote)
+        status = { text = saved }
+        local actions = {}
+        if #new > 0 then
+            actions[#actions + 1] = { "Add the " .. #new, function()
+                for _, id in ipairs(new) do done[id] = true end
+                saveDone()
+                status = { text = "Added " .. #new .. " from HoYoLAB" }
+            end }
+        end
+        if #extra > 0 then
+            actions[#actions + 1] = { "Make it exactly HoYoLAB's", function()
+                for _, id in ipairs(new) do done[id] = true end
+                for _, id in ipairs(extra) do done[id] = nil end
+                saveDone()
+                status = { text = "Collected is now the same as HoYoLAB" }
+            end }
+        end
+        actions[#actions + 1] = { "Cancel", function() end }
+        question = {
+            lines = {
+                "HoYoLAB has " .. plural(#r.marks, "mark", "marks") .. ".",
+                plural(#new, "isn't", "aren't") .. " collected here.",
+                plural(#extra, "collected one here isn't", "collected ones here aren't") .. " marked there.",
+            },
+            actions = actions,
+        }
+    end)
+end
+
+-- one way, with sync off: collected onto HoYoLAB. Unmarking there asks again first.
+local function sendToHoyolab()
+    status = { text = "Getting your HoYoLAB marks to compare..." }
+    startHoyo(HoYoLAB_FetchMarks(true), function(r)
+        local saved = backUpCollected(r)
+        if not saved then return end
+        local remote = setOf(r.marks)
+        local new, extra = minus(done, remote), minus(remote, done)
+        status = { text = saved }
+        local function sent(result)
+            status = { text = "Marked " .. result.added .. " and unmarked " .. result.removed .. " on HoYoLAB" .. notes(result) }
+        end
+        local actions = {}
+        if #new > 0 then
+            actions[#actions + 1] = { "Mark the " .. #new .. " on HoYoLAB", function()
+                startHoyo(HoYoLAB_ChangeMarks(new, {}), sent)
+            end }
+        end
+        if #extra > 0 then
+            actions[#actions + 1] = { "Make HoYoLAB exactly this", function()
+                startHoyo(HoYoLAB_ChangeMarks(new, extra), sent)
+            end }
+        end
+        actions[#actions + 1] = { "Cancel", function() end }
+        question = {
+            lines = {
+                plural(#new, "collected one here isn't", "collected ones here aren't") .. " marked on HoYoLAB.",
+                plural(#extra, "mark on HoYoLAB isn't", "marks on HoYoLAB aren't") .. " collected here.",
+            },
+            actions = actions,
+        }
+    end)
+end
+
+local function exportFile()
+    local id = SaveFileDialog("markers-collected.json", JSON_Encode(keys(done)))
+    if not id then return end
+    fileJob = { id = id, after = function(r)
+        status = r.ok and { text = "Saved " .. plural(#keys(done), "collected one", "collected ones") .. " to " .. r.name }
+            or { text = "Couldn't save " .. r.name, error = true }
+    end }
+end
+
+-- a list of ids like the export, or one of the overlay's HoYoLAB backups
+local function idsInFile(data)
+    local decoded = JSON_Decode(data)
+    if type(decoded) ~= "table" then return nil end
+    if type(decoded.marks) == "table" then
+        local set = {}
+        for _, list in pairs(decoded.marks) do
+            for _, id in ipairs(ids(list)) do set[id] = true end
+        end
+        return set
+    end
+    return setOf(decoded)
+end
+
+local function importFile()
+    local id = OpenFileDialog()
+    if not id then return end
+    fileJob = { id = id, after = function(r)
+        local file = r.ok and idsInFile(r.data)
+        if not file then
+            status = { text = "Couldn't read " .. r.name .. " as a list of collected ones", error = true }
+            return
+        end
+        local new, extra = minus(file, done), minus(done, file)
+        local actions = {}
+        if #new > 0 then
+            actions[#actions + 1] = { "Add the " .. #new, function()
+                for _, point in ipairs(new) do done[point] = true end
+                saveDone()
+                status = { text = "Added " .. #new .. " from " .. r.name }
+            end }
+        end
+        if #extra > 0 then
+            actions[#actions + 1] = { "Make it exactly the file", function()
+                for _, point in ipairs(new) do done[point] = true end
+                for _, point in ipairs(extra) do done[point] = nil end
+                saveDone()
+                status = { text = "Collected is now the same as " .. r.name }
+            end }
+        end
+        actions[#actions + 1] = { "Cancel", function() end }
+        local lines = {
+            r.name .. " has " .. plural(#keys(file), "collected one", "collected ones") .. ".",
+            plural(#new, "isn't", "aren't") .. " collected here.",
+            plural(#extra, "collected one here isn't", "collected ones here aren't") .. " in the file.",
+        }
+        if sync.hoyolab.on then lines[#lines + 1] = "Sync is on, so this goes to HoYoLAB too." end
+        question = { lines = lines, actions = actions }
+    end }
+end
+
+local function putBack(name)
+    status = { text = "Putting back " .. name .. "..." }
+    startHoyo(HoYoLAB_RestoreBackup(name), function(r)
+        status = { text = "Put back " .. plural(r.added, "mark", "marks") .. " on HoYoLAB" .. notes(r) }
+        -- sync brings them here too, they're new on HoYoLAB's side
+        if sync.hoyolab.on and sync.hoyolab.base then fullSync() end
+    end)
+end
+
+-- picks up finished jobs, syncs on start and sends taps
+local function syncTick()
+    if fileJob then
+        local r = FileDialogResult(fileJob.id)
+        if r then
+            local job = fileJob
+            fileJob = nil
+            if r.picked then job.after(r) end
+        end
+    end
+
+    if not HasPermission(HOYOLAB) then return end
+    if charactersJob then
+        local r = HoYoLAB_Result(charactersJob.id)
+        if r then
+            characters = { account = charactersJob.account, list = r.characters, error = not r.ok and r.error or nil }
+            charactersJob = nil
+        end
+    end
+    if hoyoJob then
+        local r = HoYoLAB_Result(hoyoJob.id)
+        if not r then return end
+        local job = hoyoJob
+        hoyoJob, backupList = nil, nil
+        if r.ok then
+            job.after(r)
+        else
+            status = { text = "HoYoLAB: " .. r.error, error = true, captcha = r.captcha }
+        end
+        return
+    end
+
+    local h = sync.hoyolab
+    if not h.on then return end
+    local now = GetOSTimeMS()
+    -- logged in or out happens in another window, no need to ask every frame
+    if now - lastAccountCheck < 1000 then return end
+    lastAccountCheck = now
+    if not HoYoLAB_Account().loggedIn then
+        syncedThisRun = false
+        return
+    end
+    if not syncedThisRun then
+        fullSync()
+    elseif h.base and changedAt and now - changedAt >= SEND_AFTER and not question then
+        sendChanges()
+    end
+end
+
 -- how often to look for the item files while they're missing
 local RETRY_FRAMES = 120
 local framesWithout = 0
@@ -762,6 +1147,8 @@ function Update()
             loadItemFiles()
         end
     end
+
+    syncTick()
 
     -- without this there's no view while the map moves
     FollowMapWhileMoving()
@@ -828,7 +1215,140 @@ local function typeTiles(types, id)
     end
 end
 
+-- the sync page
+
+local backupsOpen = false
+
+local function count(set)
+    local n = 0
+    for _ in pairs(set) do n = n + 1 end
+    return n
+end
+
+local function ago(ms)
+    local seconds = (GetOSTimeMS() - ms) / 1000
+    if seconds < 60 then return "just now" end
+    if seconds < 3600 then return math.floor(seconds / 60) .. " min ago" end
+    if seconds < 86400 then return math.floor(seconds / 3600) .. " h ago" end
+    return math.floor(seconds / 86400) .. " days ago"
+end
+
+local function backups(busy)
+    if not backupList then backupList = HoYoLAB_Backups() end
+    backupsOpen = ImGUI_CollapsingHeader("Backups of your HoYoLAB marks (" .. #backupList .. ")###hoyolabBackups", backupsOpen)
+    if not backupsOpen then return end
+    ImGUI_TextDisabled("Taken before the overlay changes your marks there.")
+    ImGUI_TextDisabled("Putting one back only adds marks, it never unmarks.")
+    if #backupList == 0 then ImGUI_TextDisabled("None yet.") end
+    for _, backup in ipairs(backupList) do
+        ImGUI_Text(backup.name .. "   " .. plural(backup.count, "mark", "marks"))
+        if not busy then
+            ImGUI_SameLine()
+            ImGUI_Button("Put back##" .. backup.name, function() putBack(backup.name) end)
+        end
+    end
+end
+
+local function hoyolabSection(busy)
+    ImGUI_Separator()
+    ImGUI_Text("HoYoLAB")
+    if not HasPermission(HOYOLAB) then
+        ImGUI_TextDisabled("Markers needs your OK to use your HoYoLAB account.")
+        ImGUI_Button("Allow HoYoLAB access", function() AskForPermission(HOYOLAB) end)
+        return
+    end
+
+    local account = HoYoLAB_Account()
+    if account.error ~= "" then ImGUI_Text(account.error) end
+    if not account.loggedIn then
+        if account.windowOpen then
+            ImGUI_TextDisabled("Log in in the HoYoLAB window.")
+        else
+            ImGUI_Button("Log in to HoYoLAB", function() HoYoLAB_LogIn() end)
+        end
+        ImGUI_TextDisabled("Use email and password, the Google button may not work there.")
+        return
+    end
+    ImGUI_Text("Logged in, account " .. account.account)
+    ImGUI_SameLine()
+    ImGUI_Button("Log out", function() HoYoLAB_LogOut() end)
+    if (not characters or characters.account ~= account.account) and not charactersJob then
+        charactersJob = { id = HoYoLAB_FetchCharacters(), account = account.account }
+    end
+    if characters and characters.account == account.account then
+        if characters.error then ImGUI_TextDisabled("Couldn't get the characters: " .. characters.error) end
+        for _, c in ipairs(characters.list) do
+            ImGUI_TextDisabled(c.nickname .. ", " .. c.server .. ", AR " .. c.level .. ", UID " .. c.uid)
+        end
+        if #characters.list > 1 then
+            ImGUI_TextDisabled("HoYoLAB keeps one set of marks for the account, every server shares it.")
+        end
+    end
+
+    local h = sync.hoyolab
+    if hoyoJob then
+        ImGUI_TextDisabled("Talking to HoYoLAB...")
+    elseif not busy then
+        local on = ImGUI_Checkbox("Keep in sync", h.on)
+        if on ~= h.on then
+            h.on, h.base = on, nil
+            saveSync()
+            if on then fullSync() else status = nil end
+        end
+        if h.on then
+            ImGUI_Button("Sync now", fullSync)
+            if h.last > 0 then
+                ImGUI_SameLine()
+                ImGUI_TextDisabled("Last synced " .. ago(h.last))
+            end
+        else
+            ImGUI_Button("Get from HoYoLAB", getFromHoyolab)
+            ImGUI_SameLine()
+            ImGUI_Button("Send to HoYoLAB", sendToHoyolab)
+        end
+    end
+    backups(busy)
+end
+
+local function syncPage()
+    if status then
+        if status.error then ImGUI_Text(status.text) else ImGUI_TextDisabled(status.text) end
+        if status.captcha then
+            ImGUI_TextDisabled("Solve the captcha on HoYoLAB's map, then try again.")
+            ImGUI_Button("Open HoYoLAB's map", function() HoYoLAB_ShowMap() end)
+        end
+    end
+    if question then
+        ImGUI_Separator()
+        for _, line in ipairs(question.lines) do ImGUI_Text(line) end
+        for i, action in ipairs(question.actions) do
+            if i > 1 then ImGUI_SameLine() end
+            ImGUI_Button(action[1] .. "##question", function()
+                question = nil
+                action[2]()
+            end)
+        end
+    end
+    local busy = hoyoJob ~= nil or fileJob ~= nil or question ~= nil
+
+    ImGUI_Separator()
+    ImGUI_Text("File")
+    ImGUI_TextDisabled(count(done) .. " collected here")
+    if not busy then
+        ImGUI_Button("Save to a file", exportFile)
+        ImGUI_SameLine()
+        ImGUI_Button("Load a file", importFile)
+    end
+
+    hoyolabSection(busy)
+end
+
 function Menu()
+    if ImGUI_Tabs("markersPages", { "Markers", "Sync" }) == 2 then
+        syncPage()
+        return
+    end
+
     if #groups == 0 then
         ImGUI_TextDisabled("No item files yet, nothing to pick from.")
         return

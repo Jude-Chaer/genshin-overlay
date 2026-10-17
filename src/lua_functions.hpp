@@ -73,6 +73,7 @@ namespace LuaFunctions {
     bool ImGUI_CollapsingHeader(const std::string& label, sol::optional<bool> open);
     bool ImGUI_IconToggle(const std::string& id, GLuint texture, const std::string& name, int count, bool on);
     bool ImGUI_Chip(const std::string& label, bool on);
+    int ImGUI_Tabs(const std::string& id, sol::table names);
     bool IsProgramHidden();
     void RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers);
     void DeleteKeybind(int glfwKey);

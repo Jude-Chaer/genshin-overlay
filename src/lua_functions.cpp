@@ -56,6 +56,7 @@ namespace LuaFunctions {
 		luaState.set_function("ImGUI_CollapsingHeader", ImGUI_CollapsingHeader);
 		luaState.set_function("ImGUI_IconToggle", ImGUI_IconToggle);
 		luaState.set_function("ImGUI_Chip", ImGUI_Chip);
+		luaState.set_function("ImGUI_Tabs", ImGUI_Tabs);
 		luaState.set_function("IsProgramHidden", IsProgramHidden);
 		luaState.set_function("RegisterKeybind", RegisterKeybind);
 		luaState.set_function("DeleteKeybind", DeleteKeybind);
@@ -319,6 +320,23 @@ namespace LuaFunctions {
 		draw->AddText(ImVec2(p0.x + 12, p0.y + 5), on ? NAVY : CREAM, text.c_str());
 
 		return on;
+	}
+
+	// Tabs along the top, like ImGUI_Tabs("pages", { "Markers", "Sync" }).
+	// Gives back which one is open, from 1. ImGui remembers it by id.
+	int ImGUI_Tabs(const std::string& id, sol::table names)
+	{
+		int open = 1;
+		if (!ImGui::BeginTabBar(id.c_str())) return open;
+		for (size_t i = 1; i <= names.size(); i++) {
+			std::string name = names.get_or(i, std::string());
+			if (ImGui::BeginTabItem(name.c_str())) {
+				open = (int)i;
+				ImGui::EndTabItem();
+			}
+		}
+		ImGui::EndTabBar();
+		return open;
 	}
 
 	// hidden means the menu is closed
