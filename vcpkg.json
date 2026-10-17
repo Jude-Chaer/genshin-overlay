@@ -18,6 +18,7 @@
       "features": [ "calib3d", "intrinsics", "png", "thread", "webp" ]
     },
     "sol2",
+    "webview2",
     "soil2",
     "zlib"
   ],

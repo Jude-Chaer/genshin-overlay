@@ -59,7 +59,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;psapi.lib;user32.lib;shell32.lib;advapi32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -89,6 +89,7 @@
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\helpers.cpp" />
+    <ClCompile Include="src\hoyolab_account.cpp" />
     <ClCompile Include="src\keybindings.cpp" />
     <ClCompile Include="src\locator\map_locator.cpp" />
     <ClCompile Include="src\lua_functions.cpp" />
