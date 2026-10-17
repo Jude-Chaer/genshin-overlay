@@ -124,7 +124,10 @@ local function setTypes(list, on)
     saveSelection()
 end
 
-function Init()
+-- The overlay downloads the item files on start, the first time they may not
+-- be there yet when Init runs. Update tries again until they are.
+local function loadItemFiles()
+    groups, typeNames, allTypes, regions, icons = {}, {}, {}, {}, {}
     for _, group in ipairs(GetItemTree(MAP_ID) or {}) do
         local types = {}
         for _, kind in ipairs(group.children or {}) do
@@ -137,18 +140,17 @@ function Init()
         end
         if #types > 0 then groups[#groups + 1] = { id = group.id, name = group.name, types = types } end
     end
-    if #groups == 0 then
-        print("Markers: no item files, the types can't be shown")
-    end
-
     for _, area in ipairs(GetItemAreas(MAP_ID) or {}) do
         if area.map_id == MAP_ID then regions[#regions + 1] = area end
     end
+    for id in pairs(selected) do loadPoints(id) end
+    updateBar()
+end
 
+function Init()
     local saved = FileExists(SELECTION_FILE) and JSON_Decode(ReadFile(SELECTION_FILE))
     for _, id in ipairs(saved and ids(saved.types) or DEFAULT_TYPES) do
         selected[id] = true
-        loadPoints(id)
     end
     if saved then
         for _, id in ipairs(ids(saved.hidden)) do hidden[id] = true end
@@ -156,7 +158,10 @@ function Init()
         onlyHere = saved.onlyHere == true
         for _, id in ipairs(ids(saved.openGroups)) do openGroups[id] = true end
     end
-    updateBar()
+    loadItemFiles()
+    if #groups == 0 then
+        print("Markers: no item files yet, trying again while the overlay runs")
+    end
 
     if FileExists(DONE_FILE) then
         for _, id in ipairs(ids(JSON_Decode(ReadFile(DONE_FILE)))) do done[id] = true end
@@ -319,8 +324,20 @@ local function drawOnMinimap(player)
     end
 end
 
+-- how often to look for the item files while they're missing
+local RETRY_FRAMES = 120
+local framesWithout = 0
+
 function Update()
     iconsThisFrame = 0
+
+    if #groups == 0 then
+        framesWithout = framesWithout + 1
+        if framesWithout >= RETRY_FRAMES then
+            framesWithout = 0
+            loadItemFiles()
+        end
+    end
 
     -- without this there's no view while the map moves
     FollowMapWhileMoving()
