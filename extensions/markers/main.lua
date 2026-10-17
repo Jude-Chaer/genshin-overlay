@@ -34,7 +34,8 @@ local points = {}    -- type id -> map id -> its points there
 local icons = {}     -- type id -> texture, 0 when it has none
 -- HoYoLAB point id -> true, marked from a marker's guide
 local done = {}
--- the marker whose guide is open: { id, type, map, x, y }, and which of its comments shows
+-- the marker whose guide is open: { id, type, map, x, y }, with every marker
+-- on its spot in stack and which one it is in at. And which comment shows.
 local openGuide
 local commentAt = 1
 -- where the guide was last frame, a tap there isn't for the markers under it
@@ -47,6 +48,7 @@ function RegisterSettings()
     DefineExtensionSetting("minimapScale", "Marker size on the minimap (%)", "int", 100, 20, 200)
     DefineExtensionSetting("hideDoneMinimap", "Hide collected ones on the minimap", "bool", true)
     DefineExtensionSetting("mapBar", "Show the picked types as a bar on the map", "bool", true)
+    DefineExtensionSetting("mergeClose", "Merge markers that overlap into one with a count", "bool", false)
     DefineExtensionSetting("tapGuides", "Tap a marker on the map to see its guide", "bool", true)
     DefineExtensionSetting("guideScale", "Guide size (%)", "int", 100, 60, 200)
 end
@@ -427,6 +429,16 @@ end
 local k = 1
 local function px(n) return n * k end
 
+-- shows the at'th marker of the open guide's stack
+local function showInGuide(at)
+    local count = #openGuide.stack
+    at = (at - 1) % count + 1
+    local marker = openGuide.stack[at]
+    openGuide.at = at
+    openGuide.id, openGuide.type, openGuide.map, openGuide.x, openGuide.y = marker.id, marker.type, marker.map, marker.x, marker.y
+    commentAt = 1
+end
+
 -- The guide from top to bottom, gives back how tall it is. With draw off it
 -- only measures, so the pictures can be made smaller when it doesn't fit.
 local function layoutGuide(guide, x0, y0, width, maxPicture, draw)
@@ -444,6 +456,21 @@ local function layoutGuide(guide, x0, y0, width, maxPicture, draw)
         end
     end
     y = y + math.max(nameHeight, px(28)) + px(10)
+
+    -- more than one marker on this spot, step through them
+    local stackCount = #openGuide.stack
+    if stackCount > 1 then
+        if draw then
+            textBlock(openGuide.at .. " of " .. stackCount .. " here", x, y + px(4), text, DIM, inner - px(80), true)
+            if button(x + inner - px(70), y, x + inner - px(38), y + px(26), "<", text) then
+                showInGuide(openGuide.at - 1)
+            end
+            if button(x + inner - px(32), y, x + inner, y + px(26), ">", text) then
+                showInGuide(openGuide.at + 1)
+            end
+        end
+        y = y + px(36)
+    end
 
     local isDone = done[openGuide.id] == true
     if draw and button(x, y, x + inner, y + px(32), isDone and "Collected, tap to undo" or "Mark as collected", text) then
@@ -540,14 +567,73 @@ local function drawGuide(view, half)
     PopClipRect()
 end
 
--- tapping a marker opens its guide, the same one again closes it
-local function tapMarker(point, id, mapId)
-    if openGuide and openGuide.id == point.id then
+-- Tapping a marker opens its guide, the same one again closes it. stack is
+-- every marker on that spot, the guide steps through them.
+local function tapMarker(stack)
+    if openGuide and openGuide.stack[1].id == stack[1].id then
         openGuide = nil
-    else
-        openGuide = { id = point.id, type = id, map = mapId, x = point.x, y = point.y }
-        commentAt = 1
+        return
     end
+    openGuide = { stack = stack }
+    showInGuide(1)
+end
+
+-- the markers on screen this frame, kept between frames so nothing is made each frame
+local onScreen = { n = 0, x = {}, y = {}, point = {}, type = {} }
+
+-- Markers closer than this many badge widths count as one spot: merged into one
+-- badge, or all in the guide when one of them is tapped.
+local SAME_SPOT = 1.0
+
+-- The markers that overlap, each group as a list of indexes into onScreen.
+-- Each one joins the first group it's close to, groups are looked up by grid cell.
+local function mergeOnScreen(reach)
+    local groups, cells = {}, {}
+    for i = 1, onScreen.n do
+        local x, y = onScreen.x[i], onScreen.y[i]
+        local cx, cy = math.floor(x / reach), math.floor(y / reach)
+        local joined
+        for gx = cx - 1, cx + 1 do
+            for gy = cy - 1, cy + 1 do
+                for _, group in ipairs(cells[gx * 100000 + gy] or {}) do
+                    local first = group[1]
+                    local dx, dy = onScreen.x[first] - x, onScreen.y[first] - y
+                    if not joined and dx * dx + dy * dy < reach * reach then joined = group end
+                end
+            end
+        end
+        if joined then
+            joined[#joined + 1] = i
+        else
+            local group = { i }
+            groups[#groups + 1] = group
+            local key = cx * 100000 + cy
+            cells[key] = cells[key] or {}
+            table.insert(cells[key], group)
+        end
+    end
+    return groups
+end
+
+local function stackOf(indexes, mapId)
+    local stack = {}
+    for _, i in ipairs(indexes) do
+        local point = onScreen.point[i]
+        stack[#stack + 1] = { id = point.id, type = onScreen.type[i], map = mapId, x = point.x, y = point.y }
+    end
+    return stack
+end
+
+-- how many are on a merged badge, in a bubble at its top right
+local function drawCount(x, y, half, count, allDone)
+    local r = half * 0.42
+    local bx, by = x + half * 0.72, y - half * 0.72
+    DrawCircle(bx, by, r, faded(0x3B4255FF, allDone and DONE_OPACITY or 1))
+    DrawCircle(bx, by, r * 0.86, faded(0xD3BC8EFF, allDone and DONE_OPACITY or 1))
+    local label = tostring(count)
+    local size = r * 1.3
+    local w, h = TextSize(label, size)
+    DrawText(label, bx - w / 2, by - h / 2, size, 0x1C2030FF)
 end
 
 local function drawOnMap(view)
@@ -561,25 +647,60 @@ local function drawOnMap(view)
         tapHalf = nil
     end
 
-    PushClipRect(view.left, view.top, view.right, view.bottom)
+    local n = 0
     for _, id in ipairs(barTypes) do
         local list = shown(id, view.mapId)
         if list then
-            local icon = iconOf(id)
             for _, point in ipairs(list) do
                 if onFloor(point, view.groupId, view.floorId) and (not filter or filter[point.area]) then
                     -- x_pos / y_pos are the same map units as the view's lng / lat
                     local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
                     local y = view.centerY + (point.y - view.lat) / view.unitsPerPixel
                     if x + half > view.left and x - half < view.right and y + half > view.top and y - half < view.bottom then
-                        drawMarker(x, y, half, icon, done[point.id])
-                        if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
-                            and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
-                            tapMarker(point, id, view.mapId)
-                        end
+                        n = n + 1
+                        onScreen.x[n], onScreen.y[n], onScreen.point[n], onScreen.type[n] = x, y, point, id
                     end
                 end
             end
+        end
+    end
+    onScreen.n = n
+
+    local reach = half * 2 * SAME_SPOT
+    PushClipRect(view.left, view.top, view.right, view.bottom)
+    if GetSetting("mergeClose") then
+        for _, group in ipairs(mergeOnScreen(reach)) do
+            local first = group[1]
+            local x, y = onScreen.x[first], onScreen.y[first]
+            local allDone = true
+            for _, i in ipairs(group) do
+                if not done[onScreen.point[i].id] then allDone = false end
+            end
+            drawMarker(x, y, half, iconOf(onScreen.type[first]), allDone)
+            if #group > 1 then drawCount(x, y, half, #group, allDone) end
+            if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
+                and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
+                tapMarker(stackOf(group, view.mapId))
+            end
+        end
+    else
+        -- each on its own spot, a tap takes every one that overlaps the tapped one
+        local tapped
+        for i = 1, n do
+            local x, y = onScreen.x[i], onScreen.y[i]
+            drawMarker(x, y, half, iconOf(onScreen.type[i]), done[onScreen.point[i].id])
+            if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
+                and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
+                tapped = i
+            end
+        end
+        if tapped then
+            local group = { tapped }
+            for i = 1, n do
+                local dx, dy = onScreen.x[i] - onScreen.x[tapped], onScreen.y[i] - onScreen.y[tapped]
+                if i ~= tapped and dx * dx + dy * dy < reach * reach then group[#group + 1] = i end
+            end
+            tapMarker(stackOf(group, view.mapId))
         end
     end
     PopClipRect()
