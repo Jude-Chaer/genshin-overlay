@@ -6,6 +6,7 @@
 #include "overlay.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
+#include "minimap.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -55,6 +56,7 @@ namespace LuaFunctions {
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
+		luaState.set_function("GetPlayerPosition", GetPlayerPosition);
 		luaState.set_function("GetMapGrid", GetMapGrid);
 		luaState.set_function("GetMapTile", GetMapTile);
 		luaState.set_function("GetMapFloor", GetMapFloor);
@@ -357,6 +359,56 @@ namespace LuaFunctions {
 	// cheaper, and found exactly when it stops.
 	void FollowMapWhileMoving() {
 		MapTracking::FollowWhileMoving();
+	}
+
+	static const char* stateName(MiniMap::State state) {
+		switch (state) {
+		case MiniMap::State::Found: return "found";
+		case MiniMap::State::Near: return "near";
+		case MiniMap::State::Searching: return "searching";
+		case MiniMap::State::Nowhere: return "nowhere";
+		case MiniMap::State::Domain: return "domain";
+		default: return "none";
+		}
+	}
+
+	// Where the player is on the map, read from the minimap. Always a table:
+	// found says if the spot is where the player is right now. If not, state
+	// says why ("none", "near", "searching", "nowhere", "domain", see MiniMap::State),
+	// the spot is where they were last seen and age how many seconds ago
+	// that was. mapId is 0 until they were seen once. The minimap is only
+	// watched while this gets called, so the first calls aren't found.
+	sol::object GetPlayerPosition(sol::this_state state) {
+		MiniMap::Spot spot = MiniMap::GetPlayer();
+
+		int windowX = 0, windowY = 0;
+		glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+		float left = (float)(spot.square.left - windowX);
+		float top = (float)(spot.square.top - windowY);
+		float right = (float)(spot.square.right - windowX);
+		float bottom = (float)(spot.square.bottom - windowY);
+
+		// Left to bottom is the square around the game's minimap on the overlay.
+		// The minimap is the circle that just fits in it.
+		sol::state_view lua(state);
+		return sol::make_object(state, lua.create_table_with(
+			"found", spot.found,
+			"state", stateName(spot.state),
+			"age", spot.age,
+			"mapId", spot.mapId,
+			"groupId", spot.groupId,
+			"floorId", spot.floorId,
+			"lat", spot.lat,
+			"lng", spot.lng,
+			"unitsPerPixel", MiniMap::UNITS_ACROSS / spot.zoom / std::max(1.0f, right - left),
+			"left", left,
+			"top", top,
+			"right", right,
+			"bottom", bottom,
+			"centerX", (left + right) / 2.0f,
+			"centerY", (top + bottom) / 2.0f,
+			"radius", (right - left) / 2.0f
+		));
 	}
 
 	// how a map's tiles are laid out: tile x covers map units x * tileSize - originX and up

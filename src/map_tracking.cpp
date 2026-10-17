@@ -56,6 +56,8 @@ namespace MapTracking {
     static std::condition_variable wake;
 
     static MapLocator::Index index;
+    // one match at a time, Locate comes in from another thread
+    static std::mutex indexMutex;
 
     // guarded by mutex
     static bool frameWaiting = false;
@@ -155,8 +157,12 @@ namespace MapTracking {
             double cx = current.cols / 2.0;
             double cy = current.rows / 2.0;
             auto started = std::chrono::steady_clock::now();
-            index.smallFirst = Settings::findSmallFirst;
-            MapLocator::Result result = index.Match(current, cx, cy, true, false);
+            MapLocator::Result result;
+            {
+                std::lock_guard<std::mutex> indexLock(indexMutex);
+                index.smallFirst = Settings::findSmallFirst;
+                result = index.Match(current, cx, cy, true, false);
+            }
             lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - started).count();
 
             lock.lock();
@@ -292,6 +298,7 @@ namespace MapTracking {
             followWorker.join();
 
         Capture::closeGameCapture();
+        std::lock_guard<std::mutex> indexLock(indexMutex);
         index.Unload();
     }
 
@@ -331,14 +338,19 @@ namespace MapTracking {
         }
     }
 
+    bool GameInFront() {
+        HWND game = Capture::findGameWindow();
+        HWND foreground = GetForegroundWindow();
+        return game && !IsIconic(game) && (foreground == game || foreground == overlayWindow.load());
+    }
+
     // one step if the game is in front and its map open, false if there's nothing to follow now
     static bool step() {
         if (status != Status::Ready) return false;
 
         // only capture while the game, or our own menu, is in front
         HWND game = Capture::findGameWindow();
-        HWND foreground = GetForegroundWindow();
-        if (!game || IsIconic(game) || (foreground != game && foreground != overlayWindow.load())) {
+        if (!GameInFront()) {
             hide();
             return false;
         }
@@ -400,6 +412,12 @@ namespace MapTracking {
 
     void FollowWhileMoving() {
         followAskedAt = std::chrono::steady_clock::now().time_since_epoch().count();
+    }
+
+    MapLocator::Result Locate(const cv::Mat& image) {
+        if (status != Status::Ready) return {};
+        std::lock_guard<std::mutex> indexLock(indexMutex);
+        return index.Match(image, image.cols / 2.0, image.rows / 2.0, false, false);
     }
 
     float GetLastStepMs() {
@@ -469,6 +487,11 @@ namespace MapTracking {
         }
         viewGiven = copy.visible;
         return copy;
+    }
+
+    MapView LastView() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return view;
     }
 
     const char* GetMapName(int mapId) {

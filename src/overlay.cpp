@@ -6,6 +6,7 @@
 #include "helpers.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
+#include "minimap.hpp"
 #include "stats.hpp"
 #include "settings.hpp"
 #include "capture.hpp"
@@ -482,7 +483,9 @@ namespace Overlay {
 
             // map and menu closed: nothing to show, so don't draw at all
             bool showing = Overlay::menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;
-            if (!showing) {
+            // an extension that follows the player has things to draw with the map closed too
+            bool forPlayer = !showing && MiniMap::Wanted();
+            if (!showing && !forPlayer) {
                 updateClickThrough();
                 if (drewLastFrame) {
                     // an empty frame so the last one doesn't stay on screen
@@ -529,7 +532,9 @@ namespace Overlay {
             glfwSwapBuffers(Overlay::Window);
             // sleeps until Windows put the frame on screen, once per refresh,
             // or until the map's next answer is there
-            MapTracking::WaitForDraw();
+            // the player's spot changes 20 times a second
+            if (forPlayer) glfwWaitEventsTimeout(0.05);
+            else MapTracking::WaitForDraw();
             MapTiles::EndFrame();
         }
     }

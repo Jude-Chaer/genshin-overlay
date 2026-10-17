@@ -101,6 +101,7 @@
     <ClCompile Include="src\map_follow.cpp" />
     <ClCompile Include="src\map_tiles.cpp" />
     <ClCompile Include="src\map_tracking.cpp" />
+    <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -118,6 +119,9 @@
     <ClInclude Include="src\map_follow.hpp" />
     <ClInclude Include="src\map_tiles.hpp" />
     <ClInclude Include="src\map_tracking.hpp" />
+    <ClInclude Include="src\minimap.hpp" />
+    <ClInclude Include="src\minimap_corner.hpp" />
+    <ClInclude Include="src\minimap_door.hpp" />
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\settings.hpp" />
@@ -126,6 +130,7 @@
   <ItemGroup>
     <None Include="extensions\example\main.lua" />
     <None Include="extensions\map\main.lua" />
+    <None Include="extensions\minimap\main.lua" />
     <None Include="tools\publish_map_index.bat" />
     <None Include="vcpkg.json" />
   </ItemGroup>
