@@ -84,9 +84,23 @@ function Init()
     end
 end
 
--- done ones are drawn faded
+-- how much of a done marker still shows
+local DONE_OPACITY = 0.4
+
+-- a color with its opacity (the last byte) times a
+local function faded(color, a)
+    return color - (color & 0xFF) + math.floor((color & 0xFF) * a)
+end
+
+-- A round badge like the game's map icons: light ring, dark inside, the
+-- item in the middle. Done ones get a grey ring and the whole badge fades.
 local function drawMarker(x, y, half, isDone)
-    DrawImage(icon, x - half, y - half, x + half, y + half, isDone and 0.3 or 1.0)
+    local a = isDone and DONE_OPACITY or 1.0
+    DrawCircle(x, y + half * 0.08, half, faded(0x00000050, a))
+    DrawCircle(x, y, half * 0.94, faded(isDone and 0x969696FF or 0xECE5D8FF, a))
+    DrawCircle(x, y, half * 0.8, faded(0x3B4255FF, a))
+    local item = half * 0.6
+    DrawImage(icon, x - item, y - item, x + item, y + item, a)
 end
 
 -- underground only the floor you're on, above ground only what's above ground
