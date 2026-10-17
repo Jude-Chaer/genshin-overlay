@@ -12,7 +12,6 @@ local POINTS_URL = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc/v1/
 local POINTS_FILE = "chests.json"
 local ICON_FILE = "chest.png"
 local DONE_FILE = "done.json"
-local ICON_SIZE = 32
 
 local points = {}
 local icon = 0
@@ -54,6 +53,12 @@ local function download()
     return true
 end
 
+function RegisterSettings()
+    DefineExtensionSetting("mapSize", "Icon size on the map (pixels)", "int", 50, 8, 96)
+    DefineExtensionSetting("minimapSize", "Icon size on the minimap (part of the minimap)", "float", 0.08, 0.02, 0.2)
+    DefineExtensionSetting("hideDoneMinimap", "Hide collected ones on the minimap", "bool", true)
+end
+
 local function saveDone()
     local ids = {}
     for id in pairs(done) do ids[#ids + 1] = id end
@@ -79,18 +84,21 @@ function Init()
     end
 end
 
-function Update()
-    -- without this there's no view while the map moves
-    FollowMapWhileMoving()
+-- done ones are drawn faded
+local function drawMarker(x, y, half, isDone)
+    DrawImage(icon, x - half, y - half, x + half, y + half, isDone and 0.3 or 1.0)
+end
 
-    local view = GetMapView()
-    if not view or view.mapId ~= MAP_ID then return end
+-- underground only the floor you're on, above ground only what's above ground
+local function onFloor(point, groupId, floorId)
+    return point.group == groupId and (point.group == 0 or point.floor == floorId)
+end
 
-    local half = ICON_SIZE / 2
+local function drawOnMap(view)
+    local half = GetSetting("mapSize") / 2
     PushClipRect(view.left, view.top, view.right, view.bottom)
     for _, point in ipairs(points) do
-        -- underground only the floor you're on, above ground only what's above ground
-        if point.group == view.groupId and (point.group == 0 or point.floor == view.floorId) then
+        if onFloor(point, view.groupId, view.floorId) then
             -- x_pos / y_pos are the same map units as the view's lng / lat
             local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
             local y = view.centerY + (point.y - view.lat) / view.unitsPerPixel
@@ -102,8 +110,43 @@ function Update()
                     saveDone()
                 end
             end
-            DrawImage(icon, x0, y0, x1, y1, done[point.id] and 0.3 or 1.0)
+            drawMarker(x, y, half, done[point.id])
         end
     end
     PopClipRect()
+end
+
+-- The minimap only shows, it can't be tapped: in game the cursor is locked
+-- and a claimed area would eat clicks meant for the game.
+local function drawOnMinimap(player)
+    -- the minimap changes size with the screen, so the icons are a part of it
+    local half = player.radius * GetSetting("minimapSize")
+    -- the minimap is a circle, only what's fully inside it is drawn
+    local inside = player.radius - half
+    local hideDone = GetSetting("hideDoneMinimap")
+    for _, point in ipairs(points) do
+        if onFloor(point, player.groupId, player.floorId) and not (hideDone and done[point.id]) then
+            local dx = (point.x - player.lng) / player.unitsPerPixel
+            local dy = (point.y - player.lat) / player.unitsPerPixel
+            if dx * dx + dy * dy <= inside * inside then
+                local x = player.centerX + dx
+                local y = player.centerY + dy
+                drawMarker(x, y, half, done[point.id])
+            end
+        end
+    end
+end
+
+function Update()
+    -- without this there's no view while the map moves
+    FollowMapWhileMoving()
+
+    local view = GetMapView()
+    if view then
+        if view.mapId == MAP_ID then drawOnMap(view) end
+        return
+    end
+
+    local player = GetPlayerPosition()
+    if player.found and player.mapId == MAP_ID then drawOnMinimap(player) end
 end
