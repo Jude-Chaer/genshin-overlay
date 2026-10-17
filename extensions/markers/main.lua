@@ -1,6 +1,6 @@
 metadata = {
     name = "Markers",
-    description = "Proof of concept: draws HoYoLAB's common chests on the in-game map.",
+    description = "Proof of concept: draws HoYoLAB's common chests on the in-game map, tap one to mark it done.",
     author = "genshin-overlay",
     version = "0.1.0",
 }
@@ -11,10 +11,13 @@ local COMMON_CHEST = 17
 local POINTS_URL = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc/v1/map/point/list?app_sn=ys_obc&lang=en-us&map_id=" .. MAP_ID
 local POINTS_FILE = "chests.json"
 local ICON_FILE = "chest.png"
+local DONE_FILE = "done.json"
 local ICON_SIZE = 32
 
 local points = {}
 local icon = 0
+-- HoYoLAB point id -> true for the chests marked done
+local done = {}
 
 -- HoYoLAB only gives every point of the map at once (about 22 MB), so the
 -- chests are picked out and saved, and next time only that small file is read
@@ -30,6 +33,7 @@ local function download()
             -- points underground say which floor they're on
             local group = point.point_group
             chests[#chests + 1] = {
+                id = point.id,
                 x = point.x_pos,
                 y = point.y_pos,
                 group = group and group.group_id or 0,
@@ -50,16 +54,29 @@ local function download()
     return true
 end
 
+local function saveDone()
+    local ids = {}
+    for id in pairs(done) do ids[#ids + 1] = id end
+    WriteFile(DONE_FILE, JSON_Encode(ids))
+end
+
 function Init()
-    if not FileExists(POINTS_FILE) or not FileExists(ICON_FILE) then
+    if FileExists(POINTS_FILE) then
+        points = JSON_Decode(ReadFile(POINTS_FILE)) or {}
+    end
+    -- files saved before the chests had their ids are downloaded again
+    if not FileExists(ICON_FILE) or not points[1] or not points[1].id then
         if not download() then
             print("Markers: couldn't get the points from HoYoLAB")
             return
         end
+        points = JSON_Decode(ReadFile(POINTS_FILE)) or {}
     end
-
-    points = JSON_Decode(ReadFile(POINTS_FILE)) or {}
     icon = LoadTexture(ICON_FILE)
+
+    if FileExists(DONE_FILE) then
+        for _, id in ipairs(JSON_Decode(ReadFile(DONE_FILE)) or {}) do done[id] = true end
+    end
 end
 
 function Update()
@@ -77,7 +94,15 @@ function Update()
             -- x_pos / y_pos are the same map units as the view's lng / lat
             local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
             local y = view.centerY + (point.y - view.lat) / view.unitsPerPixel
-            DrawImage(icon, x - half, y - half, x + half, y + half)
+            local x0, y0, x1, y1 = x - half, y - half, x + half, y + half
+            -- only the part inside the map can be tapped, it's clipped everywhere else
+            if x1 > view.left and x0 < view.right and y1 > view.top and y0 < view.bottom then
+                if ClickArea(math.max(x0, view.left), math.max(y0, view.top), math.min(x1, view.right), math.min(y1, view.bottom)) then
+                    done[point.id] = not done[point.id] or nil
+                    saveDone()
+                end
+            end
+            DrawImage(icon, x0, y0, x1, y1, done[point.id] and 0.3 or 1.0)
         end
     end
     PopClipRect()
