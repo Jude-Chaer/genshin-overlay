@@ -92,6 +92,7 @@
     <ClCompile Include="src\appsample.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\extensions.cpp" />
+    <ClCompile Include="src\file_dialogs.cpp" />
     <ClCompile Include="src\helpers.cpp" />
     <ClCompile Include="src\hoyolab_account.cpp" />
     <ClCompile Include="src\hoyolab_marks.cpp" />
@@ -116,6 +117,7 @@
     <ClInclude Include="src\appsample.hpp" />
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\extensions.hpp" />
+    <ClInclude Include="src\file_dialogs.hpp" />
     <ClInclude Include="src\helpers.hpp" />
     <ClInclude Include="src\hoyolab_account.hpp" />
     <ClInclude Include="src\hoyolab_marks.hpp" />

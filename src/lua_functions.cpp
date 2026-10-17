@@ -4,9 +4,12 @@
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "overlay.hpp"
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #include "map_tiles.hpp"
 #include "point_guides.hpp"
 #include "web_images.hpp"
+#include "file_dialogs.hpp"
 #include "hoyolab_account.hpp"
 #include "hoyolab_marks.hpp"
 #include "map_tracking.hpp"
@@ -95,6 +98,9 @@ namespace LuaFunctions {
 		luaState.set_function("GetMousePosition", GetMousePosition);
 		luaState.set_function("HasPermission", HasPermission);
 		luaState.set_function("AskForPermission", AskForPermission);
+		luaState.set_function("SaveFileDialog", SaveFileDialog);
+		luaState.set_function("OpenFileDialog", OpenFileDialog);
+		luaState.set_function("FileDialogResult", FileDialogResult);
 		luaState.set_function("HoYoLAB_Account", HoyolabAccountInfo);
 		luaState.set_function("HoYoLAB_LogIn", HoyolabLogIn);
 		luaState.set_function("HoYoLAB_LogOut", HoyolabLogOut);
@@ -1238,6 +1244,35 @@ namespace LuaFunctions {
 	void AskForPermission(const std::string& name)
 	{
 		Extensions::askForPermission(Extensions::currentExtension, Extensions::permissionNamed(name));
+	}
+
+	// Windows' save dialog, the data goes to the file the user picks. Gives back
+	// an id for FileDialogResult, nil while another dialog is open.
+	sol::object SaveFileDialog(const std::string& suggestedName, const std::string& data, sol::this_state state)
+	{
+		int dialog = FileDialogs::Save(glfwGetWin32Window(Overlay::Window), suggestedName, data);
+		if (dialog == 0) return sol::lua_nil;
+		return sol::make_object(state, dialog);
+	}
+
+	sol::object OpenFileDialog(sol::this_state state)
+	{
+		int dialog = FileDialogs::Open(glfwGetWin32Window(Overlay::Window));
+		if (dialog == 0) return sol::lua_nil;
+		return sol::make_object(state, dialog);
+	}
+
+	// nil while the dialog is open, then { picked, ok, name, data } once
+	sol::object FileDialogResult(int dialog, sol::this_state state)
+	{
+		FileDialogs::Result result;
+		if (!FileDialogs::GetResult(dialog, result)) return sol::lua_nil;
+		sol::state_view lua(state);
+		return lua.create_table_with(
+			"picked", result.picked,
+			"ok", result.ok,
+			"name", result.name,
+			"data", result.data);
 	}
 
 	// HoYoLAB: the login stays in C++, extensions get what's marked and can change it

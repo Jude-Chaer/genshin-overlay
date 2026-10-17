@@ -123,6 +123,9 @@ namespace LuaFunctions {
     std::tuple<int, int> GetMousePosition();
     bool HasPermission(const std::string& name);
     void AskForPermission(const std::string& name);
+    sol::object SaveFileDialog(const std::string& suggestedName, const std::string& data, sol::this_state state);
+    sol::object OpenFileDialog(sol::this_state state);
+    sol::object FileDialogResult(int dialog, sol::this_state state);
     sol::table HoyolabAccountInfo(sol::this_state state);
     void HoyolabLogIn();
     void HoyolabLogOut();

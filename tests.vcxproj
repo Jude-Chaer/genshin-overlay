@@ -88,6 +88,7 @@
     <ClCompile Include="src\appsample.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\extensions.cpp" />
+    <ClCompile Include="src\file_dialogs.cpp" />
     <ClCompile Include="src\helpers.cpp" />
     <ClCompile Include="src\hoyolab_account.cpp" />
     <ClCompile Include="src\hoyolab_marks.cpp" />
