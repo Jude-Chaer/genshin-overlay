@@ -629,6 +629,8 @@ namespace MiniMap {
     // floors that reach into it.
     static std::vector<Spot> floorTries(const cv::Mat& mini, const std::vector<double>& zooms, const Area* area = nullptr, const std::atomic<bool>* dropped = nullptr) {
         std::vector<Spot> tries;
+        // the minimap's details and ring at each size, most floors share a few
+        std::map<int, std::pair<cv::Mat, cv::Mat>> sizes;
         for (size_t i = 0; i < floors.size(); ++i) {
             if (dropped && *dropped) return {};
             const Floor& floor = floors[i];
@@ -650,9 +652,13 @@ namespace MiniMap {
                 int over = n / 2;
                 cv::copyMakeBorder(whole, whole, over, over, over, over, cv::BORDER_CONSTANT, cv::Scalar(0));
 
-                cv::Mat little;
-                cv::resize(mini, little, cv::Size(n, n), 0, 0, cv::INTER_AREA);
-                cv::Mat result = fit(details(whole, n), details(little, n), ring(n), false);
+                auto& [little, around] = sizes[n];
+                if (little.empty()) {
+                    cv::resize(mini, little, cv::Size(n, n), 0, 0, cv::INTER_AREA);
+                    little = details(little, n);
+                    around = ring(n);
+                }
+                cv::Mat result = fit(details(whole, n), little, around, false);
                 double score = 0.0;
                 cv::Point at;
                 cv::minMaxLoc(result, nullptr, &score, nullptr, &at);
