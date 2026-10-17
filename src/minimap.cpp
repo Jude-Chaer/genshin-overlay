@@ -668,10 +668,18 @@ namespace MiniMap {
     }
 
     // Under ground or water the surface can look enough like the minimap to
-    // pass. The floor fits better then.
+    // pass. The floor fits better then. The same for a zoom within SAME of
+    // the one it was found at: one kept in the dark desert passed on the
+    // surface at 0.55 where the zoom next to it fit at 0.85.
     static Spot bestLayer(const cv::Mat& mini, const Spot& found, const std::vector<double>& zooms) {
+        Spot best = found;
+        for (double zoom : zooms) {
+            if (zoom == found.zoom || std::abs(zoom / found.zoom - 1.0) > SAME) continue;
+            Spot spot = nearbyOn(mini, found, false, zoom);
+            if (spot.found && spot.score > best.score) best = spot;
+        }
         Spot layer = otherLayer(mini, found, zooms);
-        return layer.found && layer.score > found.score ? layer : found;
+        return layer.found && layer.score > best.score ? layer : best;
     }
 
     // looks for it on every floor picture that's on disk
