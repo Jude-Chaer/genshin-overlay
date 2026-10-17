@@ -64,6 +64,7 @@ namespace LuaFunctions {
 		luaState.set_function("DrawText", GDrawText);
 		luaState.set_function("PushClipRect", PushClipRect);
 		luaState.set_function("PopClipRect", PopClipRect);
+		luaState.set_function("ClickArea", ClickArea);
 		luaState.set_function("Net_Get", NetGet);
 		luaState.set_function("Net_Post", NetPost);
 		luaState.set_function("JSON_Encode", JSONEncode);
@@ -460,6 +461,17 @@ namespace LuaFunctions {
 
 	void PopClipRect() {
 		ImGui::GetBackgroundDrawList()->PopClipRect();
+	}
+
+	// Call every Update for something that can be clicked, like a marker. From
+	// the next frame the overlay takes the mouse while it's over the area, so the
+	// click lands here and not in the game. True on the frame it's clicked.
+	bool ClickArea(float x0, float y0, float x1, float y1) {
+		CHECK_PERMISSIONS();
+		Overlay::ClaimMouse(x0, y0, x1, y1);
+		// the menu is on top, the click is for it
+		if (Overlay::IO->WantCaptureMouse) return false;
+		return ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsMouseHoveringRect(ImVec2(x0, y0), ImVec2(x1, y1), false);
 	}
 
 	static nlohmann::json LuaToJson(sol::object obj) {

@@ -16,6 +16,8 @@
 #include <GLFW/glfw3native.h>
 #include <iostream>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace Overlay {
     GLFWwindow* Window = nullptr;
@@ -154,12 +156,27 @@ namespace Overlay {
         SetWindowPos(glfwGetWin32Window(Overlay::Window), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
-    // Only take the mouse while it's over the menu, everywhere else clicks go to the game.
-    // The window covers the whole screen, so without this an open menu would swallow
-    // every click. WantCaptureMouse is ImGui saying the cursor is over one of its windows.
+    // areas extensions want clicks on (markers), filled again every frame
+    struct Area { float x0, y0, x1, y1; };
+    static std::vector<Area> claimedAreas;
+
+    void ClaimMouse(float x0, float y0, float x1, float y1) {
+        claimedAreas.push_back({ x0, y0, x1, y1 });
+    }
+
+    // Only take the mouse while it's over the menu or something an extension claimed,
+    // everywhere else clicks go to the game. The window covers the whole screen, so
+    // without this an open menu would swallow every click. WantCaptureMouse is ImGui
+    // saying the cursor is over one of its windows. The areas are from the frame before,
+    // extensions haven't run yet this frame.
     static bool mouseCaptured = false;
     static void updateClickThrough() {
-        bool capture = Overlay::menuOpen && Overlay::IO->WantCaptureMouse;
+        ImVec2 mouse = Overlay::IO->MousePos;
+        bool overClaimed = std::any_of(claimedAreas.begin(), claimedAreas.end(), [&](const Area& area) {
+            return mouse.x >= area.x0 && mouse.x < area.x1 && mouse.y >= area.y0 && mouse.y < area.y1;
+        });
+        claimedAreas.clear();
+        bool capture = (Overlay::menuOpen && Overlay::IO->WantCaptureMouse) || overClaimed;
         if (capture == mouseCaptured) return;
         mouseCaptured = capture;
         glfwSetWindowAttrib(Overlay::Window, GLFW_MOUSE_PASSTHROUGH, capture ? GLFW_FALSE : GLFW_TRUE);
