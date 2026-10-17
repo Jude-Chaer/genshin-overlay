@@ -52,7 +52,7 @@ namespace LuaFunctions {
 		luaState.set_function("GetSetting", GetExtensionSetting);
 		luaState.set_function("LoadTexture", LoadTextureFromFileLua);
 		luaState.set_function("GetItemIcon", GetItemIcon);
-		luaState.set_function("GetItemIconById", GetItemPositions);
+		luaState.set_function("GetItemPositions", GetItemPositions);
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
