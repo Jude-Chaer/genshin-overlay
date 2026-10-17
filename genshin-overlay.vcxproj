@@ -105,8 +105,10 @@
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\point_guides.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="src\web_images.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\appsample.hpp" />
@@ -126,8 +128,10 @@
     <ClInclude Include="src\minimap_door.hpp" />
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\point_guides.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
+    <ClInclude Include="src\web_images.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extensions\example\main.lua" />

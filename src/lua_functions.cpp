@@ -5,6 +5,8 @@
 #include "helpers.hpp"
 #include "overlay.hpp"
 #include "map_tiles.hpp"
+#include "point_guides.hpp"
+#include "web_images.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include <imgui.h>
@@ -59,6 +61,8 @@ namespace LuaFunctions {
 		luaState.set_function("GetItemPositions", GetItemPositions);
 		luaState.set_function("GetItemTree", GetItemTree);
 		luaState.set_function("GetItemAreas", GetItemAreas);
+		luaState.set_function("GetPointGuide", GetPointGuide);
+		luaState.set_function("GetWebImage", GetWebImage);
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
@@ -581,8 +585,8 @@ namespace LuaFunctions {
 	}
 
 	// how wide and tall DrawText would draw this text
-	std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size) {
-		ImVec2 measured = ImGui::GetFont()->CalcTextSizeA(size.value_or(ImGui::GetFontSize()), FLT_MAX, 0.0f, text.c_str());
+	std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size, sol::optional<float> wrapWidth) {
+		ImVec2 measured = ImGui::GetFont()->CalcTextSizeA(size.value_or(ImGui::GetFontSize()), FLT_MAX, wrapWidth.value_or(0.0f), text.c_str());
 		return { measured.x, measured.y };
 	}
 
@@ -1113,7 +1117,8 @@ namespace LuaFunctions {
 
 		return { point.x, point.y };
 	}
-	void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color)
+	// with a wrap width, long text breaks into lines that fit it
+	void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color, sol::optional<float> wrapWidth)
 	{
 		CHECK_PERMISSIONS();
 		if (text.empty())
@@ -1132,7 +1137,9 @@ namespace LuaFunctions {
 			fontSize,
 			ImVec2(x, y),
 			IM_COL32(r, g, b, a),
-			text.c_str()
+			text.c_str(),
+			nullptr,
+			wrapWidth.value_or(0.0f)
 		);
 	}
 	GLuint GetItemIcon(int itemId)
@@ -1171,5 +1178,39 @@ namespace LuaFunctions {
 	sol::object GetItemAreas(int mapId, sol::this_state state)
 	{
 		return readItemFile(std::filesystem::path("maps") / std::to_string(mapId) / "areas.json", state);
+	}
+
+	// HoYoLAB's guide for a point and the comments from appsample, nil while it loads
+	sol::object GetPointGuide(int mapId, int64_t pointId, int typeId, sol::this_state state)
+	{
+		CHECK_PERMISSIONS();
+		PointGuides::Guide guide;
+		if (!PointGuides::Get(mapId, pointId, typeId, guide)) return sol::lua_nil;
+
+		sol::state_view lua(state);
+		sol::table result = lua.create_table();
+		result["text"] = guide.text;
+		result["picture"] = guide.picture;
+		result["failed"] = guide.failed;
+		sol::table comments = lua.create_table();
+		for (size_t i = 0; i < guide.comments.size(); i++) {
+			const PointGuides::Comment& comment = guide.comments[i];
+			comments[i + 1] = lua.create_table_with(
+				"author", comment.author,
+				"date", comment.date,
+				"text", comment.text,
+				"picture", comment.picture,
+				"likes", comment.likes);
+		}
+		result["comments"] = comments;
+		return result;
+	}
+
+	// a picture from the web as a texture with its size, 0 until it's loaded
+	std::tuple<GLuint, int, int> GetWebImage(const std::string& url)
+	{
+		CHECK_PERMISSIONS();
+		WebImages::Image image = WebImages::Get(url);
+		return { image.texture, image.width, image.height };
 	}
 }

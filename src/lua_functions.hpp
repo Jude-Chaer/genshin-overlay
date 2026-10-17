@@ -32,6 +32,8 @@ namespace LuaFunctions {
         { "LuaFunctions::LoadTextureFromFileLua", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
         { "LuaFunctions::FileExists", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
         { "LuaFunctions::ListDirectory", {Extensions::ExtensionPermissionTypes::InternalReadfile}},
+        { "LuaFunctions::GetPointGuide", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
+        { "LuaFunctions::GetWebImage", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
     };
 
     struct LuaInterval
@@ -77,12 +79,14 @@ namespace LuaFunctions {
     sol::object GetItemPositions(int itemId, sol::this_state state);
     sol::object GetItemTree(int mapId, sol::this_state state);
     sol::object GetItemAreas(int mapId, sol::this_state state);
+    sol::object GetPointGuide(int mapId, int64_t pointId, int typeId, sol::this_state state);
+    std::tuple<GLuint, int, int> GetWebImage(const std::string& url);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
-    void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color); // The "G" is only there because DrawText is already used by the Windows API
+    void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color, sol::optional<float> wrapWidth); // The "G" is only there because DrawText is already used by the Windows API
     void DrawCircle(float x, float y, float radius, uint32_t color, sol::optional<float> thickness);
     void DrawRect(float x0, float y0, float x1, float y1, uint32_t color, sol::optional<float> rounding, sol::optional<float> thickness);
-    std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size);
+    std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size, sol::optional<float> wrapWidth);
     void PushClipRect(float x0, float y0, float x1, float y1);
     std::tuple<bool, bool> ClickArea(float x0, float y0, float x1, float y1);
     void PopClipRect();

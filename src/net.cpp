@@ -22,6 +22,10 @@ namespace Net {
 	}
 
 	bool get(const std::string& url, Response& out, bool hoyolab) {
+		return getWithHeaders(url, out, hoyolab ? L"Origin: https://act.hoyolab.com\r\nReferer: https://act.hoyolab.com/\r\n" : L"");
+	}
+
+	bool getWithHeaders(const std::string& url, Response& out, const std::wstring& headers) {
 		std::call_once(sessionOnce, []() {
 			session = WinHttpOpen(L"genshin-overlay", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
 			if (session) {
@@ -51,8 +55,8 @@ namespace Net {
 			WINHTTP_DEFAULT_ACCEPT_TYPES, parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) : nullptr;
 
 		if (request) {
-			const wchar_t* headers = hoyolab ? L"Origin: https://act.hoyolab.com\r\nReferer: https://act.hoyolab.com/\r\n" : WINHTTP_NO_ADDITIONAL_HEADERS;
-			if (WinHttpSendRequest(request, headers, hoyolab ? (DWORD)-1L : 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+			if (WinHttpSendRequest(request, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(), headers.empty() ? 0 : (DWORD)-1L,
+				WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
 				&& WinHttpReceiveResponse(request, nullptr)) {
 				DWORD status = 0, size = sizeof(status);
 				WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);

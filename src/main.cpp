@@ -16,6 +16,8 @@
 #include "map_data.hpp"
 #include "map_check.hpp"
 #include "map_tiles.hpp"
+#include "point_guides.hpp"
+#include "web_images.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
@@ -201,6 +203,8 @@ int main(int argc, char** argv) {
 
     MapTracking::Start(Helpers::exeDirectory() / "map_data");
     MapTiles::Init(Helpers::exeDirectory() / "map_data");
+    WebImages::Init();
+    PointGuides::Init();
     MapCheck::Start(Helpers::exeDirectory() / "map_data");
     MiniMap::Start(Helpers::exeDirectory() / "map_data");
     Extensions::initExtensions();
@@ -210,6 +214,8 @@ int main(int argc, char** argv) {
     MiniMap::Stop();
     MapTracking::Stop();
     MapCheck::Stop();
+    PointGuides::Shutdown();
+    WebImages::Shutdown();
     MapTiles::Shutdown();
     Overlay::Shutdown();
 

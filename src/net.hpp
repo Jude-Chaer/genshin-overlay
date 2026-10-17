@@ -17,6 +17,8 @@ namespace Net {
     // Blocking GET over WinHTTP, follows redirects. hoyolab adds the Origin and
     // Referer headers HoYoLAB's API and CDN want. False if it couldn't connect.
     extern bool get(const std::string& url, Response& out, bool hoyolab = false);
+    // headers the way WinHTTP takes them, each line ending in \r\n
+    extern bool getWithHeaders(const std::string& url, Response& out, const std::wstring& headers);
     extern bool post(const std::string& url, const std::string& body, Response& out, bool hoyolab = false);
     class WebSocket {
     public:

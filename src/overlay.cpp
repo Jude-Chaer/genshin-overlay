@@ -5,6 +5,7 @@
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "map_tiles.hpp"
+#include "web_images.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include "stats.hpp"
@@ -553,6 +554,7 @@ namespace Overlay {
             if (forPlayer) glfwWaitEventsTimeout(0.05);
             else MapTracking::WaitForDraw();
             MapTiles::EndFrame();
+            WebImages::EndFrame();
         }
     }
 }
