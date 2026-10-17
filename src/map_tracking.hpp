@@ -20,6 +20,8 @@ namespace MapTracking {
         double secondsSinceUpdate = 0.0;
         // moving, or stopped but SIFT didn't say exactly where yet
         bool moving = false;
+        // screen x where a panel on the right starts, -1 with none open
+        LONG panelLeft = -1;
     };
 
     struct Diamond

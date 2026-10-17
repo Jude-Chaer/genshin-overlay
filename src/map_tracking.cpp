@@ -1,5 +1,6 @@
 #include "map_tracking.hpp"
 #include "capture.hpp"
+#include "game_ui.hpp"
 #include "map_data.hpp"
 #include "map_follow.hpp"
 #include "map_check.hpp"
@@ -79,6 +80,7 @@ namespace MapTracking {
     // the last frame handed to the follower, and its id there
     static Capture::Frame lastGameFrame;
     static int frameId = 0;
+    static LONG panelLeft = -1;
     // The frame SIFT was given. Session goes up with every reset, a result
     // from before the reset is dropped.
     static int sentId = 0;
@@ -186,6 +188,7 @@ namespace MapTracking {
         view.visible = follower.Visible();
         view.result = follower.View();
         view.gameRect = rect;
+        view.panelLeft = panelLeft;
         lastUpdate = now;
         answers++;
         answered.notify_all();
@@ -201,6 +204,7 @@ namespace MapTracking {
             session++;
             follower.Reset();
             lastGameFrame = {};
+            panelLeft = -1;
         }
         bool canSend = !busy && !frameWaiting;
         bool gotMatch = matchDone;
@@ -248,6 +252,8 @@ namespace MapTracking {
             int frames = lastGameFrame.number ? (int)std::min<uint64_t>(gameFrame.number - lastGameFrame.number, 100) : 1;
             lastGameFrame = gameFrame;
             follower.Frame(++frameId, patches, wide, rect, gameFrame.seconds, frames);
+            int panel = GameUi::FindPanel(wide);
+            panelLeft = panel < 0 ? -1 : rect.left + (LONG)((double)panel * (rect.right - rect.left) / wide.cols);
             // loosely it's hidden while it moves, nothing to line up
             if (followExact && follower.Visible() && Settings::lineUpWithMap) {
                 MapCheck::Check(frameId, patches, rect, follower.View());

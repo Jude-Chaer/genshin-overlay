@@ -10,6 +10,7 @@
 #include "point_guides.hpp"
 #include "web_images.hpp"
 #include "file_dialogs.hpp"
+#include "game_ui.hpp"
 #include "hoyolab_account.hpp"
 #include "hoyolab_marks.hpp"
 #include "map_tracking.hpp"
@@ -484,7 +485,10 @@ namespace LuaFunctions {
 	// Where the in-game map is looking, or nil when it isn't open. Positions are
 	// in overlay pixels, the same ones DrawImage uses. lat/lng is the map
 	// position at centerX, centerY. moving is true while the map moves, and
-	// after it stops until it's lined up exactly.
+	// after it stops until it's lined up exactly. panelLeft is where a panel
+	// on the right starts (the region list, a point's info), nil with none
+	// open. ui is the game's own UI showing now, a list of {left, top, right,
+	// bottom}, the open panel too.
 	sol::object GetMapView(sol::this_state state) {
 		MapTracking::MapView view = MapTracking::GetView();
 		if (!view.visible) return sol::lua_nil;
@@ -497,7 +501,15 @@ namespace LuaFunctions {
 		float bottom = (float)(view.gameRect.bottom - windowY);
 
 		sol::state_view lua(state);
-		return sol::make_object(state, lua.create_table_with(
+		sol::table ui = lua.create_table();
+		for (const RECT& box : GameUi::Boxes(view.gameRect, view.panelLeft)) {
+			ui.add(lua.create_table_with(
+				"left", (float)(box.left - windowX),
+				"top", (float)(box.top - windowY),
+				"right", (float)(box.right - windowX),
+				"bottom", (float)(box.bottom - windowY)));
+		}
+		sol::table result = lua.create_table_with(
 			"mapId", view.result.mapId,
 			"groupId", view.result.groupId,
 			"floorId", view.result.floorId,
@@ -510,8 +522,11 @@ namespace LuaFunctions {
 			"top", top,
 			"right", right,
 			"bottom", bottom,
-			"moving", view.moving
-		));
+			"moving", view.moving,
+			"ui", ui
+		);
+		if (view.panelLeft >= 0) result["panelLeft"] = (float)(view.panelLeft - windowX);
+		return sol::make_object(state, result);
 	}
 
 	// Call every Update if you draw while the map moves. Otherwise GetMapView
