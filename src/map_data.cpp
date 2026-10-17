@@ -574,9 +574,24 @@ namespace MapData {
 	}
 
 	extern bool downloadItems() {
+		// Types are shared between maps (a common chest is 17 on every map), so
+		// every map's points go into the one file per type, each with its map_id.
+		std::unordered_map<int, json> positions;
 		for (int map_id : MAP_IDS) {
-			if (!downloadItemIcons(map_id) || !downloadItemPositionData(map_id)) {
+			if (!downloadItemIcons(map_id) || !downloadItemPositionData(map_id, positions)) {
 				std::cerr << "[icons] failed to download icons for map " << map_id << std::endl;
+				return false;
+			}
+		}
+
+		fs::path folder = fs::path("items") / "positions";
+		fs::create_directories(folder);
+		for (const auto& [labelId, points] : positions)
+		{
+			if (!writeFile(
+				folder / (std::to_string(labelId) + ".json"),
+				points.dump(2)))
+			{
 				return false;
 			}
 		}
@@ -665,7 +680,7 @@ namespace MapData {
 		return true;
 	}
 
-	extern bool downloadItemPositionData(int map_id)
+	extern bool downloadItemPositionData(int map_id, std::unordered_map<int, json>& positions)
 	{
 		json data;
 
@@ -677,11 +692,6 @@ namespace MapData {
 
 		if (!data.contains("point_list") || !data["point_list"].is_array())
 			return false;
-
-		fs::path folder = fs::path("items") / "positions";
-		fs::create_directories(folder);
-
-		std::unordered_map<int, json> positions;
 
 		for (const auto& point : data["point_list"])
 		{
@@ -701,18 +711,9 @@ namespace MapData {
 			json cleanedPoint = point;
 			cleanedPoint.erase("author_name");
 			cleanedPoint.erase("ctime");
+			cleanedPoint["map_id"] = map_id;
 
 			positions[labelId].push_back(std::move(cleanedPoint));
-		}
-
-		for (const auto& [labelId, points] : positions)
-		{
-			if (!writeFile(
-				folder / (std::to_string(labelId) + ".json"),
-				points.dump(2)))
-			{
-				return false;
-			}
 		}
 
 		return true;

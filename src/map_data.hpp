@@ -7,7 +7,9 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
+#include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 
 // Gets the data the map matching needs into a folder: manifest.tsv plus either
@@ -112,7 +114,7 @@ namespace MapData {
     extern bool downloadPrebuiltIndex(const std::filesystem::path& folder, const Plan& plan, const Progress& progress);
     extern bool downloadItems();
     extern bool downloadItemIcons(int map_id);
-    extern bool downloadItemPositionData(int map_id);
+    extern bool downloadItemPositionData(int map_id, std::unordered_map<int, nlohmann::json>& positions);
 
     // What the app runs on startup. Returns false only when there's nothing usable,
     // with no internet it keeps using whatever is already in the folder.
