@@ -181,6 +181,10 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--make-index") {
         return MapData::makeIndex(argv[2]);
     }
+    // genshin-overlay.exe --make-items <folder>, also used by the map-index workflow
+    if (argc >= 3 && std::string(argv[1]) == "--make-items") {
+        return MapData::makeItems(argv[2]);
+    }
 
     Settings::Load();
 

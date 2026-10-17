@@ -121,11 +121,15 @@ namespace MapTracking {
     // loads the index once, then matches whatever frame follow hands over
     static void workerLoop(std::filesystem::path dataFolder) {
         status = Status::Downloading;
-        bool ready = MapData::ensure(dataFolder, [](const char* stage, int percent) {
+        auto progress = [](const char* stage, int percent) {
             std::lock_guard<std::mutex> lock(mutex);
             downloadStage = stage;
             downloadPercent = percent;
-        }, &stopping);
+        };
+        // the markers and other extensions read these, the map doesn't need them
+        MapData::ensureItems(Helpers::exeDirectory() / "items", progress);
+        if (stopping) return;
+        bool ready = MapData::ensure(dataFolder, progress, &stopping);
         if (stopping) return;
         if (!ready) {
             status = Status::NoData;

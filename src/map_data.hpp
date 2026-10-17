@@ -124,4 +124,12 @@ namespace MapData {
     // --make-index: downloads everything, builds the index and writes the two
     // release files and the small whole maps to folder/out. Returns 3 when the published index is already current.
     extern int makeIndex(const std::filesystem::path& folder);
+
+    // --make-items: downloads the item files into ./items from scratch and packs
+    // them into folder/out. Returns 3 when the published ones are the same.
+    extern int makeItems(const std::filesystem::path& folder);
+
+    // On startup: gets the published item files when they changed. Returns
+    // false only when there are none, old ones are kept when it fails.
+    extern bool ensureItems(const std::filesystem::path& folder, const Progress& progress);
 }

@@ -3,6 +3,7 @@
 #include "locator/map_locator.hpp"
 #include <windows.h>
 #include <bcrypt.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <ctime>
@@ -28,6 +29,12 @@ namespace MapData {
 	// the small whole maps: whole_<map>_<version>.png on disk, whole_<map>.png on the release
 	static const std::string WHOLE = "whole_";
 	static constexpr int META_FORMAT = 1;
+	// the item files (icons, positions, types and regions) as one file, see makeItems
+	static const std::string ITEMS_FILE = "items.pack.gz";
+	static const std::string ITEMS_META_FILE = "items.json";
+	static constexpr int ITEMS_FORMAT = 1;
+	// in the items folder, the sha256 of the pack it came from
+	static const std::string ITEMS_VERSION = "version.txt";
 	static constexpr int DOWNLOAD_THREADS = 16;
 
 	// Teyvat, Enkanomiya, The Chasm, and the separate maps from later versions.
@@ -495,16 +502,20 @@ namespace MapData {
 		return ready;
 	}
 
+	static std::string utcNow() {
+		char text[32];
+		std::time_t now = std::time(nullptr);
+		std::tm utc;
+		gmtime_s(&utc, &now);
+		std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%SZ", &utc);
+		return text;
+	}
+
 	int makeIndex(const fs::path& folder) {
 		std::cout << "Reading HoYoLAB map info..." << std::endl;
 		Plan plan;
 		if (!makePlan(plan)) {
 			std::cerr << "Couldn't read the map API" << std::endl;
-			return 1;
-		}
-
-		if (!downloadItems()) {
-			std::cerr << "Downloading item data failed" << std::endl;
 			return 1;
 		}
 
@@ -542,15 +553,9 @@ namespace MapData {
 		std::string packed;
 		if (raw.empty() || !gzip(raw, packed)) return 1;
 
-		char built[32];
-		std::time_t now = std::time(nullptr);
-		std::tm utc;
-		gmtime_s(&utc, &now);
-		std::strftime(built, sizeof(built), "%Y-%m-%dT%H:%M:%SZ", &utc);
-
 		json meta = {
 			{ "format", META_FORMAT },
-			{ "built", built },
+			{ "built", utcNow() },
 			{ "file", INDEX_FILE },
 			{ "size", packed.size() },
 			{ "rawSize", raw.size() },
@@ -571,6 +576,129 @@ namespace MapData {
 		if (!writeFile(out / INDEX_FILE, packed) || !writeFile(out / META_FILE, meta.dump(1))) return 1;
 		std::cout << "Wrote " << INDEX_FILE << " (" << packed.size() / 1000000.0 << " MB), " << META_FILE << " and the small whole maps" << std::endl;
 		return 0;
+	}
+
+	// Every file in the folder one after the other, each as "path\tsize\n" and
+	// then its bytes. Sorted, so the same files always make the same pack.
+	static bool packFolder(const fs::path& folder, std::string& pack) {
+		std::error_code ec;
+		std::vector<fs::path> files;
+		for (const auto& entry : fs::recursive_directory_iterator(folder, ec)) {
+			if (entry.is_regular_file()) files.push_back(entry.path());
+		}
+		if (ec || files.empty()) return false;
+		std::sort(files.begin(), files.end());
+		for (const fs::path& path : files) {
+			std::string data = readText(path);
+			pack += fs::relative(path, folder).generic_string() + "\t" + std::to_string(data.size()) + "\n";
+			pack += data;
+		}
+		return true;
+	}
+
+	static bool unpackFolder(const std::string& pack, const fs::path& folder) {
+		size_t at = 0;
+		while (at < pack.size()) {
+			size_t tab = pack.find('\t', at), end = pack.find('\n', at);
+			if (tab == std::string::npos || end == std::string::npos || tab > end) return false;
+			std::string name = pack.substr(at, tab - at);
+			std::string sizeText = pack.substr(tab + 1, end - tab - 1);
+			if (sizeText.empty() || sizeText.find_first_not_of("0123456789") != std::string::npos) return false;
+			size_t size = std::stoull(sizeText);
+			at = end + 1;
+			if (size > pack.size() - at) return false;
+			// only paths that stay inside the folder
+			fs::path relative = fs::u8path(name);
+			if (name.empty() || relative.is_absolute() || relative.has_root_name() || name.find("..") != std::string::npos) return false;
+			if (!writeFile(folder / relative, pack.substr(at, size))) return false;
+			at += size;
+		}
+		return true;
+	}
+
+	static bool fetchItemsMeta(json& meta) {
+		Net::Response response;
+		if (!Net::get(RELEASE + ITEMS_META_FILE, response) || response.status != 200) return false;
+		meta = json::parse(response.body, nullptr, false);
+		return !meta.is_discarded() && meta.value("format", 0) == ITEMS_FORMAT;
+	}
+
+	int makeItems(const fs::path& folder) {
+		// from scratch, so types HoYoLAB removed don't stay in
+		std::error_code ec;
+		fs::remove_all("items", ec);
+		if (!downloadItems()) {
+			std::cerr << "Downloading item data failed" << std::endl;
+			return 1;
+		}
+
+		std::string raw, packed;
+		if (!packFolder("items", raw) || !gzip(raw, packed)) return 1;
+		std::string hash = sha256(raw);
+
+		json published;
+		if (fetchItemsMeta(published) && published.value("sha256", "") == hash) {
+			std::cout << "The published item files are already current" << std::endl;
+			return 3;
+		}
+
+		json meta = {
+			{ "format", ITEMS_FORMAT },
+			{ "built", utcNow() },
+			{ "file", ITEMS_FILE },
+			{ "size", packed.size() },
+			{ "rawSize", raw.size() },
+			{ "sha256", hash },
+		};
+		fs::path out = folder / "out";
+		if (!writeFile(out / ITEMS_FILE, packed) || !writeFile(out / ITEMS_META_FILE, meta.dump(1))) return 1;
+		std::cout << "Wrote " << ITEMS_FILE << " (" << packed.size() / 1000000.0 << " MB) and " << ITEMS_META_FILE << std::endl;
+		return 0;
+	}
+
+	bool ensureItems(const fs::path& folder, const Progress& progress) {
+		json meta;
+		if (!fetchItemsMeta(meta)) return fs::exists(folder);
+		std::string hash = meta.value("sha256", "");
+		fs::path version = folder / ITEMS_VERSION;
+		if (hash.empty() || (fs::exists(version) && readText(version) == hash)) return true;
+
+		if (progress) progress("Downloading item files", 0);
+		Net::Response response;
+		std::string raw;
+		if (!Net::get(RELEASE + meta.value("file", ITEMS_FILE), response) || response.status != 200
+			|| !gunzip(response.body, raw, meta.value("rawSize", (size_t)0)) || sha256(raw) != hash) {
+			std::cerr << "Downloading the item files failed" << std::endl;
+			return fs::exists(folder);
+		}
+
+		// unpacked next to the old ones and swapped in, so a failed unpack
+		// leaves the old files as they were
+		std::error_code ec;
+		fs::path fresh = folder, old = folder;
+		fresh += ".new";
+		old += ".old";
+		fs::remove_all(fresh, ec);
+		fs::remove_all(old, ec);
+		if (!unpackFolder(raw, fresh) || !writeFile(fresh / ITEMS_VERSION, hash)) {
+			std::cerr << "Unpacking the item files failed" << std::endl;
+			fs::remove_all(fresh, ec);
+			return fs::exists(folder);
+		}
+		if (fs::exists(folder)) {
+			fs::rename(folder, old, ec);
+			if (ec) {
+				fs::remove_all(fresh, ec);
+				return true;
+			}
+		}
+		fs::rename(fresh, folder, ec);
+		if (ec) {
+			fs::rename(old, folder, ec);
+			return fs::exists(folder);
+		}
+		fs::remove_all(old, ec);
+		return true;
 	}
 
 	extern bool downloadItems() {
