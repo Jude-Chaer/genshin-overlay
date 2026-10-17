@@ -77,7 +77,7 @@ namespace LuaFunctions {
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color); // The "G" is only there because DrawText is already used by the Windows API
     void DrawCircle(float x, float y, float radius, uint32_t color, sol::optional<float> thickness);
     void PushClipRect(float x0, float y0, float x1, float y1);
-    bool ClickArea(float x0, float y0, float x1, float y1);
+    std::tuple<bool, bool> ClickArea(float x0, float y0, float x1, float y1);
     void PopClipRect();
     sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab);
 	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab);

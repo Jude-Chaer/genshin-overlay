@@ -476,13 +476,15 @@ namespace LuaFunctions {
 
 	// Call every Update for something that can be clicked, like a marker. From
 	// the next frame the overlay takes the mouse while it's over the area, so the
-	// click lands here and not in the game. True on the frame it's clicked.
-	bool ClickArea(float x0, float y0, float x1, float y1) {
+	// click lands here and not in the game. Gives back clicked (only on the frame
+	// it's clicked) and hovered.
+	std::tuple<bool, bool> ClickArea(float x0, float y0, float x1, float y1) {
 		CHECK_PERMISSIONS();
 		Overlay::ClaimMouse(x0, y0, x1, y1);
-		// the menu is on top, the click is for it
-		if (Overlay::IO->WantCaptureMouse) return false;
-		return ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsMouseHoveringRect(ImVec2(x0, y0), ImVec2(x1, y1), false);
+		// the menu is on top, the mouse is for it
+		if (Overlay::IO->WantCaptureMouse) return { false, false };
+		bool hovered = ImGui::IsMouseHoveringRect(ImVec2(x0, y0), ImVec2(x1, y1), false);
+		return { hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left), hovered };
 	}
 
 	static nlohmann::json LuaToJson(sol::object obj) {
