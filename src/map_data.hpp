@@ -115,6 +115,7 @@ namespace MapData {
     extern bool downloadItems();
     extern bool downloadItemIcons(int map_id);
     extern bool downloadItemPositionData(int map_id, std::unordered_map<int, nlohmann::json>& positions);
+    extern bool downloadItemAreas(int map_id);
 
     // What the app runs on startup. Returns false only when there's nothing usable,
     // with no internet it keeps using whatever is already in the folder.

@@ -578,7 +578,7 @@ namespace MapData {
 		// every map's points go into the one file per type, each with its map_id.
 		std::unordered_map<int, json> positions;
 		for (int map_id : MAP_IDS) {
-			if (!downloadItemIcons(map_id) || !downloadItemPositionData(map_id, positions)) {
+			if (!downloadItemIcons(map_id) || !downloadItemPositionData(map_id, positions) || !downloadItemAreas(map_id)) {
 				std::cerr << "[icons] failed to download icons for map " << map_id << std::endl;
 				return false;
 			}
@@ -596,6 +596,17 @@ namespace MapData {
 			}
 		}
 		return true;
+	}
+
+	// the regions of a map with their names, icons and boxes, kept as HoYoLAB sends them
+	bool downloadItemAreas(int map_id) {
+		json data;
+		if (!getJson("/v1/map/get_area_pageLabel?map_id=" + std::to_string(map_id) + "&app_sn=ys_obc&lang=en-us", data, true)
+			|| !data.is_object() || !data.contains("list") || !data["list"].is_array()) {
+			std::cerr << "[icons] area list request failed or has an unexpected shape" << std::endl;
+			return false;
+		}
+		return writeFile(fs::path("items") / "maps" / std::to_string(map_id) / "areas.json", data["list"].dump(2));
 	}
 
 	// Some of HoYoLAB's icons are over 1000 px and 3 MB, to be drawn at about 30 px.
@@ -655,6 +666,9 @@ namespace MapData {
 			std::cerr << "[icons] the tree had no id/icon pairs" << std::endl;
 			return false;
 		}
+
+		// the groups and types with their names, for extensions that list them
+		if (!writeFile(fs::path("items") / "maps" / std::to_string(map_id) / "tree.json", data["tree"].dump(2))) return false;
 
 		std::error_code ec;
 		fs::create_directories(folder, ec);

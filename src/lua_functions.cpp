@@ -53,6 +53,8 @@ namespace LuaFunctions {
 		luaState.set_function("LoadTexture", LoadTextureFromFileLua);
 		luaState.set_function("GetItemIcon", GetItemIcon);
 		luaState.set_function("GetItemPositions", GetItemPositions);
+		luaState.set_function("GetItemTree", GetItemTree);
+		luaState.set_function("GetItemAreas", GetItemAreas);
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
@@ -1002,11 +1004,10 @@ namespace LuaFunctions {
 		int width = 0, height = 0;
 		return Helpers::loadTextureFromFile(Helpers::exeDirectory().string() + "/items/icons/" + std::to_string(itemId) + ".png", width, height);
 	}
-	sol::object GetItemPositions(int itemId, sol::this_state state)
-	{
-		std::filesystem::path path = Helpers::exeDirectory() / "items" / "positions" / (std::to_string(itemId) + ".json");
 
-		std::ifstream file(path, std::ios::binary);
+	static sol::object readItemFile(const std::filesystem::path& relative, sol::this_state state)
+	{
+		std::ifstream file(Helpers::exeDirectory() / "items" / relative, std::ios::binary);
 		if (!file)
 			return sol::lua_nil;
 
@@ -1015,5 +1016,24 @@ namespace LuaFunctions {
 			return sol::lua_nil;
 
 		return JsonToLua(data, sol::state_view(state));
+	}
+
+	// every point of one type, on every map, each with its map_id
+	sol::object GetItemPositions(int itemId, sol::this_state state)
+	{
+		return readItemFile(std::filesystem::path("positions") / (std::to_string(itemId) + ".json"), state);
+	}
+
+	// HoYoLAB's groups of a map, each with its types (id, name, icon) as children
+	sol::object GetItemTree(int mapId, sol::this_state state)
+	{
+		return readItemFile(std::filesystem::path("maps") / std::to_string(mapId) / "tree.json", state);
+	}
+
+	// HoYoLAB's regions: id, name, map_id and the box they cover (l_x, l_y, r_x, r_y).
+	// It sends the regions of every map with each one, so check map_id.
+	sol::object GetItemAreas(int mapId, sol::this_state state)
+	{
+		return readItemFile(std::filesystem::path("maps") / std::to_string(mapId) / "areas.json", state);
 	}
 }

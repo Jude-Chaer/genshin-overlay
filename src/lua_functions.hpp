@@ -70,6 +70,8 @@ namespace LuaFunctions {
     GLuint GetMapTile(int mapId, int x, int y, int size);
     GLuint GetItemIcon(int itemId);
     sol::object GetItemPositions(int itemId, sol::this_state state);
+    sol::object GetItemTree(int mapId, sol::this_state state);
+    sol::object GetItemAreas(int mapId, sol::this_state state);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color); // The "G" is only there because DrawText is already used by the Windows API
