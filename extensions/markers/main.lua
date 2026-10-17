@@ -317,45 +317,78 @@ local BAR_BADGE = 40
 local BAR_GAP = 6
 local BAR_PAD = 7
 
+local BAR_MARGIN = 20
+-- whether the "+N" badge has the rest of the bar open below it
+local barOpen = false
+-- where the bar went with no panel open, it stays there while one is
+local barGap
+
+-- The widest stretch along the top that the game's UI leaves free, at the
+-- bar's height. An open panel is one of the boxes, so it's left of that too.
+local function topGap(view, y0, y1)
+    local spans = { { view.left, view.right } }
+    for _, box in ipairs(view.ui) do
+        if box.top < y1 and box.bottom > y0 then
+            local cut = {}
+            for _, span in ipairs(spans) do
+                if box.right <= span[1] or box.left >= span[2] then
+                    cut[#cut + 1] = span
+                else
+                    if box.left > span[1] then cut[#cut + 1] = { span[1], box.left } end
+                    if box.right < span[2] then cut[#cut + 1] = { box.right, span[2] } end
+                end
+            end
+            spans = cut
+        end
+    end
+    local best = { view.left, view.right }
+    if #spans > 0 then
+        best = spans[1]
+        for _, span in ipairs(spans) do
+            if span[2] - span[1] > best[2] - best[1] then best = span end
+        end
+    end
+    return best[1] + BAR_MARGIN, best[2] - BAR_MARGIN
+end
+
 local function drawBar(view)
     if not GetSetting("mapBar") or #barTypes == 0 then return end
     local allButton = #barTypes > 1 and 1 or 0
-
-    -- as many as fit, the rest stay in the menu
-    local room = view.right - view.left - 80
-    local fit = math.max(1, math.floor((room - BAR_PAD * 2 + BAR_GAP) / (BAR_BADGE + BAR_GAP)) - allButton)
-    local count = math.min(#barTypes, fit)
-    local slots = count + allButton
-
-    local width = slots * BAR_BADGE + (slots - 1) * BAR_GAP + BAR_PAD * 2
     local height = BAR_BADGE + BAR_PAD * 2
-    local x0 = view.centerX - width / 2
+    local step = BAR_BADGE + BAR_GAP
     local y0 = view.top + 18
-    -- the whole bar takes the mouse, a tap between two badges shouldn't move the map
-    ClickArea(x0, y0, x0 + width, y0 + height)
 
-    DrawRect(x0, y0, x0 + width, y0 + height, 0x1C2030D0, height / 2)
-    DrawRect(x0, y0, x0 + width, y0 + height, 0xD3BC8E60, height / 2, 1.5)
+    -- as many as fit in the gap, the rest open from a "+N" badge at the end
+    local left, right = topGap(view, y0, y0 + height)
+    local size = view.right - view.left
+    if not view.panelLeft then
+        barGap = { left = left, right = right, size = size }
+    elseif barGap and barGap.size == size then
+        left, right = barGap.left, barGap.right
+    end
+    local slots = math.max(2, math.floor((right - left - BAR_PAD * 2 + BAR_GAP) / step))
+    local count, more = #barTypes, 0
+    if count + allButton > slots then
+        count = math.max(1, slots - allButton - 1)
+        more = #barTypes - count
+    end
+    if more == 0 then barOpen = false end
+    local used = count + allButton + (more > 0 and 1 or 0)
+
+    local width = used * BAR_BADGE + (used - 1) * BAR_GAP + BAR_PAD * 2
+    local x0 = math.max(view.left, (left + right) / 2 - width / 2)
+    local bottom = y0 + height
+    -- the whole bar takes the mouse, a tap between two badges shouldn't move the map
+    ClickArea(x0, y0, x0 + width, bottom)
+
+    DrawRect(x0, y0, x0 + width, bottom, 0x1C2030D0, height / 2)
+    DrawRect(x0, y0, x0 + width, bottom, 0xD3BC8E60, height / 2, 1.5)
 
     local label, labelX
     local y = y0 + height / 2
     local half = BAR_BADGE / 2
 
-    if allButton == 1 then
-        local x = x0 + BAR_PAD + half
-        local clicked, hovered = ClickArea(x - half, y - half, x + half, y + half)
-        if clicked then toggleHideAll() end
-        drawMarker(x, y, hovered and half * 1.08 or half, 0, hiddenBefore ~= nil)
-        local w, h = TextSize("All", 15)
-        DrawText("All", x - w / 2, y - h / 2, 15, hiddenBefore and faded(0xECE5D8FF, DONE_OPACITY) or 0xECE5D8FF)
-        if hovered then
-            label, labelX = hiddenBefore and "Show the ones from before" or "Hide all", x - half
-        end
-    end
-
-    for i = 1, count do
-        local id = barTypes[i]
-        local x = x0 + BAR_PAD + (i - 1 + allButton) * (BAR_BADGE + BAR_GAP) + half
+    local function typeBadge(id, x, y)
         local clicked, hovered = ClickArea(x - half, y - half, x + half, y + half)
         if clicked then
             hidden[id] = not hidden[id] or nil
@@ -370,10 +403,53 @@ local function drawBar(view)
         end
     end
 
-    -- the name under the badge the mouse is on
+    local function textBadge(x, text, dim)
+        local clicked, hovered = ClickArea(x - half, y - half, x + half, y + half)
+        drawMarker(x, y, hovered and half * 1.08 or half, 0, dim)
+        local w, h = TextSize(text, 15)
+        DrawText(text, x - w / 2, y - h / 2, 15, dim and faded(0xECE5D8FF, DONE_OPACITY) or 0xECE5D8FF)
+        return clicked, hovered
+    end
+
+    if allButton == 1 then
+        local x = x0 + BAR_PAD + half
+        local clicked, hovered = textBadge(x, "All", hiddenBefore ~= nil)
+        if clicked then toggleHideAll() end
+        if hovered then
+            label, labelX = hiddenBefore and "Show the ones from before" or "Hide all", x - half
+        end
+    end
+
+    for i = 1, count do
+        typeBadge(barTypes[i], x0 + BAR_PAD + (i - 1 + allButton) * step + half, y)
+    end
+
+    if more > 0 then
+        local x = x0 + BAR_PAD + (used - 1) * step + half
+        local clicked, hovered = textBadge(x, barOpen and "-" or "+" .. more, false)
+        if clicked then barOpen = not barOpen end
+        if hovered then label, labelX = barOpen and "Show fewer" or more .. " more", x - half end
+
+        -- the rest in rows under the bar, as wide as it
+        if barOpen then
+            local perRow = used
+            local rows = math.ceil(more / perRow)
+            local top = bottom + 6
+            bottom = top + rows * step - BAR_GAP + BAR_PAD * 2
+            ClickArea(x0, top, x0 + width, bottom)
+            DrawRect(x0, top, x0 + width, bottom, 0x1C2030D0, half + BAR_PAD)
+            DrawRect(x0, top, x0 + width, bottom, 0xD3BC8E60, half + BAR_PAD, 1.5)
+            for i = 1, more do
+                local column, row = (i - 1) % perRow, math.floor((i - 1) / perRow)
+                typeBadge(barTypes[count + i], x0 + BAR_PAD + column * step + half, top + BAR_PAD + row * step + half)
+            end
+        end
+    end
+
+    -- the name under the badge the mouse is on, below everything that's open
     if label then
         local w, h = TextSize(label, 16)
-        local ty = y0 + height + 8
+        local ty = bottom + 8
         DrawRect(labelX - 8, ty - 5, labelX + w + 8, ty + h + 5, 0x1C2030E0, 6)
         DrawText(label, labelX, ty, 16, 0xECE5D8FF)
     end
@@ -582,8 +658,9 @@ local function drawGuide(view, half)
     local markerY = view.centerY + (openGuide.y - view.lat) / view.unitsPerPixel
 
     k = GetSetting("guideScale") / 100
-    local width = math.min(px(400), view.right - view.left - GUIDE_GAP * 2)
-    local x0 = math.max(view.left + GUIDE_GAP, math.min(markerX - width / 2, view.right - width - GUIDE_GAP))
+    local right = view.panelLeft or view.right
+    local width = math.min(px(400), right - view.left - GUIDE_GAP * 2)
+    local x0 = math.max(view.left + GUIDE_GAP, math.min(markerX - width / 2, right - width - GUIDE_GAP))
     local below = view.bottom - GUIDE_GAP - (markerY + half + GUIDE_GAP)
     local above = (markerY - half - GUIDE_GAP) - (view.top + GUIDE_GAP)
     local room = math.max(below, above)
@@ -675,6 +752,14 @@ local function drawCount(x, y, half, count, allDone)
     DrawText(label, bx - w / 2, by - h / 2, size, 0x1C2030FF)
 end
 
+-- the game's own UI showing now, a marker under it isn't drawn
+local function underUi(view, x, y, half)
+    for _, box in ipairs(view.ui) do
+        if x + half > box.left and x - half < box.right and y + half > box.top and y - half < box.bottom then return true end
+    end
+    return false
+end
+
 local function drawOnMap(view)
     local half = MAP_MARKER / 2 * GetSetting("mapScale") / 100
     local filter = regionFilter(view.mapId, view.lng, view.lat)
@@ -695,7 +780,8 @@ local function drawOnMap(view)
                     -- x_pos / y_pos are the same map units as the view's lng / lat
                     local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
                     local y = view.centerY + (point.y - view.lat) / view.unitsPerPixel
-                    if x + half > view.left and x - half < view.right and y + half > view.top and y - half < view.bottom then
+                    if x + half > view.left and x - half < view.right and y + half > view.top and y - half < view.bottom
+                        and not underUi(view, x, y, half) then
                         n = n + 1
                         onScreen.x[n], onScreen.y[n], onScreen.point[n], onScreen.type[n] = x, y, point, id
                     end
