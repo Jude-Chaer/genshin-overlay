@@ -19,6 +19,7 @@ namespace LuaFunctions {
 		{ "LuaFunctions::GDrawText", {Extensions::ExtensionPermissionTypes::DisplayOverlay}}, 
         { "LuaFunctions::ClickArea", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
         { "LuaFunctions::DrawCircle", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
+        { "LuaFunctions::DrawRect", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
         { "LuaFunctions::ReadFile", {Extensions::ExtensionPermissionTypes::InternalReadfile}}, // External has to be checked within the function, once the paths are resolved
 		{ "LuaFunctions::WriteFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved
 		{ "LuaFunctions::AppendFile", {Extensions::ExtensionPermissionTypes::InternalWritefile}}, // External has to be checked within the function, once the paths are resolved}
@@ -76,6 +77,8 @@ namespace LuaFunctions {
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color); // The "G" is only there because DrawText is already used by the Windows API
     void DrawCircle(float x, float y, float radius, uint32_t color, sol::optional<float> thickness);
+    void DrawRect(float x0, float y0, float x1, float y1, uint32_t color, sol::optional<float> rounding, sol::optional<float> thickness);
+    std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size);
     void PushClipRect(float x0, float y0, float x1, float y1);
     std::tuple<bool, bool> ClickArea(float x0, float y0, float x1, float y1);
     void PopClipRect();

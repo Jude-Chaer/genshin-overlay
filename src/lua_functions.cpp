@@ -65,6 +65,8 @@ namespace LuaFunctions {
 		luaState.set_function("DrawImage", DrawImage);
 		luaState.set_function("DrawText", GDrawText);
 		luaState.set_function("DrawCircle", DrawCircle);
+		luaState.set_function("DrawRect", DrawRect);
+		luaState.set_function("TextSize", TextSize);
 		luaState.set_function("PushClipRect", PushClipRect);
 		luaState.set_function("PopClipRect", PopClipRect);
 		luaState.set_function("ClickArea", ClickArea);
@@ -464,6 +466,21 @@ namespace LuaFunctions {
 		ImU32 col = IM_COL32((color >> 24) & 0xFF, (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
 		if (thickness) ImGui::GetBackgroundDrawList()->AddCircle(ImVec2(x, y), radius, col, 0, *thickness);
 		else ImGui::GetBackgroundDrawList()->AddCircleFilled(ImVec2(x, y), radius, col);
+	}
+
+	// how wide and tall DrawText would draw this text
+	std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size) {
+		ImVec2 measured = ImGui::GetFont()->CalcTextSizeA(size.value_or(ImGui::GetFontSize()), FLT_MAX, 0.0f, text.c_str());
+		return { measured.x, measured.y };
+	}
+
+	// color is 0xRRGGBBAA. Filled, or only the outline when a thickness is given.
+	void DrawRect(float x0, float y0, float x1, float y1, uint32_t color, sol::optional<float> rounding, sol::optional<float> thickness) {
+		CHECK_PERMISSIONS();
+		ImU32 col = IM_COL32((color >> 24) & 0xFF, (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+		float round = rounding.value_or(0.0f);
+		if (thickness) ImGui::GetBackgroundDrawList()->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), col, round, 0, *thickness);
+		else ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), col, round);
 	}
 
 	void PushClipRect(float x0, float y0, float x1, float y1) {
