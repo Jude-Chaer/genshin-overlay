@@ -85,6 +85,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\appsample.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\helpers.cpp" />
@@ -101,6 +102,7 @@
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\locator_tests.cpp" />
@@ -112,6 +114,7 @@
     <ClCompile Include="tests\test_map.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\appsample.hpp" />
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\helpers.hpp" />

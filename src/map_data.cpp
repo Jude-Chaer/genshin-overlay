@@ -1,4 +1,5 @@
 #include "map_data.hpp"
+#include "appsample.hpp"
 #include "net.hpp"
 #include "locator/map_locator.hpp"
 #include <windows.h>
@@ -23,6 +24,7 @@ namespace MapData {
 	static const std::string API = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc";
 	static const std::string STATIC_API = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc";
 	static const std::string TILES = "https://act-webstatic.hoyoverse.com/map_manage/map/";
+	static const std::string APPSAMPLE = "https://game-data.lemonapi.com/gim/markers_all.v5.compressed.json";
 	static const std::string RELEASE = "https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
 	static const std::string INDEX_FILE = "map-index.bin.gz";
 	static const std::string META_FILE = "map-index.json";
@@ -723,7 +725,35 @@ namespace MapData {
 				return false;
 			}
 		}
+		downloadAppsamplePairs(positions);
 		return true;
+	}
+
+	// Which appsample point each HoYoLAB point is, for showing its comments.
+	// When appsample can't be reached the file is left out and the rest still gets made.
+	bool downloadAppsamplePairs(const std::unordered_map<int, json>& positions) {
+		Net::Response response;
+		std::vector<Appsample::Point> theirs;
+		if (!Net::get(APPSAMPLE, response) || response.status != 200 || !Appsample::decode(response.body, theirs)) {
+			std::cerr << "[appsample] couldn't get their points, leaving out the comments" << std::endl;
+			return false;
+		}
+
+		std::vector<Appsample::Point> ours;
+		for (const auto& [labelId, points] : positions) {
+			for (const json& point : points) {
+				if (!point.contains("id") || !point["id"].is_number_integer() || !point.contains("x_pos") || !point["x_pos"].is_number()
+					|| !point.contains("y_pos") || !point["y_pos"].is_number()) continue;
+				ours.push_back({ point["id"].get<int64_t>(), point.value("map_id", 0), labelId, point.value("area_id", 0),
+					point["x_pos"].get<double>(), point["y_pos"].get<double>() });
+			}
+		}
+		std::map<int64_t, int64_t> pairs = Appsample::pair(ours, theirs);
+
+		json file = json::object();
+		for (const auto& [ourId, theirId] : pairs) file[std::to_string(ourId)] = theirId;
+		std::cout << "[appsample] " << pairs.size() << " of " << ours.size() << " points paired" << std::endl;
+		return writeFile(fs::path("items") / "appsample.json", file.dump());
 	}
 
 	// the regions of a map with their names, icons and boxes, kept as HoYoLAB sends them
