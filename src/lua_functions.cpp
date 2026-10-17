@@ -62,6 +62,7 @@ namespace LuaFunctions {
 		luaState.set_function("GetMapFloor", GetMapFloor);
 		luaState.set_function("DrawImage", DrawImage);
 		luaState.set_function("DrawText", GDrawText);
+		luaState.set_function("DrawCircle", DrawCircle);
 		luaState.set_function("PushClipRect", PushClipRect);
 		luaState.set_function("PopClipRect", PopClipRect);
 		luaState.set_function("ClickArea", ClickArea);
@@ -453,6 +454,14 @@ namespace LuaFunctions {
 		int a = (int)(alpha.value_or(1.0f) * 255.0f);
 		ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)textureID, ImVec2(x0, y0), ImVec2(x1, y1),
 			ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+	}
+
+	// color is 0xRRGGBBAA like DrawText. Filled, or only the outline when a thickness is given.
+	void DrawCircle(float x, float y, float radius, uint32_t color, sol::optional<float> thickness) {
+		CHECK_PERMISSIONS();
+		ImU32 col = IM_COL32((color >> 24) & 0xFF, (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+		if (thickness) ImGui::GetBackgroundDrawList()->AddCircle(ImVec2(x, y), radius, col, 0, *thickness);
+		else ImGui::GetBackgroundDrawList()->AddCircleFilled(ImVec2(x, y), radius, col);
 	}
 
 	void PushClipRect(float x0, float y0, float x1, float y1) {
