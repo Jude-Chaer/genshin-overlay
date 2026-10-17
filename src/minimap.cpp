@@ -88,9 +88,10 @@ namespace MiniMap {
     // a lot of chances to fit by accident, so those have to fit this well.
     // The real ones are 0.6 and up.
     static constexpr double FOUND_ANY = 0.5;
-    // Floor pictures kept in memory, up to 2.6 MB each: this many for a
-    // search, and for the looks as many as there can be layers at one spot.
-    static constexpr size_t FLOORS_KEPT = 3, FLOORS_LOOKED = 6;
+    // Bytes of floor pictures kept in memory: three of the biggest (2.6 MB)
+    // for a search, and for the looks as many as there can be layers at one
+    // spot. Most are a lot smaller, the middle one is 17 KB.
+    static constexpr size_t FLOORS_KEPT = 8'000'000, FLOORS_LOOKED = 16'000'000;
     // Floor pictures that aren't on disk are downloaded this many at a time
     // while the minimap is on screen and not found, FETCH_EVERY seconds apart.
     static constexpr int FETCH = 20;
@@ -135,7 +136,7 @@ namespace MiniMap {
     // Floor pictures in memory, shrunk by SHRINK, by their place in that
     // list.
     struct FloorPictures {
-        explicit FloorPictures(size_t kept) : m_kept(kept) {}
+        explicit FloorPictures(size_t bytes) : m_bytes(bytes) {}
         // empty if it isn't there
         cv::Mat Get(int index) {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -145,25 +146,30 @@ namespace MiniMap {
             m_order.push_back(index);
             return it->second;
         }
-        // the one that wasn't used for longest makes room
+        // the ones that weren't used for longest make room
         void Put(int index, const cv::Mat& picture) {
             std::lock_guard<std::mutex> lock(m_mutex);
             if (m_pictures.count(index)) return;
-            if (m_order.size() >= m_kept) {
+            size_t bytes = picture.total() * picture.elemSize();
+            while (!m_order.empty() && m_used + bytes > m_bytes) {
+                const cv::Mat& old = m_pictures[m_order.front()];
+                m_used -= old.total() * old.elemSize();
                 m_pictures.erase(m_order.front());
                 m_order.pop_front();
             }
             m_order.push_back(index);
             m_pictures[index] = picture;
+            m_used += bytes;
         }
         void Clear() {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_pictures.clear();
             m_order.clear();
+            m_used = 0;
         }
 
     private:
-        size_t m_kept;
+        size_t m_bytes, m_used = 0;
         std::mutex m_mutex;
         std::map<int, cv::Mat> m_pictures;
         std::deque<int> m_order;
