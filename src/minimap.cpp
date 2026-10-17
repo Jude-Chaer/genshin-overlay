@@ -42,6 +42,11 @@ namespace MiniMap {
     // middle of that finds a zoom that's never seen again. The longest one
     // on the way was followed for 1.4 seconds.
     static constexpr double ZOOM_STAYS = 3.0;
+    // The map matching is asked again only once the minimap changed this many
+    // gray levels on average since it last found nothing, around the arrow.
+    // In a domain or standing still it's the same picture and the same no.
+    // The ones it found after a no had changed by 13 and more.
+    static constexpr double CHANGED = 4.0;
     // the N at the top of the minimap is there when that spot looks this much like one
     static constexpr double NORTH = 0.45;
     // Only the details are compared, what's left after taking away the picture
@@ -963,7 +968,16 @@ namespace MiniMap {
     Spot Watcher::locate(const cv::Mat& grab, const cv::Mat& mini, bool there, double seconds) {
         Spot spot;
         if (!m_locate) return spot;
+        static const cv::Mat around = ring(SIZE);
+        if (!m_noMini.empty()) {
+            cv::Mat change;
+            cv::absdiff(mini, m_noMini, change);
+            if (cv::mean(change, around)[0] < CHANGED) return spot;
+        }
         MapLocator::Result result = m_locate(grab);
+        // When it answered but the look there didn't agree, the picture there
+        // can still be loading. That doesn't count, the next look asks again.
+        if (!result.found) m_noMini = mini;
         if (!result.found || result.unitsPerPixel <= 0.0) return spot;
 
         double zoom = UNITS_ACROSS / (result.unitsPerPixel * grab.cols);
@@ -1306,6 +1320,7 @@ namespace MiniMap {
         m_area = Area();
         m_answered = Spot();
         m_missed.release();
+        m_noMini.release();
         m_areaAsked.release();
         drop();
         return m_last;

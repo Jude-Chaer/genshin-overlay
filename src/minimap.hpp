@@ -202,6 +202,8 @@ namespace MiniMap {
         std::vector<Spot> m_places;
         // the minimap the quick places didn't have, they aren't asked twice
         cv::Mat m_missed;
+        // the minimap the map matching last found nothing for
+        cv::Mat m_noMini;
         // the minimap the area was last searched for, the same here
         cv::Mat m_areaAsked;
         // where a search found a minimap that had changed by the time it answered
