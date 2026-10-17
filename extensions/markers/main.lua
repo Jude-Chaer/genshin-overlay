@@ -5,8 +5,6 @@ metadata = {
     version = "0.3.0",
 }
 
--- only Teyvat for now
-local MAP_ID = 2
 local SELECTION_FILE = "selection.json"
 local DONE_FILE = "done.json"
 -- what's on the first time: common chests
@@ -16,8 +14,9 @@ local DEFAULT_TYPES = { 17 }
 local groups = {}
 local typeNames = {}
 local allTypes = {}
--- Teyvat's regions with the box each one covers
+-- every map's regions with the box each one covers, and the maps they're on
 local regions = {}
+local maps = {}
 
 -- what the user picked
 local selected = {}  -- type id -> true
@@ -31,11 +30,11 @@ local openGroups = {}
 -- the picked types in the menu's order, for the bar on the map
 local barTypes = {}
 
-local points = {}    -- type id -> its points on this map
+local points = {}    -- type id -> map id -> its points there
 local icons = {}     -- type id -> texture, 0 when it has none
 -- HoYoLAB point id -> true, marked from a marker's guide
 local done = {}
--- the marker whose guide is open: { id, type, x, y }, and which of its comments shows
+-- the marker whose guide is open: { id, type, map, x, y }, and which of its comments shows
 local openGuide
 local commentAt = 1
 -- where the guide was last frame, a tap there isn't for the markers under it
@@ -66,24 +65,27 @@ local function iconOf(id)
     return icon
 end
 
--- the item files have every map, only this one's points are kept
+-- the item files have a type's points on every map together, split by map here
 local function loadPoints(id)
-    local list = {}
+    local byMap = {}
     for _, point in ipairs(GetItemPositions(id) or {}) do
-        if point.map_id == MAP_ID then
-            -- points underground say which floor they're on
-            local group = point.point_group
-            list[#list + 1] = {
-                id = point.id,
-                x = point.x_pos,
-                y = point.y_pos,
-                area = point.area_id,
-                group = group and group.group_id or 0,
-                floor = group and group.floor_id or 0,
-            }
+        local list = byMap[point.map_id]
+        if not list then
+            list = {}
+            byMap[point.map_id] = list
         end
+        -- points underground say which floor they're on
+        local group = point.point_group
+        list[#list + 1] = {
+            id = point.id,
+            x = point.x_pos,
+            y = point.y_pos,
+            area = point.area_id,
+            group = group and group.group_id or 0,
+            floor = group and group.floor_id or 0,
+        }
     end
-    points[id] = list
+    points[id] = byMap
 end
 
 -- ids read back from a file, older saves have them as 17.0
@@ -137,21 +139,45 @@ end
 -- The overlay downloads the item files on start, the first time they may not
 -- be there yet when Init runs. Update tries again until they are.
 local function loadItemFiles()
-    groups, typeNames, allTypes, regions, icons = {}, {}, {}, {}, {}
-    for _, group in ipairs(GetItemTree(MAP_ID) or {}) do
-        local types = {}
-        for _, kind in ipairs(group.children or {}) do
-            -- types with nothing on this map aren't worth a tile
-            if (kind.point_count or 0) > 0 then
-                types[#types + 1] = { id = kind.id, name = kind.name, count = kind.point_count }
-                typeNames[kind.id] = kind.name
-                allTypes[#allTypes + 1] = types[#types]
+    groups, typeNames, allTypes, regions, maps, icons = {}, {}, {}, {}, {}, {}
+    -- each map's file has the regions of all of them
+    local seen = {}
+    for _, area in ipairs(GetItemAreas(2) or {}) do
+        regions[#regions + 1] = area
+        if not seen[area.map_id] then
+            seen[area.map_id] = true
+            maps[#maps + 1] = area.map_id
+        end
+    end
+
+    -- Each map has its own list of groups and types, mostly the same ones.
+    -- They go into one list, a type's count is all maps together.
+    local groupOf, typeOf = {}, {}
+    for _, mapId in ipairs(maps) do
+        for _, group in ipairs(GetItemTree(mapId) or {}) do
+            for _, kind in ipairs(group.children or {}) do
+                -- types with nothing on this map aren't worth a tile
+                local count = kind.point_count or 0
+                if count > 0 then
+                    local merged = groupOf[group.id]
+                    if not merged then
+                        merged = { id = group.id, name = group.name, types = {} }
+                        groupOf[group.id] = merged
+                        groups[#groups + 1] = merged
+                    end
+                    local known = typeOf[kind.id]
+                    if known then
+                        known.count = known.count + count
+                    else
+                        known = { id = kind.id, name = kind.name, count = count }
+                        typeOf[kind.id] = known
+                        merged.types[#merged.types + 1] = known
+                        typeNames[kind.id] = kind.name
+                        allTypes[#allTypes + 1] = known
+                    end
+                end
             end
         end
-        if #types > 0 then groups[#groups + 1] = { id = group.id, name = group.name, types = types } end
-    end
-    for _, area in ipairs(GetItemAreas(MAP_ID) or {}) do
-        if area.map_id == MAP_ID then regions[#regions + 1] = area end
     end
     for id in pairs(selected) do loadPoints(id) end
     updateBar()
@@ -182,11 +208,11 @@ function Init()
     end
 end
 
--- the region a spot is in. The boxes overlap at the edges, the smallest one wins.
-local function regionAt(x, y)
+-- the region a spot on a map is in. The boxes overlap at the edges, the smallest one wins.
+local function regionAt(mapId, x, y)
     local best, bestSize
     for _, area in ipairs(regions) do
-        if x >= area.l_x and x <= area.r_x and y >= area.l_y and y <= area.r_y then
+        if area.map_id == mapId and x >= area.l_x and x <= area.r_x and y >= area.l_y and y <= area.r_y then
             local size = (area.r_x - area.l_x) * (area.r_y - area.l_y)
             if not best or size < bestSize then best, bestSize = area, size end
         end
@@ -196,8 +222,8 @@ end
 
 -- Which regions to draw for a spot: a set of ids, or nil for everywhere.
 -- "Where I am" outside of every region shows everything.
-local function regionFilter(x, y)
-    local here = regionAt(x, y)
+local function regionFilter(mapId, x, y)
+    local here = regionAt(mapId, x, y)
     lastRegion = here
     if onlyHere then
         return here and { [here.id] = true } or nil
@@ -234,8 +260,8 @@ local function onFloor(point, groupId, floorId)
     return point.group == groupId and (point.group == 0 or point.floor == floorId)
 end
 
-local function shown(id)
-    return selected[id] and not hidden[id] and points[id]
+local function shown(id, mapId)
+    return selected[id] and not hidden[id] and points[id] and points[id][mapId]
 end
 
 -- Hides every type on the bar, or brings back the ones that were showing
@@ -485,7 +511,7 @@ local GUIDE_GAP = 10
 local function drawGuide(view, half)
     guideRect = nil
     if not openGuide then return end
-    local guide = GetPointGuide(MAP_ID, openGuide.id, openGuide.type)
+    local guide = GetPointGuide(openGuide.map, openGuide.id, openGuide.type)
     local markerX = view.centerX + (openGuide.x - view.lng) / view.unitsPerPixel
     local markerY = view.centerY + (openGuide.y - view.lat) / view.unitsPerPixel
 
@@ -515,18 +541,18 @@ local function drawGuide(view, half)
 end
 
 -- tapping a marker opens its guide, the same one again closes it
-local function tapMarker(point, id)
+local function tapMarker(point, id, mapId)
     if openGuide and openGuide.id == point.id then
         openGuide = nil
     else
-        openGuide = { id = point.id, type = id, x = point.x, y = point.y }
+        openGuide = { id = point.id, type = id, map = mapId, x = point.x, y = point.y }
         commentAt = 1
     end
 end
 
 local function drawOnMap(view)
     local half = MAP_MARKER / 2 * GetSetting("mapScale") / 100
-    local filter = regionFilter(view.lng, view.lat)
+    local filter = regionFilter(view.mapId, view.lng, view.lat)
     -- Only the middle of a badge takes taps, so the map can still be dragged
     -- from right next to one. Only the one under the mouse is claimed.
     local tapHalf = GetSetting("tapGuides") and half * 0.6
@@ -537,7 +563,7 @@ local function drawOnMap(view)
 
     PushClipRect(view.left, view.top, view.right, view.bottom)
     for _, id in ipairs(barTypes) do
-        local list = shown(id)
+        local list = shown(id, view.mapId)
         if list then
             local icon = iconOf(id)
             for _, point in ipairs(list) do
@@ -549,7 +575,7 @@ local function drawOnMap(view)
                         drawMarker(x, y, half, icon, done[point.id])
                         if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
                             and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
-                            tapMarker(point, id)
+                            tapMarker(point, id, view.mapId)
                         end
                     end
                 end
@@ -571,9 +597,9 @@ local function drawOnMinimap(player)
     -- the minimap is a circle, only what's fully inside it is drawn
     local inside = player.radius - half
     local hideDone = GetSetting("hideDoneMinimap")
-    local filter = regionFilter(player.lng, player.lat)
+    local filter = regionFilter(player.mapId, player.lng, player.lat)
     for _, id in ipairs(barTypes) do
-        local list = shown(id)
+        local list = shown(id, player.mapId)
         if list then
             local icon = iconOf(id)
             for _, point in ipairs(list) do
@@ -610,14 +636,16 @@ function Update()
 
     local view = GetMapView()
     if view then
-        if view.mapId == MAP_ID then drawOnMap(view) end
+        -- a guide from another map closes when the map switches
+        if openGuide and openGuide.map ~= view.mapId then openGuide, guideRect = nil, nil end
+        drawOnMap(view)
         return
     end
     -- the guide closes with the map
     openGuide, guideRect = nil, nil
 
     local player = GetPlayerPosition()
-    if player.found and player.mapId == MAP_ID then drawOnMinimap(player) end
+    if player.found then drawOnMinimap(player) end
 end
 
 -- the menu page
