@@ -47,6 +47,7 @@ function RegisterSettings()
     DefineExtensionSetting("mapScale", "Marker size on the map (%)", "int", 100, 20, 200)
     DefineExtensionSetting("minimapScale", "Marker size on the minimap (%)", "int", 100, 20, 200)
     DefineExtensionSetting("hideDoneMinimap", "Hide collected ones on the minimap", "bool", true)
+    DefineExtensionSetting("hideDoneMap", "Hide collected ones on the map", "bool", false)
     DefineExtensionSetting("mapBar", "Show the picked types as a bar on the map", "bool", true)
     DefineExtensionSetting("mergeClose", "Merge markers that overlap into one with a count", "bool", false)
     DefineExtensionSetting("tapGuides", "Tap a marker on the map to see its guide", "bool", true)
@@ -773,12 +774,15 @@ local function drawOnMap(view)
         tapHalf = nil
     end
 
+    -- the one whose guide is open stays, so it can still be unmarked
+    local hideDone = GetSetting("hideDoneMap")
     local n = 0
     for _, id in ipairs(barTypes) do
         local list = shown(id, view.mapId)
         if list then
             for _, point in ipairs(list) do
-                if onFloor(point, view.groupId, view.floorId) and (not filter or filter[point.area]) then
+                if onFloor(point, view.groupId, view.floorId) and (not filter or filter[point.area])
+                    and not (hideDone and done[point.id] and not (openGuide and openGuide.id == point.id)) then
                     -- x_pos / y_pos are the same map units as the view's lng / lat
                     local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
                     local y = view.centerY + (point.y - view.lat) / view.unitsPerPixel
