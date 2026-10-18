@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -50,20 +51,32 @@ namespace GamePackets {
         explicit Sniffer(const Keys& keys);
         ~Sniffer();
 
-        // one ethernet frame, the messages it finishes get added to out
-        Event Feed(const uint8_t* frame, size_t size, std::vector<Command>& out);
+        // one ethernet frame caught at ms (unix, 0 for now), the messages it
+        // finishes get added to out
+        Event Feed(const uint8_t* frame, size_t size, std::vector<Command>& out, uint64_t ms = 0);
+        // waits for the long search, for replays
+        void FinishSearch(std::vector<Command>& out);
 
         // why nothing decodes right now, empty while it works
         const std::string& Problem() const { return m_problem; }
-        bool HasKey() const { return m_key != KeyKind::None; }
+        bool HasKey() const { return m_key == KeyKind::Dispatch || m_key == KeyKind::Session; }
+        // when the game was started, unix ms. With it a missed first login can
+        // still be found, by looking at every time since then
+        void SetGameStart(uint64_t unixMs) { m_gameStart = unixMs; }
+        // the long search runs, messages wait for it
+        bool Searching() const { return m_key == KeyKind::Searching; }
 
     private:
-        enum class KeyKind { None, Dispatch, Session };
+        enum class KeyKind { None, Dispatch, Session, Searching, Lost };
         struct Kcp;
         struct Rsa;
+        struct Search;
 
         void receive(Direction direction, const uint8_t* data, size_t size, std::vector<Command>& out);
         bool decode(std::string& data, Direction direction, Command& out);
+        bool startSearch(const std::string& data);
+        // false while the long search still runs
+        bool searchDone(std::vector<Command>& out);
 
         std::map<uint16_t, std::string> m_dispatchKeys;
         std::unique_ptr<Rsa> m_rsa;
@@ -76,6 +89,12 @@ namespace GamePackets {
         std::vector<uint64_t> m_loginTimes;
         bool m_compressedLogin = false;
         uint64_t m_sentMs = 0;
+        // the game's clock in the headers minus ours
+        int64_t m_clockOffset = 0;
+        uint64_t m_gameStart = 0;
+        uint64_t m_frameMs = 0;
+        std::unique_ptr<Search> m_search;
+        std::vector<std::pair<Direction, std::string>> m_waiting;
         std::string m_problem;
     };
 
@@ -84,6 +103,9 @@ namespace GamePackets {
     // tries the C# Random seeded with every time around sentMs, depth numbers each
     extern bool SearchKey(uint64_t sentMs, uint64_t serverSeed, const std::string& data, int window, int depth,
         uint64_t& timeSeed, std::string& key);
+    // every time from from to to on all cores, for when the login was missed
+    extern bool SearchKeyBetween(uint64_t from, uint64_t to, const std::vector<uint64_t>& serverSeeds, const std::string& data,
+        int depth, const std::atomic<bool>& cancel, uint64_t& timeSeed, std::string& key);
 
     class CsRandom {
     public:

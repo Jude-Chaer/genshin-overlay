@@ -2,10 +2,14 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <wincrypt.h>
+#include <algorithm>
+#include <chrono>
 #include <deque>
 #include <fstream>
+#include <mutex>
 #include <random>
 #include <sstream>
+#include <thread>
 #include <nlohmann/json.hpp>
 
 namespace GamePackets {
@@ -13,7 +17,13 @@ namespace GamePackets {
     // the C# Random seeds tried around the login's time, and numbers taken from each
     static constexpr int WINDOW = 3000;
     static constexpr int DEPTH = 5;
-    static constexpr const char* COMPRESSED = "the login came compressed, close the game and start it again";
+    // the long search: numbers per time (logins since the game started), how far back at most,
+    // and how many messages wait for it
+    static constexpr int LONG_DEPTH = 32;
+    static constexpr uint64_t LONG_WINDOW = 24ull * 60 * 60 * 1000;
+    static constexpr size_t MAX_WAITING = 20000;
+    static constexpr const char* COMPRESSED = "the login came compressed, log out to the door and back in once";
+    static constexpr const char* NO_KEY = "couldn't find the session key, close the game and start it again";
 
     static uint16_t be16(const uint8_t* p) { return uint16_t(p[0] << 8 | p[1]); }
     static uint32_t be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
@@ -198,6 +208,68 @@ namespace GamePackets {
         return false;
     }
 
+    // the first 8 bytes of KeyFromSeed, enough to rule a guess out
+    static uint64_t keyHead(uint64_t seed) {
+        std::mt19937_64 first(seed);
+        std::mt19937_64 generator(first());
+        generator.discard(1);
+        return generator();
+    }
+
+    bool SearchKeyBetween(uint64_t from, uint64_t to, const std::vector<uint64_t>& serverSeeds, const std::string& data,
+        int depth, const std::atomic<bool>& cancel, uint64_t& timeSeed, std::string& key) {
+        if (data.size() < 4 || to < from)
+            return false;
+        uint16_t head = uint16_t((uint8_t(data[0]) ^ 0x45) << 8 | (uint8_t(data[1]) ^ 0x67));
+        // one core stays free for the game
+        unsigned threads = std::max(1u, std::thread::hardware_concurrency() - 1);
+        std::atomic<bool> found = false;
+        std::mutex mutex;
+        auto work = [&](unsigned first) {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            for (uint64_t time = from + first; time <= to && !found && !cancel; time += threads) {
+                CsRandom random{ int32_t(uint32_t(time)) };
+                for (int d = 0; d < depth; d++) {
+                    uint64_t number = random.NextSafeUInt64();
+                    for (uint64_t serverSeed : serverSeeds) {
+                        if (uint16_t(keyHead(number ^ serverSeed) >> 48) != head)
+                            continue;
+                        std::string guess = KeyFromSeed(number ^ serverSeed);
+                        if (!fits(guess, data))
+                            continue;
+                        std::lock_guard lock(mutex);
+                        if (!found) {
+                            found = true;
+                            timeSeed = time;
+                            key = std::move(guess);
+                        }
+                    }
+                }
+            }
+        };
+        std::vector<std::thread> pool;
+        for (unsigned i = 0; i < threads; i++)
+            pool.emplace_back(work, i);
+        for (std::thread& thread : pool)
+            thread.join();
+        return found;
+    }
+
+    struct Sniffer::Search {
+        std::atomic<bool> cancel = false;
+        std::atomic<bool> done = false;
+        bool found = false;
+        uint64_t timeSeed = 0;
+        std::string key;
+        std::thread thread;
+
+        ~Search() {
+            cancel = true;
+            if (thread.joinable())
+                thread.join();
+        }
+    };
+
     // the game's server seed comes RSA encrypted in the login answer
     struct Sniffer::Rsa {
         BCRYPT_ALG_HANDLE algorithm = nullptr;
@@ -322,7 +394,8 @@ namespace GamePackets {
 
     Sniffer::~Sniffer() = default;
 
-    Event Sniffer::Feed(const uint8_t* frame, size_t size, std::vector<Command>& out) {
+    Event Sniffer::Feed(const uint8_t* frame, size_t size, std::vector<Command>& out, uint64_t ms) {
+        m_frameMs = ms;
         // ethernet, maybe vlan tags, then ip and udp
         if (size < 14)
             return Event::None;
@@ -378,6 +451,8 @@ namespace GamePackets {
             if (code == 0xFF) {
                 m_sentKcp.reset();
                 m_recvKcp.reset();
+                m_search.reset();
+                m_waiting.clear();
                 m_key = KeyKind::None;
                 return Event::Handshake;
             }
@@ -401,16 +476,78 @@ namespace GamePackets {
         std::vector<std::string> messages;
         kcp->feed(data, size, messages);
         for (std::string& message : messages) {
+            if (m_key == KeyKind::Searching && !searchDone(out)) {
+                if (m_waiting.size() < MAX_WAITING)
+                    m_waiting.emplace_back(direction, std::move(message));
+                continue;
+            }
+            Command command;
+            if (decode(message, direction, command))
+                out.push_back(std::move(command));
+            else if (m_key == KeyKind::Searching)
+                m_waiting.emplace_back(direction, std::move(message));
+        }
+    }
+
+    // The overlay missed the login the game picked its key generator at, so
+    // every time from the game's start to this login gets tried, in the background.
+    bool Sniffer::startSearch(const std::string& data) {
+        if (!m_gameStart || m_serverSeeds.empty())
+            return false;
+        uint64_t to = m_sentMs + 1000;
+        uint64_t from = uint64_t(int64_t(m_gameStart) + m_clockOffset) - 10000;
+        if (from >= to)
+            return false;
+        from = std::max(from, to - LONG_WINDOW);
+        m_search = std::make_unique<Search>();
+        Search* search = m_search.get();
+        std::vector<uint64_t> seeds = m_serverSeeds;
+        search->thread = std::thread([search, from, to, seeds, data] {
+            search->found = SearchKeyBetween(from, to, seeds, data, LONG_DEPTH, search->cancel, search->timeSeed, search->key);
+            search->done = true;
+        });
+        m_key = KeyKind::Searching;
+        m_problem.clear();
+        return true;
+    }
+
+    void Sniffer::FinishSearch(std::vector<Command>& out) {
+        if (m_key != KeyKind::Searching)
+            return;
+        m_search->thread.join();
+        searchDone(out);
+    }
+
+    bool Sniffer::searchDone(std::vector<Command>& out) {
+        if (!m_search->done)
+            return false;
+        if (!m_search->found) {
+            m_search.reset();
+            m_waiting.clear();
+            m_key = KeyKind::Lost;
+            m_problem = NO_KEY;
+            return true;
+        }
+        m_clientSeed = m_search->timeSeed;
+        m_keyBytes = std::move(m_search->key);
+        m_key = KeyKind::Session;
+        m_search.reset();
+        std::vector<std::pair<Direction, std::string>> waiting = std::move(m_waiting);
+        m_waiting.clear();
+        for (auto& [direction, message] : waiting) {
             Command command;
             if (decode(message, direction, command))
                 out.push_back(std::move(command));
         }
+        return true;
     }
 
     bool Sniffer::decode(std::string& data, Direction direction, Command& out) {
         if (data.size() < 4)
             return false;
 
+        if (m_key == KeyKind::Lost)
+            return false;
         if (m_key == KeyKind::None) {
             uint16_t version = be16((const uint8_t*)data.data()) ^ 0x4567;
             auto found = m_dispatchKeys.find(version);
@@ -443,7 +580,11 @@ namespace GamePackets {
                 }
             }
             if (!found) {
-                m_problem = m_compressedLogin ? COMPRESSED : "couldn't find the session key";
+                if (startSearch(data))
+                    return false;
+                // nothing more to try until the next login
+                m_key = KeyKind::Lost;
+                m_problem = m_compressedLogin ? COMPRESSED : NO_KEY;
                 return false;
             }
         }
@@ -477,6 +618,11 @@ namespace GamePackets {
                     sentMs = field.value;
                 if (field.number == 8 && field.wire == 0)
                     unpackedSize = field.value;
+            }
+            if (sentMs) {
+                int64_t now = m_frameMs ? int64_t(m_frameMs) : std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                m_clockOffset = int64_t(sentMs) - now;
             }
             if (unpackedSize) {
                 // Since 7.1 the login answer sometimes comes Oodle compressed, and

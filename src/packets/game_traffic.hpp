@@ -14,6 +14,8 @@ namespace GameTraffic {
         CantListen,
         // listening, nothing from the game yet
         Waiting,
+        // the login was missed, the key is searched for
+        Searching,
         // the game's messages read fine
         Reading,
         // the game talks but it can't be read, the text says what to do

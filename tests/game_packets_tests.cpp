@@ -96,6 +96,26 @@ TEST_CASE("SearchKey finds the time and the key a message was encrypted with") {
     CHECK_FALSE(SearchKey(time + 40, serverSeed, data, 3000, 2, found, foundKey));
 }
 
+TEST_CASE("SearchKeyBetween finds a login long before the one it has") {
+    const uint64_t time = 1792258392710, serverSeed = 0x1234567890abcdefULL;
+    CsRandom random{ int32_t(uint32_t(time)) };
+    for (int i = 0; i < 5; i++) random.NextSafeUInt64();
+    // the sixth number, like after five relogs
+    std::string key = KeyFromSeed(random.NextSafeUInt64() ^ serverSeed);
+    std::string data = encrypt(message(100, "head", "body"), key);
+
+    std::atomic<bool> cancel = false;
+    uint64_t found = 0;
+    std::string foundKey;
+    REQUIRE(SearchKeyBetween(time - 60000, time + 60000, { 1, serverSeed }, data, 8, cancel, found, foundKey));
+    CHECK(found == time);
+    CHECK(foundKey == key);
+    CHECK_FALSE(SearchKeyBetween(time + 1, time + 60000, { serverSeed }, data, 8, cancel, found, foundKey));
+    CHECK_FALSE(SearchKeyBetween(time - 60000, time + 60000, { serverSeed }, data, 5, cancel, found, foundKey));
+    cancel = true;
+    CHECK_FALSE(SearchKeyBetween(time - 60000, time + 60000, { serverSeed }, data, 8, cancel, found, foundKey));
+}
+
 TEST_CASE("Sniffer puts fragments back together whatever order they come in") {
     std::string key = KeyFromSeed(1);
     Sniffer sniffer(dispatchKeys(key));

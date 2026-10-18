@@ -1,6 +1,7 @@
 #include "game_traffic.hpp"
 #include "game_packets.hpp"
 #include "npcap_capture.hpp"
+#include "../capture.hpp"
 #include "../helpers.hpp"
 #include <atomic>
 #include <chrono>
@@ -13,7 +14,7 @@
 namespace GameTraffic {
     // how long a note stays on screen
     static constexpr auto NOTICE_TIME = std::chrono::seconds(10);
-    static constexpr const char* STARTED_LATE = "the game was already logged in, close the game and start it again";
+    static constexpr const char* STARTED_LATE = "the game was already logged in, log out to the door and back in once";
 
     static std::thread worker;
     static std::atomic<bool> stopping = false;
@@ -34,6 +35,25 @@ namespace GameTraffic {
         std::lock_guard lock(mutex);
         notice = text;
         noticeUntil = std::chrono::steady_clock::now() + NOTICE_TIME;
+    }
+
+    // when the game was started, unix ms, 0 when it can't be read
+    static uint64_t gameStart() {
+        HWND window = Capture::findGameWindow();
+        DWORD id = 0;
+        if (!window || !GetWindowThreadProcessId(window, &id))
+            return 0;
+        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, id);
+        if (!process)
+            return 0;
+        FILETIME created, exited, kernel, user;
+        bool ok = GetProcessTimes(process, &created, &exited, &kernel, &user);
+        CloseHandle(process);
+        if (!ok)
+            return 0;
+        uint64_t ticks = uint64_t(created.dwHighDateTime) << 32 | created.dwLowDateTime;
+        // FILETIME counts 100 ns from 1601
+        return ticks / 10000 - 11644473600000ull;
     }
 
     static void listen() {
@@ -62,7 +82,10 @@ namespace GameTraffic {
             NpcapCapture::Take(frames, 250);
             for (const NpcapCapture::Frame& frame : frames) {
                 commands.clear();
-                if (sniffer.Feed(frame.data.data(), frame.data.size(), commands) == GamePackets::Event::Handshake) sawLogin = true;
+                if (sniffer.Feed(frame.data.data(), frame.data.size(), commands, frame.ms) == GamePackets::Event::Handshake) {
+                    sawLogin = true;
+                    sniffer.SetGameStart(gameStart());
+                }
             }
             if (frames.empty()) continue;
 
@@ -71,6 +94,7 @@ namespace GameTraffic {
             {
                 std::lock_guard lock(mutex);
                 if (!problem.empty()) status.state = State::CantRead;
+                else if (sniffer.Searching()) status.state = State::Searching;
                 else if (sniffer.HasKey()) status.state = State::Reading;
                 status.text = problem;
             }
@@ -116,6 +140,9 @@ namespace GameTraffic {
             break;
         case State::Waiting:
             ImGui::TextWrapped("Listening. If the game was already running, close it and start it again.");
+            break;
+        case State::Searching:
+            ImGui::TextWrapped("Looking for the session key, this can take a minute");
             break;
         case State::Reading:
             ImGui::Text("Working");

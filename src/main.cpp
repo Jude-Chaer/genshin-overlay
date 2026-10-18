@@ -199,18 +199,36 @@ struct PacketLog {
     std::string problem;
     size_t frames = 0, messages = 0;
 
+    // when the game was started, unix ms, for the long search
+    uint64_t gameStart = 0;
+
     PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file) : sniffer(keys), out(file) {}
 
     void Feed(uint64_t t, const uint8_t* frame, size_t size) {
         commands.clear();
-        GamePackets::Event event = sniffer.Feed(frame, size, commands);
+        // frames come faster than in the game, a login right after would cancel it
+        if (sniffer.Searching()) sniffer.FinishSearch(commands);
+        GamePackets::Event event = sniffer.Feed(frame, size, commands, t);
         frames++;
-        if (event == GamePackets::Event::Handshake) std::cout << "login handshake" << std::endl;
+        if (event == GamePackets::Event::Handshake) {
+            std::cout << "login handshake" << std::endl;
+            sniffer.SetGameStart(gameStart);
+        }
         if (event == GamePackets::Event::Disconnected) std::cout << "disconnected" << std::endl;
         if (sniffer.Problem() != problem) {
             problem = sniffer.Problem();
             if (!problem.empty()) std::cout << "frame " << frames << ": " << problem << std::endl;
         }
+        write(t);
+    }
+
+    void Finish() {
+        commands.clear();
+        sniffer.FinishSearch(commands);
+        write(0);
+    }
+
+    void write(uint64_t t) {
         for (const GamePackets::Command& command : commands) {
             nlohmann::json line = {
                 { "t", t },
@@ -231,11 +249,12 @@ static bool loadPacketKeys(GamePackets::Keys& keys) {
     return false;
 }
 
-// genshin-overlay.exe --packets-replay <folder>
+// genshin-overlay.exe --packets-replay <folder> [game start, unix ms]
 // Decodes the frames.bin a packet recording saved again and writes every
 // message to packets-cpp.jsonl next to it. frames.bin has one record per
 // frame: u64 unix ms, u8 adapter, u32 size, the frame (little endian).
-static int replayPackets(const std::filesystem::path& folder) {
+// With the game's start time a missed login gets searched for too.
+static int replayPackets(const std::filesystem::path& folder, uint64_t gameStart) {
     GamePackets::Keys keys;
     if (!loadPacketKeys(keys)) return 1;
     std::ifstream in(folder / "frames.bin", std::ios::binary);
@@ -246,6 +265,7 @@ static int replayPackets(const std::filesystem::path& folder) {
     std::vector<uint8_t> frames((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
     PacketLog log(keys, folder / "packets-cpp.jsonl");
+    log.gameStart = gameStart;
     for (size_t i = 0; i + 13 <= frames.size();) {
         uint64_t t = 0;
         for (int b = 0; b < 8; b++) t |= uint64_t(frames[i + b]) << (8 * b);
@@ -255,6 +275,7 @@ static int replayPackets(const std::filesystem::path& folder) {
         log.Feed(t, frames.data() + i, size);
         i += size;
     }
+    log.Finish();
     std::cout << log.frames << " frames, " << log.messages << " messages" << std::endl;
     return 0;
 }
@@ -314,7 +335,7 @@ static int livePackets(const std::filesystem::path& folder) {
 
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--packets-replay") {
-        return replayPackets(argv[2]);
+        return replayPackets(argv[2], argc >= 4 ? std::stoull(argv[3]) : 0);
     }
     if (argc >= 3 && std::string(argv[1]) == "--packets-live") {
         return livePackets(argv[2]);
