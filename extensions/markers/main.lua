@@ -1240,7 +1240,7 @@ function Update()
         end
     end
 
-    -- chests the game says were opened, when the player reads the game's traffic.
+    -- chests and oculi the game says were opened or picked up, when the player reads the game's traffic.
     -- read even when off, so turning it on doesn't mark the old ones
     local opened = false
     for _, id in ipairs(GetOpenedPoints()) do
@@ -1375,7 +1375,7 @@ local function hoyolabWait()
     end
 end
 
--- what keeps marking opened chests from working, nil when nothing does
+-- what keeps marking opened chests and picked up oculi from working, nil when nothing does
 local function gameWait()
     local traffic = GetGameTraffic()
     if not traffic.on then
@@ -1485,7 +1485,7 @@ local function syncPage()
 
     ImGUI_Separator()
     ImGUI_Text("Game")
-    local on = ImGUI_Checkbox("Mark chests when I open them", sync.game.on)
+    local on = ImGUI_Checkbox("Mark chests and oculi when I find them", sync.game.on)
     if on ~= sync.game.on then
         sync.game.on = on
         saveSync()

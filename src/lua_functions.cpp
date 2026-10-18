@@ -1431,7 +1431,7 @@ namespace LuaFunctions {
 		return list;
 	}
 
-	// the HoYoLAB points of the chests the game says were opened since this
+	// the HoYoLAB points of the chests and oculi the game says were opened or picked up since this
 	// extension last asked. The first time it starts from now.
 	sol::table GetOpenedPoints(sol::this_state state)
 	{

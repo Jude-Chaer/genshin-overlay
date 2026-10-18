@@ -1,5 +1,6 @@
 #include "game_traffic.hpp"
 #include "game_chests.hpp"
+#include "game_oculi.hpp"
 #include "game_packets.hpp"
 #include "npcap_capture.hpp"
 #include "../capture.hpp"
@@ -17,6 +18,7 @@ namespace GameTraffic {
     static constexpr auto NOTICE_TIME = std::chrono::seconds(10);
     static constexpr const char* STARTED_LATE = "the game was already logged in, log out to the door and back in once";
     static constexpr const char* NOT_MATCHED = "opened a chest it can't match to a marker, mark it yourself";
+    static constexpr const char* OCULUS_NOT_MATCHED = "picked up an oculus it can't match to a marker, mark it yourself";
 
     static std::thread worker;
     static std::atomic<bool> stopping = false;
@@ -25,7 +27,7 @@ namespace GameTraffic {
     static Status status;
     static std::string notice;
     static std::chrono::steady_clock::time_point noticeUntil;
-    // the HoYoLAB points of the chests opened, oldest first, never cleared
+    // the HoYoLAB points of the chests opened and oculi picked up, oldest first, never cleared
     static std::vector<int64_t> opened;
 
     static void setStatus(State state, const std::string& text) {
@@ -68,6 +70,13 @@ namespace GameTraffic {
         return GameChests::Match(chest, tracker.Chests(), markers);
     }
 
+    static int64_t pointOf(const GameOculi::Picked& picked, const GameOculi::Tracker& tracker,
+        std::vector<GameChests::Marker>& markers) {
+        if (markers.empty())
+            GameOculi::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
+        return GameOculi::Match(picked.object, picked.label, tracker.Objects(), markers);
+    }
+
     static void listen() {
         GamePackets::Keys keys;
         if (!GamePackets::LoadKeys(Helpers::exeDirectory() / "packets", keys)) {
@@ -86,6 +95,8 @@ namespace GameTraffic {
         GamePackets::Sniffer sniffer(keys);
         GameChests::Tracker chests;
         std::vector<GameChests::Marker> markers;
+        GameOculi::Tracker oculi;
+        std::vector<GameChests::Marker> oculusMarkers;
         std::vector<NpcapCapture::Frame> frames;
         std::vector<GamePackets::Command> commands;
         // a login seen since the start, without one the key can't be found yet
@@ -101,9 +112,23 @@ namespace GameTraffic {
                     sniffer.SetGameStart(gameStart());
                 }
                 for (const GamePackets::Command& command : commands) {
+                    if (command.direction != GamePackets::Direction::Received)
+                        continue;
+                    GameOculi::Picked picked;
+                    if (oculi.Feed(command.id, command.body, frame.ms, picked)) {
+                        int64_t point = pointOf(picked, oculi, oculusMarkers);
+                        std::cout << "Game traffic: oculus " << picked.object.group << " " << picked.object.config << " picked up, point " << point << std::endl;
+                        if (point == 0) {
+                            showNotice(OCULUS_NOT_MATCHED);
+                            continue;
+                        }
+                        std::lock_guard lock(mutex);
+                        opened.push_back(point);
+                        continue;
+                    }
                     GameChests::Chest chest;
                     bool placed = false;
-                    if (command.direction != GamePackets::Direction::Received || !chests.Feed(command.id, command.body, chest, placed))
+                    if (!chests.Feed(command.id, command.body, chest, placed))
                         continue;
                     // inspecting things and places of interest come as opened too,
                     // only the chests the game showed us have a gadget to tell

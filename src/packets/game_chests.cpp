@@ -43,7 +43,7 @@ namespace GameChests {
         return f;
     }
 
-    void ReadAppeared(std::string_view body, std::vector<Chest>& out) {
+    void ReadObjects(std::string_view body, std::vector<Chest>& out) {
         GamePackets::Field field;
         while (GamePackets::NextField(body, field)) {
             if (field.number != 8 || field.wire != 2)
@@ -53,7 +53,10 @@ namespace GameChests {
             std::string_view entity = field.bytes;
             GamePackets::Field part;
             while (GamePackets::NextField(entity, part)) {
-                if (part.number == 4 && part.wire == 2) {
+                if (part.number == 2 && part.wire == 0) {
+                    chest.entity = uint32_t(part.value);
+                }
+                else if (part.number == 4 && part.wire == 2) {
                     // 1 is where it is, a vector of floats
                     std::string_view motion = part.bytes;
                     GamePackets::Field m;
@@ -82,9 +85,16 @@ namespace GameChests {
                     }
                 }
             }
-            if (placed && isChest(chest.gadget) && chest.group && chest.config)
+            if (placed && chest.group && chest.config)
                 out.push_back(chest);
         }
+    }
+
+    void ReadAppeared(std::string_view body, std::vector<Chest>& out) {
+        std::vector<Chest> objects;
+        ReadObjects(body, objects);
+        for (const Chest& object : objects)
+            if (isChest(object.gadget)) out.push_back(object);
     }
 
     bool ReadOpened(std::string_view body, Chest& out) {

@@ -36,7 +36,7 @@ namespace GameTraffic {
 
     extern Status GetStatus();
 
-    // the HoYoLAB points of the chests opened since the overlay started, from
+    // the HoYoLAB points of the chests opened and oculi picked up since the overlay started, from
     // the from-th on, gives back how many there are in all
     extern size_t OpenedPoints(size_t from, std::vector<int64_t>& out);
 

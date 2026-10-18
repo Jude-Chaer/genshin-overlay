@@ -16,6 +16,8 @@ namespace GameChests {
     static constexpr uint16_t OPENED = 28616;
 
     struct Chest {
+        // the game's number for it while it's near, 0 when not known
+        uint32_t entity = 0;
         uint32_t group = 0;
         uint32_t config = 0;
         uint32_t gadget = 0;
@@ -30,6 +32,9 @@ namespace GameChests {
         double x = 0.0, y = 0.0;
     };
 
+    // the objects of the world (with a group and config) in an APPEARED message,
+    // chests or not
+    extern void ReadObjects(std::string_view body, std::vector<Chest>& out);
     // the chests in an APPEARED message
     extern void ReadAppeared(std::string_view body, std::vector<Chest>& out);
     // group and config of the opened chest, false when the message has none

@@ -25,6 +25,7 @@
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
 #include "packets/game_chests.hpp"
+#include "packets/game_oculi.hpp"
 #include "packets/game_packets.hpp"
 #include "packets/npcap_capture.hpp"
 #include "packets/game_traffic.hpp"
@@ -204,9 +205,12 @@ struct PacketLog {
     uint64_t gameStart = 0;
     GameChests::Tracker chests;
     std::vector<GameChests::Marker> markers;
+    GameOculi::Tracker oculi;
+    std::vector<GameChests::Marker> oculusMarkers;
 
     PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file) : sniffer(keys), out(file) {
         GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
+        GameOculi::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", oculusMarkers);
     }
 
     void Feed(uint64_t t, const uint8_t* frame, size_t size) {
@@ -235,6 +239,13 @@ struct PacketLog {
 
     void write(uint64_t t) {
         for (const GamePackets::Command& command : commands) {
+            GameOculi::Picked picked;
+            if (command.direction == GamePackets::Direction::Received && oculi.Feed(command.id, command.body, t, picked)) {
+                double x, y;
+                GameChests::ToMap(picked.object, x, y);
+                std::cout << "oculus " << picked.object.group << " " << picked.object.config << " picked up at " << x << " " << y
+                    << ", point " << GameOculi::Match(picked.object, picked.label, oculi.Objects(), oculusMarkers) << std::endl;
+            }
             GameChests::Chest chest;
             bool placed = false;
             if (command.direction == GamePackets::Direction::Received && chests.Feed(command.id, command.body, chest, placed)) {
