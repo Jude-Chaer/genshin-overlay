@@ -26,6 +26,7 @@
 #include "locator/map_locator.hpp"
 #include "packets/game_packets.hpp"
 #include "packets/npcap_capture.hpp"
+#include "packets/game_traffic.hpp"
 #include <nlohmann/json.hpp>
 
 // genshin-overlay.exe --locate <screenshot>
@@ -357,9 +358,11 @@ int main(int argc, char** argv) {
     HoyolabMarks::Init();
     MapCheck::Start(Helpers::exeDirectory() / "map_data");
     MiniMap::Start(Helpers::exeDirectory() / "map_data");
+    if (Settings::readGameTraffic) GameTraffic::Start();
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
+    GameTraffic::Stop();
     // first, it grabs the game and asks the map matching, which the tracker closes
     MiniMap::Stop();
     MapTracking::Stop();

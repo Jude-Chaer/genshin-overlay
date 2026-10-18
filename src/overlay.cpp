@@ -4,6 +4,7 @@
 #include "keybindings.hpp"
 #include "extensions.hpp"
 #include "hoyolab_marks.hpp"
+#include "packets/game_traffic.hpp"
 #include "helpers.hpp"
 #include "map_tiles.hpp"
 #include "web_images.hpp"
@@ -397,6 +398,16 @@ namespace Overlay {
                 }
             }
 
+            if (ImGui::CollapsingHeader("Game traffic")) {
+                if (ImGui::Checkbox("Read the game's traffic (needs Npcap)", &Settings::readGameTraffic)) {
+                    Settings::Save();
+                    if (Settings::readGameTraffic) GameTraffic::Start();
+                    else GameTraffic::Stop();
+                }
+                if (Settings::readGameTraffic) GameTraffic::DrawStatus();
+                else ImGui::TextDisabled("Off. Turn it on before starting the game.");
+            }
+
             if (ImGui::CollapsingHeader("Advanced")) {
                 ImGui::TextDisabled("How the map is followed while it moves");
 
@@ -503,7 +514,7 @@ namespace Overlay {
             // map and menu closed: nothing to show, so don't draw at all
             // a question for the user waits too
             bool showing = Overlay::menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0
-                || HoyolabMarks::NeedsDrawing() || Extensions::permissionQuestionOpen();
+                || HoyolabMarks::NeedsDrawing() || Extensions::permissionQuestionOpen() || GameTraffic::NeedsDrawing();
             // an extension that follows the player has things to draw with the map closed too
             bool forPlayer = !showing && MiniMap::Wanted();
             if (!showing && !forPlayer) {
@@ -531,6 +542,7 @@ namespace Overlay {
 
             Extensions::frameUpdateExtensions();
             DrawStartupHint();
+            GameTraffic::DrawNotice();
 
             if (Settings::hideOnMapClose) {
                 Overlay::menuOpen = MapTracking::IsMapOpen();
