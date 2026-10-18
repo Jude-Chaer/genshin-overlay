@@ -43,4 +43,12 @@ namespace Settings {
 
     extern void SaveExtensionPermissions(std::string extensionHash, std::unordered_set<Extensions::ExtensionPermissionTypes> permissions);
     extern std::unordered_set<Extensions::ExtensionPermissionTypes> LoadExtensionPermissions(std::string extensionHash);
+    // whether permissions were ever saved for this hash
+    extern bool HasExtensionPermissions(const std::string& extensionHash);
+    // The last permissions given to the extension in folder, and its hash then.
+    // A changed extension gets a new hash, these are offered to it again.
+    extern void SaveLastPermissions(const std::string& folder, const std::string& extensionHash,
+        const std::unordered_set<Extensions::ExtensionPermissionTypes>& permissions);
+    extern bool LoadLastPermissions(const std::string& folder, std::string& extensionHash,
+        std::unordered_set<Extensions::ExtensionPermissionTypes>& permissions);
 }

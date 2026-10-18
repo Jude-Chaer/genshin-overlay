@@ -111,4 +111,38 @@ namespace Settings {
         }
         return permissions;
 	}
+
+    bool HasExtensionPermissions(const std::string& extensionHash) {
+        nlohmann::json settings = read();
+        auto it = settings.find("extensionPermissions");
+        return it != settings.end() && it->is_object() && it->contains(extensionHash);
+    }
+
+    void SaveLastPermissions(const std::string& folder, const std::string& extensionHash,
+        const std::unordered_set<Extensions::ExtensionPermissionTypes>& permissions) {
+        nlohmann::json settings = read();
+        nlohmann::json list = nlohmann::json::array();
+        for (const auto& permission : permissions) list.push_back(static_cast<int>(permission));
+        settings["lastExtensionPermissions"][folder] = { { "hash", extensionHash }, { "permissions", list } };
+        write(settings);
+    }
+
+    bool LoadLastPermissions(const std::string& folder, std::string& extensionHash,
+        std::unordered_set<Extensions::ExtensionPermissionTypes>& permissions) {
+        nlohmann::json settings = read();
+        auto all = settings.find("lastExtensionPermissions");
+        if (all == settings.end() || !all->is_object()) return false;
+        auto it = all->find(folder);
+        if (it == all->end() || !it->is_object()) return false;
+        extensionHash = it->value("hash", std::string());
+        permissions.clear();
+        auto list = it->find("permissions");
+        if (list != it->end() && list->is_array()) {
+            for (const auto& permission : *list) {
+                if (permission.is_number_integer())
+                    permissions.insert(static_cast<Extensions::ExtensionPermissionTypes>(permission.get<int>()));
+            }
+        }
+        return true;
+    }
 }

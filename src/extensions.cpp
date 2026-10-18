@@ -12,6 +12,10 @@ namespace Extensions {
 	std::vector<std::unique_ptr<Extension>> registeredExtensions;
 	Extension* currentExtension = nullptr;
 
+	// Extensions that changed since the player allowed them more than the
+	// defaults, with what they had then. drawPermissionQuestion offers it again.
+	static std::vector<std::pair<Extension*, std::unordered_set<ExtensionPermissionTypes>>> changed;
+
 	// Lua functions like DefineExtensionSetting need to know which extension called them
 	void runForExtension(Extension* ext, const std::function<void()>& function) {
 		if (!function) return;
@@ -53,6 +57,7 @@ namespace Extensions {
 			}
 		}
 		registeredExtensions.clear();
+		changed.clear();
 	}
 
 	void frameUpdateExtensions() {
@@ -400,6 +405,12 @@ namespace Extensions {
 		registeredExtensions.push_back(std::move(ext));
 	}
 
+	// under the hash, and as the folder's last ones for after a change
+	static void savePermissions(Extension* ext) {
+		Settings::SaveExtensionPermissions(ext->extensionHash, ext->extensionPermissions);
+		Settings::SaveLastPermissions(ext->folder.filename().string(), ext->extensionHash, ext->extensionPermissions);
+	}
+
 	void drawExtensionPermissionMenu() {
 		ImGui::TextWrapped(
 			"Extensions can be given permissions to access certain features.  Some of these are sensitive and should be granted with caution.");
@@ -421,7 +432,7 @@ namespace Extensions {
 					else {
 						ext->extensionPermissions.erase(permission.first);
 					}
-					Settings::SaveExtensionPermissions(ext->extensionHash, ext->extensionPermissions);
+					savePermissions(ext.get());
 				}
 			}
 			ImGui::PopID();
@@ -429,6 +440,22 @@ namespace Extensions {
 	}
 	void loadExtensionPermissions(Extension* ext) {
 		ext->extensionPermissions = Settings::LoadExtensionPermissions(ext->extensionHash);
+		std::string folder = ext->folder.filename().string(), lastHash;
+		std::unordered_set<ExtensionPermissionTypes> last;
+		bool hasLast = Settings::LoadLastPermissions(folder, lastHash, last);
+		if (Settings::HasExtensionPermissions(ext->extensionHash)) {
+			// saved before the last ones were kept, or an older version is back
+			if (!hasLast || lastHash != ext->extensionHash)
+				Settings::SaveLastPermissions(folder, ext->extensionHash, ext->extensionPermissions);
+			return;
+		}
+		if (!hasLast) return;
+		for (ExtensionPermissionTypes permission : last) {
+			if (!defaultPermissions.count(permission)) {
+				changed.push_back({ ext, last });
+				return;
+			}
+		}
 	}
 
 	ExtensionPermissionTypes permissionNamed(const std::string& name) {
@@ -449,32 +476,51 @@ namespace Extensions {
 	}
 
 	bool permissionQuestionOpen() {
-		return asking != nullptr;
+		return asking != nullptr || !changed.empty();
 	}
 
 	void drawPermissionQuestion() {
-		if (!asking) return;
+		if (!permissionQuestionOpen()) return;
 		ImGuiIO& io = ImGui::GetIO();
 		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.4f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 		ImGui::SetNextWindowFocus();
 		ImGui::Begin("Permission##extensionAsks", nullptr,
 			ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove);
-		ImGui::Text("%s (%s) asks for: %s", asking->name.c_str(), asking->author.c_str(), allPermissions.at(askedFor).c_str());
-		if (askedFor == ExtensionPermissionTypes::HoyolabAccount) {
-			ImGui::TextDisabled("It could read and change what's marked on your HoYoLAB map. It never sees your login.");
-		}
-		ImGui::TextDisabled("You can take it back in Settings.");
 		bool answered = false;
-		if (ImGui::Button("Allow")) {
-			asking->extensionPermissions.insert(askedFor);
-			Settings::SaveExtensionPermissions(asking->extensionHash, asking->extensionPermissions);
-			answered = true;
+		if (asking) {
+			ImGui::Text("%s (%s) asks for: %s", asking->name.c_str(), asking->author.c_str(), allPermissions.at(askedFor).c_str());
+			if (askedFor == ExtensionPermissionTypes::HoyolabAccount) {
+				ImGui::TextDisabled("It could read and change what's marked on your HoYoLAB map. It never sees your login.");
+			}
+			ImGui::TextDisabled("You can take it back in Settings.");
+			if (ImGui::Button("Allow")) {
+				asking->extensionPermissions.insert(askedFor);
+				savePermissions(asking);
+				answered = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Don't allow")) answered = true;
+			if (answered) asking = nullptr;
 		}
-		ImGui::SameLine();
-		if (ImGui::Button("Don't allow")) answered = true;
+		else if (!changed.empty()) {
+			auto& [ext, last] = changed.front();
+			ImGui::Text("%s (%s) changed since you allowed it. Allow the same again?", ext->name.c_str(), ext->author.c_str());
+			for (ExtensionPermissionTypes permission : last) {
+				if (!defaultPermissions.count(permission)) ImGui::BulletText("%s", allPermissions.at(permission).c_str());
+			}
+			ImGui::TextDisabled("Until then what needs them waits. You can take them back in Settings.");
+			if (ImGui::Button("Allow the same")) {
+				ext->extensionPermissions = last;
+				savePermissions(ext);
+				answered = true;
+			}
+			ImGui::SameLine();
+			// asked again on the next start
+			if (ImGui::Button("Not now")) answered = true;
+			if (answered) changed.erase(changed.begin());
+		}
 		ImVec2 position = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
 		Overlay::ClaimMouse(position.x, position.y, position.x + size.x, position.y + size.y);
 		ImGui::End();
-		if (answered) asking = nullptr;
 	}
 }
