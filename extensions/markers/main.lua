@@ -115,17 +115,19 @@ end
 -- Sync is kept per side, so more places can join later with the same rule.
 -- base is what both had after the last sync, nil until the first one.
 local SYNC_FILE = "sync.json"
-local sync = { hoyolab = { on = false, last = 0 } }
+local sync = { hoyolab = { on = false, last = 0 }, game = { on = true } }
 
 local function saveSync()
     local h = sync.hoyolab
     WriteFile(SYNC_FILE, JSON_Encode({
         hoyolab = { on = h.on, base = h.base and keys(h.base), last = h.last },
+        game = { on = sync.game.on },
     }))
 end
 
 local function loadSync()
     local saved = FileExists(SYNC_FILE) and JSON_Decode(ReadFile(SYNC_FILE))
+    if saved and type(saved.game) == "table" then sync.game.on = saved.game.on ~= false end
     local h = saved and saved.hoyolab
     if type(h) ~= "table" then return end
     sync.hoyolab.on = h.on == true
@@ -1234,6 +1236,17 @@ function Update()
         end
     end
 
+    -- chests the game says were opened, when the player reads the game's traffic.
+    -- read even when off, so turning it on doesn't mark the old ones
+    local opened = false
+    for _, id in ipairs(GetOpenedPoints()) do
+        if sync.game.on and not done[id] then
+            done[id] = true
+            opened = true
+        end
+    end
+    if opened then saveDone() end
+
     syncTick()
 
     -- without this there's no view while the map moves
@@ -1416,6 +1429,15 @@ local function syncPage()
         end
     end
     local busy = hoyoJob ~= nil or fileJob ~= nil or question ~= nil
+
+    ImGUI_Separator()
+    ImGUI_Text("Game")
+    local on = ImGUI_Checkbox("Mark chests when I open them", sync.game.on)
+    if on ~= sync.game.on then
+        sync.game.on = on
+        saveSync()
+    end
+    ImGUI_TextDisabled("Needs \"Read the game's traffic\" on in the overlay's menu.")
 
     ImGUI_Separator()
     ImGUI_Text("File")

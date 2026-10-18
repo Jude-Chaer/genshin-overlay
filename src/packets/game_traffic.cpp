@@ -1,4 +1,5 @@
 #include "game_traffic.hpp"
+#include "game_chests.hpp"
 #include "game_packets.hpp"
 #include "npcap_capture.hpp"
 #include "../capture.hpp"
@@ -15,6 +16,7 @@ namespace GameTraffic {
     // how long a note stays on screen
     static constexpr auto NOTICE_TIME = std::chrono::seconds(10);
     static constexpr const char* STARTED_LATE = "the game was already logged in, log out to the door and back in once";
+    static constexpr const char* NOT_MATCHED = "opened a chest it can't match to a marker, mark it yourself";
 
     static std::thread worker;
     static std::atomic<bool> stopping = false;
@@ -23,6 +25,8 @@ namespace GameTraffic {
     static Status status;
     static std::string notice;
     static std::chrono::steady_clock::time_point noticeUntil;
+    // the HoYoLAB points of the chests opened, oldest first, never cleared
+    static std::vector<int64_t> opened;
 
     static void setStatus(State state, const std::string& text) {
         std::lock_guard lock(mutex);
@@ -56,6 +60,14 @@ namespace GameTraffic {
         return ticks / 10000 - 11644473600000ull;
     }
 
+    static int64_t pointOf(const GameChests::Chest& chest, const GameChests::Tracker& tracker,
+        std::vector<GameChests::Marker>& markers) {
+        // the item files may still be downloading when the overlay starts
+        if (markers.empty())
+            GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
+        return GameChests::Match(chest, tracker.Chests(), markers);
+    }
+
     static void listen() {
         GamePackets::Keys keys;
         if (!GamePackets::LoadKeys(Helpers::exeDirectory() / "packets", keys)) {
@@ -72,6 +84,8 @@ namespace GameTraffic {
         setStatus(State::Waiting, "");
 
         GamePackets::Sniffer sniffer(keys);
+        GameChests::Tracker chests;
+        std::vector<GameChests::Marker> markers;
         std::vector<NpcapCapture::Frame> frames;
         std::vector<GamePackets::Command> commands;
         // a login seen since the start, without one the key can't be found yet
@@ -85,6 +99,24 @@ namespace GameTraffic {
                 if (sniffer.Feed(frame.data.data(), frame.data.size(), commands, frame.ms) == GamePackets::Event::Handshake) {
                     sawLogin = true;
                     sniffer.SetGameStart(gameStart());
+                }
+                for (const GamePackets::Command& command : commands) {
+                    GameChests::Chest chest;
+                    bool placed = false;
+                    if (command.direction != GamePackets::Direction::Received || !chests.Feed(command.id, command.body, chest, placed))
+                        continue;
+                    // inspecting things and places of interest come as opened too,
+                    // only the chests the game showed us have a gadget to tell
+                    if (!placed)
+                        continue;
+                    int64_t point = pointOf(chest, chests, markers);
+                    std::cout << "Game traffic: chest " << chest.group << " " << chest.config << " opened, point " << point << std::endl;
+                    if (point == 0) {
+                        showNotice(NOT_MATCHED);
+                        continue;
+                    }
+                    std::lock_guard lock(mutex);
+                    opened.push_back(point);
                 }
             }
             if (frames.empty()) continue;
@@ -122,6 +154,12 @@ namespace GameTraffic {
         std::lock_guard lock(mutex);
         status = Status();
         noticeUntil = {};
+    }
+
+    size_t OpenedPoints(size_t from, std::vector<int64_t>& out) {
+        std::lock_guard lock(mutex);
+        for (size_t i = from; i < opened.size(); i++) out.push_back(opened[i]);
+        return opened.size();
     }
 
     Status GetStatus() {

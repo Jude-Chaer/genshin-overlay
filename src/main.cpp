@@ -24,6 +24,7 @@
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
+#include "packets/game_chests.hpp"
 #include "packets/game_packets.hpp"
 #include "packets/npcap_capture.hpp"
 #include "packets/game_traffic.hpp"
@@ -201,8 +202,12 @@ struct PacketLog {
 
     // when the game was started, unix ms, for the long search
     uint64_t gameStart = 0;
+    GameChests::Tracker chests;
+    std::vector<GameChests::Marker> markers;
 
-    PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file) : sniffer(keys), out(file) {}
+    PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file) : sniffer(keys), out(file) {
+        GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
+    }
 
     void Feed(uint64_t t, const uint8_t* frame, size_t size) {
         commands.clear();
@@ -230,6 +235,17 @@ struct PacketLog {
 
     void write(uint64_t t) {
         for (const GamePackets::Command& command : commands) {
+            GameChests::Chest chest;
+            bool placed = false;
+            if (command.direction == GamePackets::Direction::Received && chests.Feed(command.id, command.body, chest, placed)) {
+                std::cout << "chest " << chest.group << " " << chest.config << " opened";
+                if (placed) {
+                    double x, y;
+                    GameChests::ToMap(chest, x, y);
+                    std::cout << " at " << x << " " << y << ", point " << GameChests::Match(chest, chests.Chests(), markers);
+                }
+                std::cout << std::endl;
+            }
             nlohmann::json line = {
                 { "t", t },
                 { "dir", command.direction == GamePackets::Direction::Sent ? "sent" : "recv" },

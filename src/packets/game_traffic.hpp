@@ -1,5 +1,7 @@
 #pragma once
+#include <cstdint>
 #include <string>
+#include <vector>
 
 // Listens to the game's traffic in the background, only when the player turned
 // it on in the menu, so the login is seen and the messages can be read. Npcap
@@ -33,6 +35,10 @@ namespace GameTraffic {
     extern void Stop();
 
     extern Status GetStatus();
+
+    // the HoYoLAB points of the chests opened since the overlay started, from
+    // the from-th on, gives back how many there are in all
+    extern size_t OpenedPoints(size_t from, std::vector<int64_t>& out);
 
     // the status, inside the menu
     extern void DrawStatus();

@@ -44,6 +44,7 @@ namespace LuaFunctions {
         { "LuaFunctions::HoyolabRestoreBackup", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
         { "LuaFunctions::HoyolabResult", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
         { "LuaFunctions::HoyolabBackups", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
+        { "LuaFunctions::GetOpenedPoints", { Extensions::ExtensionPermissionTypes::DisplayRead } },
     };
 
     struct LuaInterval
@@ -137,5 +138,6 @@ namespace LuaFunctions {
     int HoyolabRestoreBackup(const std::string& name);
     sol::object HoyolabResult(int job, sol::this_state state);
     sol::table HoyolabBackups(sol::this_state state);
+    sol::table GetOpenedPoints(sol::this_state state);
 
 }

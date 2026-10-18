@@ -110,6 +110,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\packets\game_chests.cpp" />
     <ClCompile Include="src\packets\game_packets.cpp" />
     <ClCompile Include="src\packets\game_traffic.cpp" />
     <ClCompile Include="src\packets\npcap_capture.cpp" />
@@ -140,6 +141,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClInclude Include="src\minimap_door.hpp" />
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\packets\game_chests.hpp" />
     <ClInclude Include="src\packets\game_packets.hpp" />
     <ClInclude Include="src\packets\game_traffic.hpp" />
     <ClInclude Include="src\packets\npcap_capture.hpp" />

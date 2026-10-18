@@ -15,6 +15,7 @@
 #include "hoyolab_marks.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
+#include "packets/game_traffic.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -113,6 +114,7 @@ namespace LuaFunctions {
 		luaState.set_function("HoYoLAB_RestoreBackup", HoyolabRestoreBackup);
 		luaState.set_function("HoYoLAB_Result", HoyolabResult);
 		luaState.set_function("HoYoLAB_Backups", HoyolabBackups);
+		luaState.set_function("GetOpenedPoints", GetOpenedPoints);
 		luaState["KeybindFlags"] = luaState.create_table_with(
 			"None", Keybindings::KeybindFlags_None,
 			"ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -1423,6 +1425,23 @@ namespace LuaFunctions {
 		for (size_t i = 0; i < backups.size(); i++) {
 			list[i + 1] = lua.create_table_with("name", backups[i].name, "count", backups[i].count);
 		}
+		return list;
+	}
+
+	// the HoYoLAB points of the chests the game says were opened since this
+	// extension last asked. The first time it starts from now.
+	sol::table GetOpenedPoints(sol::this_state state)
+	{
+		CHECK_PERMISSIONS();
+		static std::unordered_map<std::string, size_t> asked;
+		std::string key = Extensions::currentExtension->folder.string();
+		std::vector<int64_t> points;
+		auto it = asked.find(key);
+		size_t count = GameTraffic::OpenedPoints(it == asked.end() ? SIZE_MAX : it->second, points);
+		asked[key] = count;
+		sol::state_view lua(state);
+		sol::table list = lua.create_table();
+		for (size_t i = 0; i < points.size(); i++) list[i + 1] = points[i];
 		return list;
 	}
 }
