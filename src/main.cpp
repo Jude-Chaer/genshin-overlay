@@ -23,6 +23,8 @@
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
+#include "packets/game_packets.hpp"
+#include <nlohmann/json.hpp>
 
 // genshin-overlay.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -171,7 +173,79 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
     return 0;
 }
 
+// genshin-overlay.exe --packets-replay <folder>
+// Decodes the frames.bin a packet recording saved again and writes every
+// message to packets-cpp.jsonl next to it. frames.bin has one record per
+// frame: u64 unix ms, u8 adapter, u32 size, the frame (little endian).
+static int replayPackets(const std::filesystem::path& folder) {
+    GamePackets::Keys keys;
+    if (!GamePackets::LoadKeys(Helpers::exeDirectory() / "packets", keys)) {
+        std::cerr << "Could not load the keys from " << Helpers::exeDirectory() / "packets" << std::endl;
+        return 1;
+    }
+    std::ifstream in(folder / "frames.bin", std::ios::binary);
+    if (!in) {
+        std::cerr << "Could not read " << folder / "frames.bin" << std::endl;
+        return 1;
+    }
+    std::vector<uint8_t> frames((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    auto base64 = [](const std::string& data) {
+        static const char* letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        for (size_t i = 0; i < data.size(); i += 3) {
+            uint32_t n = uint32_t(uint8_t(data[i])) << 16;
+            if (i + 1 < data.size()) n |= uint32_t(uint8_t(data[i + 1])) << 8;
+            if (i + 2 < data.size()) n |= uint8_t(data[i + 2]);
+            out += letters[n >> 18 & 63];
+            out += letters[n >> 12 & 63];
+            out += i + 1 < data.size() ? letters[n >> 6 & 63] : '=';
+            out += i + 2 < data.size() ? letters[n & 63] : '=';
+        }
+        return out;
+    };
+
+    std::ofstream out(folder / "packets-cpp.jsonl");
+    GamePackets::Sniffer sniffer(keys);
+    std::vector<GamePackets::Command> commands;
+    std::string problem;
+    size_t count = 0, messages = 0;
+    for (size_t i = 0; i + 13 <= frames.size();) {
+        uint64_t t = 0;
+        for (int b = 0; b < 8; b++) t |= uint64_t(frames[i + b]) << (8 * b);
+        uint32_t size = frames[i + 9] | frames[i + 10] << 8 | frames[i + 11] << 16 | uint32_t(frames[i + 12]) << 24;
+        i += 13;
+        if (i + size > frames.size()) break;
+        commands.clear();
+        GamePackets::Event event = sniffer.Feed(frames.data() + i, size, commands);
+        i += size;
+        count++;
+        if (event == GamePackets::Event::Handshake) std::cout << "login handshake" << std::endl;
+        if (event == GamePackets::Event::Disconnected) std::cout << "disconnected" << std::endl;
+        if (sniffer.Problem() != problem) {
+            problem = sniffer.Problem();
+            if (!problem.empty()) std::cout << "frame " << count << ": " << problem << std::endl;
+        }
+        for (const GamePackets::Command& command : commands) {
+            nlohmann::json line = {
+                { "t", t },
+                { "dir", command.direction == GamePackets::Direction::Sent ? "sent" : "recv" },
+                { "id", command.id },
+                { "head", command.head.size() },
+                { "data", base64(command.head + command.body) },
+            };
+            out << line.dump() << "\n";
+            messages++;
+        }
+    }
+    std::cout << count << " frames, " << messages << " messages" << std::endl;
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--packets-replay") {
+        return replayPackets(argv[2]);
+    }
     if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
         return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0, argc >= 6 && std::string(argv[5]) == "timed");
     }

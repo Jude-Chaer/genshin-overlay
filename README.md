@@ -94,4 +94,8 @@ Started by [Mippy](https://github.com/Mipppy), who came up with the idea and bui
 versions ([a_test](https://github.com/Mipppy/a_test), [na](https://github.com/Mipppy/na)).
 Map matching by [Jude](https://github.com/Jude-Chaer). 
 
+Reading the game's traffic is based on [auto-artifactarium](https://github.com/konkers/auto-artifactarium)
+and uses the login keys from [Irminsul](https://github.com/konkers/irminsul), both MIT, see
+`packets/NOTICE.txt`.
+
 Not affiliated with HoYoverse. Genshin Impact and its map art belong to HoYoverse.
