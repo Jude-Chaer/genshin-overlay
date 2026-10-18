@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +25,7 @@
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
 #include "packets/game_packets.hpp"
+#include "packets/npcap_capture.hpp"
 #include <nlohmann/json.hpp>
 
 // genshin-overlay.exe --locate <screenshot>
@@ -173,58 +175,40 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
     return 0;
 }
 
-// genshin-overlay.exe --packets-replay <folder>
-// Decodes the frames.bin a packet recording saved again and writes every
-// message to packets-cpp.jsonl next to it. frames.bin has one record per
-// frame: u64 unix ms, u8 adapter, u32 size, the frame (little endian).
-static int replayPackets(const std::filesystem::path& folder) {
-    GamePackets::Keys keys;
-    if (!GamePackets::LoadKeys(Helpers::exeDirectory() / "packets", keys)) {
-        std::cerr << "Could not load the keys from " << Helpers::exeDirectory() / "packets" << std::endl;
-        return 1;
+static std::string base64(const std::string& data) {
+    static const char* letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (size_t i = 0; i < data.size(); i += 3) {
+        uint32_t n = uint32_t(uint8_t(data[i])) << 16;
+        if (i + 1 < data.size()) n |= uint32_t(uint8_t(data[i + 1])) << 8;
+        if (i + 2 < data.size()) n |= uint8_t(data[i + 2]);
+        out += letters[n >> 18 & 63];
+        out += letters[n >> 12 & 63];
+        out += i + 1 < data.size() ? letters[n >> 6 & 63] : '=';
+        out += i + 2 < data.size() ? letters[n & 63] : '=';
     }
-    std::ifstream in(folder / "frames.bin", std::ios::binary);
-    if (!in) {
-        std::cerr << "Could not read " << folder / "frames.bin" << std::endl;
-        return 1;
-    }
-    std::vector<uint8_t> frames((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return out;
+}
 
-    auto base64 = [](const std::string& data) {
-        static const char* letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::string out;
-        for (size_t i = 0; i < data.size(); i += 3) {
-            uint32_t n = uint32_t(uint8_t(data[i])) << 16;
-            if (i + 1 < data.size()) n |= uint32_t(uint8_t(data[i + 1])) << 8;
-            if (i + 2 < data.size()) n |= uint8_t(data[i + 2]);
-            out += letters[n >> 18 & 63];
-            out += letters[n >> 12 & 63];
-            out += i + 1 < data.size() ? letters[n >> 6 & 63] : '=';
-            out += i + 2 < data.size() ? letters[n & 63] : '=';
-        }
-        return out;
-    };
-
-    std::ofstream out(folder / "packets-cpp.jsonl");
-    GamePackets::Sniffer sniffer(keys);
+// one frame into the sniffer, the messages it finishes go to out as json lines
+struct PacketLog {
+    GamePackets::Sniffer sniffer;
+    std::ofstream out;
     std::vector<GamePackets::Command> commands;
     std::string problem;
-    size_t count = 0, messages = 0;
-    for (size_t i = 0; i + 13 <= frames.size();) {
-        uint64_t t = 0;
-        for (int b = 0; b < 8; b++) t |= uint64_t(frames[i + b]) << (8 * b);
-        uint32_t size = frames[i + 9] | frames[i + 10] << 8 | frames[i + 11] << 16 | uint32_t(frames[i + 12]) << 24;
-        i += 13;
-        if (i + size > frames.size()) break;
+    size_t frames = 0, messages = 0;
+
+    PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file) : sniffer(keys), out(file) {}
+
+    void Feed(uint64_t t, const uint8_t* frame, size_t size) {
         commands.clear();
-        GamePackets::Event event = sniffer.Feed(frames.data() + i, size, commands);
-        i += size;
-        count++;
+        GamePackets::Event event = sniffer.Feed(frame, size, commands);
+        frames++;
         if (event == GamePackets::Event::Handshake) std::cout << "login handshake" << std::endl;
         if (event == GamePackets::Event::Disconnected) std::cout << "disconnected" << std::endl;
         if (sniffer.Problem() != problem) {
             problem = sniffer.Problem();
-            if (!problem.empty()) std::cout << "frame " << count << ": " << problem << std::endl;
+            if (!problem.empty()) std::cout << "frame " << frames << ": " << problem << std::endl;
         }
         for (const GamePackets::Command& command : commands) {
             nlohmann::json line = {
@@ -238,13 +222,101 @@ static int replayPackets(const std::filesystem::path& folder) {
             messages++;
         }
     }
-    std::cout << count << " frames, " << messages << " messages" << std::endl;
+};
+
+static bool loadPacketKeys(GamePackets::Keys& keys) {
+    if (GamePackets::LoadKeys(Helpers::exeDirectory() / "packets", keys)) return true;
+    std::cerr << "Could not load the keys from " << Helpers::exeDirectory() / "packets" << std::endl;
+    return false;
+}
+
+// genshin-overlay.exe --packets-replay <folder>
+// Decodes the frames.bin a packet recording saved again and writes every
+// message to packets-cpp.jsonl next to it. frames.bin has one record per
+// frame: u64 unix ms, u8 adapter, u32 size, the frame (little endian).
+static int replayPackets(const std::filesystem::path& folder) {
+    GamePackets::Keys keys;
+    if (!loadPacketKeys(keys)) return 1;
+    std::ifstream in(folder / "frames.bin", std::ios::binary);
+    if (!in) {
+        std::cerr << "Could not read " << folder / "frames.bin" << std::endl;
+        return 1;
+    }
+    std::vector<uint8_t> frames((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    PacketLog log(keys, folder / "packets-cpp.jsonl");
+    for (size_t i = 0; i + 13 <= frames.size();) {
+        uint64_t t = 0;
+        for (int b = 0; b < 8; b++) t |= uint64_t(frames[i + b]) << (8 * b);
+        uint32_t size = frames[i + 9] | frames[i + 10] << 8 | frames[i + 11] << 16 | uint32_t(frames[i + 12]) << 24;
+        i += 13;
+        if (i + size > frames.size()) break;
+        log.Feed(t, frames.data() + i, size);
+        i += size;
+    }
+    std::cout << log.frames << " frames, " << log.messages << " messages" << std::endl;
+    return 0;
+}
+
+static std::atomic<bool> packetsStop = false;
+
+// genshin-overlay.exe --packets-live <folder>
+// Captures with Npcap until Ctrl+C, writes frames.bin (same records as above)
+// and packets-cpp.jsonl into the folder. Start it before logging in.
+static int livePackets(const std::filesystem::path& folder) {
+    GamePackets::Keys keys;
+    if (!loadPacketKeys(keys)) return 1;
+    std::filesystem::create_directories(folder);
+    std::vector<std::string> adapters;
+    std::string problem;
+    if (!NpcapCapture::Start(adapters, problem)) {
+        std::cerr << problem << std::endl;
+        return 1;
+    }
+    for (const std::string& name : adapters) std::cout << "listening on " << name << std::endl;
+    std::cout << "now start the game and log in, Ctrl+C here when done" << std::endl;
+
+    SetConsoleCtrlHandler([](DWORD) -> BOOL {
+        packetsStop = true;
+        return TRUE;
+    }, TRUE);
+
+    std::ofstream raw(folder / "frames.bin", std::ios::binary);
+    PacketLog log(keys, folder / "packets-cpp.jsonl");
+    std::vector<NpcapCapture::Frame> frames;
+    auto lastPrint = std::chrono::steady_clock::now();
+    while (!packetsStop) {
+        NpcapCapture::Take(frames, 500);
+        for (const NpcapCapture::Frame& frame : frames) {
+            uint8_t record[13];
+            for (int b = 0; b < 8; b++) record[b] = uint8_t(frame.ms >> (8 * b));
+            record[8] = frame.adapter;
+            uint32_t size = uint32_t(frame.data.size());
+            for (int b = 0; b < 4; b++) record[9 + b] = uint8_t(size >> (8 * b));
+            raw.write((const char*)record, sizeof(record));
+            raw.write((const char*)frame.data.data(), size);
+            log.Feed(frame.ms, frame.data.data(), frame.data.size());
+        }
+        raw.flush();
+        log.out.flush();
+        if (std::chrono::steady_clock::now() - lastPrint > std::chrono::seconds(5)) {
+            lastPrint = std::chrono::steady_clock::now();
+            std::cout << "frames " << log.frames << ", messages " << log.messages;
+            if (NpcapCapture::Dropped()) std::cout << ", dropped " << NpcapCapture::Dropped();
+            std::cout << std::endl;
+        }
+    }
+    NpcapCapture::Stop();
+    std::cout << log.frames << " frames, " << log.messages << " messages" << std::endl;
     return 0;
 }
 
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--packets-replay") {
         return replayPackets(argv[2]);
+    }
+    if (argc >= 3 && std::string(argv[1]) == "--packets-live") {
+        return livePackets(argv[2]);
     }
     if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
         return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0, argc >= 6 && std::string(argv[5]) == "timed");
