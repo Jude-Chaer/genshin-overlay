@@ -203,6 +203,14 @@ struct PacketLog {
 
     // when the game was started, unix ms, for the long search
     uint64_t gameStart = 0;
+    // capturing right now: the game start is read at each login and the long
+    // search runs in the background instead of holding up the capture
+    bool live = false;
+    bool sawLogin = false;
+    // the first frame from the game, unix ms
+    uint64_t firstFrame = 0;
+    // the last thing said about whether the recording can be read
+    std::string verdict;
     GameChests::Tracker chests;
     std::vector<GameChests::Marker> markers;
     GameOculi::Tracker oculi;
@@ -216,25 +224,60 @@ struct PacketLog {
     void Feed(uint64_t t, const uint8_t* frame, size_t size) {
         commands.clear();
         // frames come faster than in the game, a login right after would cancel it
-        if (sniffer.Searching()) sniffer.FinishSearch(commands);
+        if (!live && sniffer.Searching()) sniffer.FinishSearch(commands);
         GamePackets::Event event = sniffer.Feed(frame, size, commands, t);
         frames++;
+        if (!firstFrame) firstFrame = t;
         if (event == GamePackets::Event::Handshake) {
-            std::cout << "login handshake" << std::endl;
+            sawLogin = true;
+            if (live) gameStart = GameTraffic::GameStart();
             sniffer.SetGameStart(gameStart);
+            say("login seen, wait for READABLE before doing anything in game");
         }
         if (event == GamePackets::Event::Disconnected) std::cout << "disconnected" << std::endl;
-        if (sniffer.Problem() != problem) {
-            problem = sniffer.Problem();
-            if (!problem.empty()) std::cout << "frame " << frames << ": " << problem << std::endl;
-        }
+        problem = sniffer.Problem();
         write(t);
+        check(t);
+    }
+
+    // says READABLE or NOT READABLE once it's known, so nobody plays into a
+    // recording that can't be read
+    void check(uint64_t t) {
+        // started after the login: the game talks but can't be read, often
+        // not even one whole message comes, so the sniffer has no problem to tell
+        bool late = !sawLogin && !sniffer.HasKey();
+        if (late && (!problem.empty() || t > firstFrame + LATE_AFTER)) {
+            say("NOT READABLE: the game was already logged in, log out to the door and back in once");
+        }
+        else if (!problem.empty()) {
+            say("NOT READABLE: " + problem);
+        }
+        else if (sniffer.Searching()) {
+            say("looking for the key from the game's start, wait for READABLE");
+        }
+        else if (sniffer.HasSessionKey()) {
+            say("READABLE, go ahead");
+        }
+    }
+
+    static constexpr uint64_t LATE_AFTER = 5000;
+
+    void say(const std::string& text) {
+        if (text == verdict) return;
+        verdict = text;
+        bool banner = text.rfind("READABLE", 0) == 0 || text.rfind("NOT READABLE", 0) == 0;
+        if (banner) std::cout << "\n==================================================\n  ";
+        std::cout << text;
+        if (banner) std::cout << "\n==================================================\n";
+        std::cout << std::endl;
     }
 
     void Finish() {
         commands.clear();
         sniffer.FinishSearch(commands);
+        problem = sniffer.Problem();
         write(0);
+        check(0);
     }
 
     void write(uint64_t t) {
@@ -311,7 +354,8 @@ static std::atomic<bool> packetsStop = false;
 
 // genshin-overlay.exe --packets-live <folder>
 // Captures with Npcap until Ctrl+C, writes frames.bin (same records as above)
-// and packets-cpp.jsonl into the folder. Start it before logging in.
+// and packets-cpp.jsonl into the folder. Start it before logging in, it says
+// READABLE or NOT READABLE (and what to do) right after the login.
 static int livePackets(const std::filesystem::path& folder) {
     GamePackets::Keys keys;
     if (!loadPacketKeys(keys)) return 1;
@@ -323,7 +367,7 @@ static int livePackets(const std::filesystem::path& folder) {
         return 1;
     }
     for (const std::string& name : adapters) std::cout << "listening on " << name << std::endl;
-    std::cout << "now start the game and log in, Ctrl+C here when done" << std::endl;
+    std::cout << "now start the game and log in, wait for READABLE, Ctrl+C here when done" << std::endl;
 
     SetConsoleCtrlHandler([](DWORD) -> BOOL {
         packetsStop = true;
@@ -332,6 +376,7 @@ static int livePackets(const std::filesystem::path& folder) {
 
     std::ofstream raw(folder / "frames.bin", std::ios::binary);
     PacketLog log(keys, folder / "packets-cpp.jsonl");
+    log.live = true;
     std::vector<NpcapCapture::Frame> frames;
     auto lastPrint = std::chrono::steady_clock::now();
     while (!packetsStop) {

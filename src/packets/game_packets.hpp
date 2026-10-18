@@ -60,6 +60,8 @@ namespace GamePackets {
         // why nothing decodes right now, empty while it works
         const std::string& Problem() const { return m_problem; }
         bool HasKey() const { return m_key == KeyKind::Dispatch || m_key == KeyKind::Session; }
+        // past the login, the game's messages read with this session's key
+        bool HasSessionKey() const { return m_key == KeyKind::Session; }
         // when the game was started, unix ms. With it a missed first login can
         // still be found, by looking at every time since then
         void SetGameStart(uint64_t unixMs) { m_gameStart = unixMs; }

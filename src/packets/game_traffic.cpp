@@ -43,8 +43,7 @@ namespace GameTraffic {
         noticeUntil = std::chrono::steady_clock::now() + NOTICE_TIME;
     }
 
-    // when the game was started, unix ms, 0 when it can't be read
-    static uint64_t gameStart() {
+    uint64_t GameStart() {
         HWND window = Capture::findGameWindow();
         DWORD id = 0;
         if (!window || !GetWindowThreadProcessId(window, &id))
@@ -109,7 +108,7 @@ namespace GameTraffic {
                 commands.clear();
                 if (sniffer.Feed(frame.data.data(), frame.data.size(), commands, frame.ms) == GamePackets::Event::Handshake) {
                     sawLogin = true;
-                    sniffer.SetGameStart(gameStart());
+                    sniffer.SetGameStart(GameStart());
                 }
                 for (const GamePackets::Command& command : commands) {
                     if (command.direction != GamePackets::Direction::Received)

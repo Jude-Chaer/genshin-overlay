@@ -30,6 +30,9 @@ namespace GameTraffic {
         std::string text;
     };
 
+    // when the game was started, unix ms, 0 when it isn't running or can't be read
+    extern uint64_t GameStart();
+
     // starts listening on its own thread, the overlay doesn't wait for it
     extern void Start();
     extern void Stop();
