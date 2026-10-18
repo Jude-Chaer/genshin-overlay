@@ -1352,12 +1352,78 @@ local function backups(busy)
     end
 end
 
+-- A switch that's on but can't work yet says what it waits for, with the
+-- button that fixes it. It never turns itself off, it starts once all is there.
+local function drawWait(what, label, fix)
+    if not what then return end
+    ImGUI_Text("Waiting for " .. what)
+    if label then
+        ImGUI_SameLine()
+        ImGUI_Button(label, fix)
+    end
+end
+
+-- what keeps syncing with HoYoLAB from working, nil when nothing does
+local function hoyolabWait()
+    if not HasPermission(HOYOLAB) then
+        return "HoYoLAB access", "Allow##hoyolabWait", function() AskForPermission(HOYOLAB) end
+    end
+    local account = HoYoLAB_Account()
+    if not account.loggedIn then
+        if account.windowOpen then return "you to log in, in the HoYoLAB window" end
+        return "you to log in to HoYoLAB", "Log in##hoyolabWait", function() HoYoLAB_LogIn() end
+    end
+end
+
+-- what keeps marking opened chests from working, nil when nothing does
+local function gameWait()
+    local traffic = GetGameTraffic()
+    if not traffic.on then
+        return "\"Read the game's traffic\" in the overlay's menu", "Turn it on##gameWait", AskForGameTraffic
+    end
+    if traffic.state == "off" then return "the game's traffic to start" end
+    if traffic.state == "waiting" then return "the game to log in. If you're logged in already, log out to the door and back in once" end
+    if traffic.state == "searching" then return "the session key, this can take a minute" end
+    if traffic.state ~= "reading" then return "the game's traffic: " .. traffic.text end
+end
+
 local function hoyolabSection(busy)
     ImGUI_Separator()
     ImGUI_Text("HoYoLAB")
+    local h = sync.hoyolab
+    if hoyoJob then
+        ImGUI_TextDisabled("Talking to HoYoLAB...")
+    elseif not busy then
+        local on = ImGUI_Checkbox("Keep in sync", h.on)
+        if on ~= h.on then
+            h.on, h.base = on, nil
+            saveSync()
+            if not on then
+                status = nil
+            elseif not HasPermission(HOYOLAB) then
+                AskForPermission(HOYOLAB)
+            elseif not hoyolabWait() then
+                fullSync()
+            end
+        end
+        if h.on then
+            local what, label, fix = hoyolabWait()
+            drawWait(what, label, fix)
+            if not what then
+                ImGUI_Button("Sync now", fullSync)
+                if h.last > 0 then
+                    ImGUI_SameLine()
+                    ImGUI_TextDisabled("Last synced " .. ago(h.last))
+                end
+            end
+        end
+    end
+    -- while syncing is on its waiting line has the buttons already
     if not HasPermission(HOYOLAB) then
-        ImGUI_TextDisabled("Markers needs your OK to use your HoYoLAB account.")
-        ImGUI_Button("Allow HoYoLAB access", function() AskForPermission(HOYOLAB) end)
+        if not h.on then
+            ImGUI_TextDisabled("Markers needs your OK to use your HoYoLAB account.")
+            ImGUI_Button("Allow HoYoLAB access", function() AskForPermission(HOYOLAB) end)
+        end
         return
     end
 
@@ -1365,8 +1431,8 @@ local function hoyolabSection(busy)
     if account.error ~= "" then ImGUI_Text(account.error) end
     if not account.loggedIn then
         if account.windowOpen then
-            ImGUI_TextDisabled("Log in in the HoYoLAB window.")
-        else
+            if not h.on then ImGUI_TextDisabled("Log in in the HoYoLAB window.") end
+        elseif not h.on then
             ImGUI_Button("Log in to HoYoLAB", function() HoYoLAB_LogIn() end)
         end
         ImGUI_TextDisabled("Use email and password, the Google button may not work there.")
@@ -1388,27 +1454,10 @@ local function hoyolabSection(busy)
         end
     end
 
-    local h = sync.hoyolab
-    if hoyoJob then
-        ImGUI_TextDisabled("Talking to HoYoLAB...")
-    elseif not busy then
-        local on = ImGUI_Checkbox("Keep in sync", h.on)
-        if on ~= h.on then
-            h.on, h.base = on, nil
-            saveSync()
-            if on then fullSync() else status = nil end
-        end
-        if h.on then
-            ImGUI_Button("Sync now", fullSync)
-            if h.last > 0 then
-                ImGUI_SameLine()
-                ImGUI_TextDisabled("Last synced " .. ago(h.last))
-            end
-        else
-            ImGUI_Button("Get from HoYoLAB", getFromHoyolab)
-            ImGUI_SameLine()
-            ImGUI_Button("Send to HoYoLAB", sendToHoyolab)
-        end
+    if not h.on and not hoyoJob and not busy then
+        ImGUI_Button("Get from HoYoLAB", getFromHoyolab)
+        ImGUI_SameLine()
+        ImGUI_Button("Send to HoYoLAB", sendToHoyolab)
     end
     backups(busy)
 end
@@ -1440,8 +1489,13 @@ local function syncPage()
     if on ~= sync.game.on then
         sync.game.on = on
         saveSync()
+        if on and not GetGameTraffic().on then AskForGameTraffic() end
     end
-    ImGUI_TextDisabled("Needs \"Read the game's traffic\" on in the overlay's menu.")
+    if sync.game.on then
+        local what, label, fix = gameWait()
+        drawWait(what, label, fix)
+        if not what then ImGUI_TextDisabled("Working, on the Teyvat map") end
+    end
 
     ImGUI_Separator()
     ImGUI_Text("File")

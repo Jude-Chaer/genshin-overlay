@@ -177,7 +177,7 @@ namespace GameTraffic {
             ImGui::TextWrapped("Can't listen: %s", now.text.c_str());
             break;
         case State::Waiting:
-            ImGui::TextWrapped("Listening. If the game was already running, close it and start it again.");
+            ImGui::TextWrapped("Listening. If you're already logged in, log out to the door and back in once.");
             break;
         case State::Searching:
             ImGui::TextWrapped("Looking for the session key, this can take a minute");

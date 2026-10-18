@@ -111,5 +111,7 @@ namespace Extensions {
 	// a window drawn by drawPermissionQuestion, the extension can't.
 	extern void askForPermission(Extension* ext, ExtensionPermissionTypes permission);
 	extern void drawPermissionQuestion();
+	// asks the player to turn on reading the game's traffic, in the same window
+	extern void askForGameTraffic(Extension* ext);
 	extern bool permissionQuestionOpen();
 }

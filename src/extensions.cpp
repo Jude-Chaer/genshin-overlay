@@ -4,6 +4,7 @@
 #include "lua_functions.hpp"
 #include "overlay.hpp"
 #include "settings.hpp"
+#include "packets/game_traffic.hpp"
 #include <imgui.h>
 #include <iostream>
 
@@ -467,6 +468,8 @@ namespace Extensions {
 
 	static Extension* asking = nullptr;
 	static ExtensionPermissionTypes askedFor = ExtensionPermissionTypes::None;
+	// the extension that asked to turn on reading the game's traffic, empty when none did
+	static std::string trafficAsker;
 
 	void askForPermission(Extension* ext, ExtensionPermissionTypes permission) {
 		if (!ext || permission == ExtensionPermissionTypes::None || asking) return;
@@ -475,8 +478,13 @@ namespace Extensions {
 		askedFor = permission;
 	}
 
+	void askForGameTraffic(Extension* ext) {
+		if (!ext || Settings::readGameTraffic) return;
+		trafficAsker = ext->name;
+	}
+
 	bool permissionQuestionOpen() {
-		return asking != nullptr || !changed.empty();
+		return asking != nullptr || !changed.empty() || !trafficAsker.empty();
 	}
 
 	void drawPermissionQuestion() {
@@ -518,6 +526,20 @@ namespace Extensions {
 			// asked again on the next start
 			if (ImGui::Button("Not now")) answered = true;
 			if (answered) changed.erase(changed.begin());
+		}
+		else {
+			ImGui::Text("%s asks to turn on: Read the game's traffic", trafficAsker.c_str());
+			ImGui::TextDisabled("Needs Npcap. It only reads, nothing is ever sent to the game.");
+			ImGui::TextDisabled("You can turn it off in the menu, under Game traffic.");
+			if (ImGui::Button("Turn on")) {
+				Settings::readGameTraffic = true;
+				Settings::Save();
+				GameTraffic::Start();
+				answered = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Don't turn on")) answered = true;
+			if (answered) trafficAsker.clear();
 		}
 		ImVec2 position = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
 		Overlay::ClaimMouse(position.x, position.y, position.x + size.x, position.y + size.y);

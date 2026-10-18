@@ -405,7 +405,7 @@ namespace Overlay {
                     else GameTraffic::Stop();
                 }
                 if (Settings::readGameTraffic) GameTraffic::DrawStatus();
-                else ImGui::TextDisabled("Off. Turn it on before starting the game.");
+                else ImGui::TextDisabled("Off");
             }
 
             if (ImGui::CollapsingHeader("Advanced")) {

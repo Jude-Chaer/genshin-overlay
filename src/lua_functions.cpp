@@ -16,6 +16,7 @@
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include "packets/game_traffic.hpp"
+#include "settings.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -115,6 +116,8 @@ namespace LuaFunctions {
 		luaState.set_function("HoYoLAB_Result", HoyolabResult);
 		luaState.set_function("HoYoLAB_Backups", HoyolabBackups);
 		luaState.set_function("GetOpenedPoints", GetOpenedPoints);
+		luaState.set_function("GetGameTraffic", GetGameTraffic);
+		luaState.set_function("AskForGameTraffic", AskForGameTraffic);
 		luaState["KeybindFlags"] = luaState.create_table_with(
 			"None", Keybindings::KeybindFlags_None,
 			"ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -1443,5 +1446,23 @@ namespace LuaFunctions {
 		sol::table list = lua.create_table();
 		for (size_t i = 0; i < points.size(); i++) list[i + 1] = points[i];
 		return list;
+	}
+
+	// Reading the game's traffic, for what needs it: on is the switch in the
+	// menu, state one of off, cant_listen, waiting, searching, reading,
+	// cant_read, and text what the menu says about it.
+	sol::table GetGameTraffic(sol::this_state state)
+	{
+		CHECK_PERMISSIONS();
+		static const char* names[] = { "off", "cant_listen", "waiting", "searching", "reading", "cant_read" };
+		GameTraffic::Status status = GameTraffic::GetStatus();
+		sol::state_view lua(state);
+		return lua.create_table_with("on", Settings::readGameTraffic, "state", names[int(status.state)], "text", status.text);
+	}
+
+	// asks the player in a window of its own, the extension can't turn it on
+	void AskForGameTraffic()
+	{
+		Extensions::askForGameTraffic(Extensions::currentExtension);
 	}
 }

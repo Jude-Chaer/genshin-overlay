@@ -45,6 +45,7 @@ namespace LuaFunctions {
         { "LuaFunctions::HoyolabResult", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
         { "LuaFunctions::HoyolabBackups", { Extensions::ExtensionPermissionTypes::HoyolabAccount } },
         { "LuaFunctions::GetOpenedPoints", { Extensions::ExtensionPermissionTypes::DisplayRead } },
+        { "LuaFunctions::GetGameTraffic", { Extensions::ExtensionPermissionTypes::DisplayRead } },
     };
 
     struct LuaInterval
@@ -139,5 +140,7 @@ namespace LuaFunctions {
     sol::object HoyolabResult(int job, sol::this_state state);
     sol::table HoyolabBackups(sol::this_state state);
     sol::table GetOpenedPoints(sol::this_state state);
+    sol::table GetGameTraffic(sol::this_state state);
+    void AskForGameTraffic();
 
 }
