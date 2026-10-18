@@ -13,6 +13,7 @@ namespace GamePackets {
     // the C# Random seeds tried around the login's time, and numbers taken from each
     static constexpr int WINDOW = 3000;
     static constexpr int DEPTH = 5;
+    static constexpr const char* COMPRESSED = "the login came compressed, close the game and start it again";
 
     static uint16_t be16(const uint8_t* p) { return uint16_t(p[0] << 8 | p[1]); }
     static uint32_t be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
@@ -423,11 +424,17 @@ namespace GamePackets {
         else if (m_key == KeyKind::Dispatch && !fits(m_keyBytes, data)) {
             // after the login answer the game switches to the session key
             bool found = false;
+            std::vector<uint64_t> times;
+            if (m_clientSeed) times.push_back(*m_clientSeed);
+            times.insert(times.end(), m_loginTimes.begin(), m_loginTimes.end());
+            times.push_back(m_sentMs);
             for (uint64_t serverSeed : m_serverSeeds) {
-                uint64_t timeSeed;
+                uint64_t timeSeed = 0;
                 std::string key;
-                if ((m_clientSeed && SearchKey(*m_clientSeed, serverSeed, data, WINDOW, DEPTH, timeSeed, key))
-                    || SearchKey(m_sentMs, serverSeed, data, WINDOW, DEPTH, timeSeed, key)) {
+                bool fit = false;
+                for (size_t i = 0; i < times.size() && !fit; i++)
+                    fit = SearchKey(times[i], serverSeed, data, WINDOW, DEPTH, timeSeed, key);
+                if (fit) {
                     m_clientSeed = timeSeed;
                     m_key = KeyKind::Session;
                     m_keyBytes = std::move(key);
@@ -436,7 +443,7 @@ namespace GamePackets {
                 }
             }
             if (!found) {
-                m_problem = "couldn't find the session key";
+                m_problem = m_compressedLogin ? COMPRESSED : "couldn't find the session key";
                 return false;
             }
         }
@@ -461,16 +468,31 @@ namespace GamePackets {
         out.body = data.substr(10 + headSize, bodySize);
         m_problem.clear();
 
-        if (m_key == KeyKind::Dispatch) {
+        if (m_key == KeyKind::Dispatch && direction == Direction::Received) {
+            uint64_t sentMs = 0, unpackedSize = 0;
+            std::string_view head = out.head;
+            Field field;
+            while (NextField(head, field)) {
+                if (field.number == 6 && field.wire == 0)
+                    sentMs = field.value;
+                if (field.number == 8 && field.wire == 0)
+                    unpackedSize = field.value;
+            }
+            if (unpackedSize) {
+                // Since 7.1 the login answer sometimes comes Oodle compressed, and
+                // Oodle can't be read here. The game's key generator was still
+                // seeded at this login, so after a relog the key is found from it.
+                m_compressedLogin = true;
+                m_serverSeeds.clear();
+                if (sentMs && !m_clientSeed) m_loginTimes.push_back(sentMs);
+                m_problem = COMPRESSED;
+                return true;
+            }
             std::vector<uint64_t> seeds = m_rsa->seeds(out.body);
             if (!seeds.empty()) {
+                m_compressedLogin = false;
                 m_serverSeeds = std::move(seeds);
-                std::string_view head = out.head;
-                Field field;
-                while (NextField(head, field)) {
-                    if (field.number == 6 && field.wire == 0)
-                        m_sentMs = field.value;
-                }
+                m_sentMs = sentMs;
             }
         }
         return true;

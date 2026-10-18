@@ -72,6 +72,9 @@ namespace GamePackets {
         std::string m_keyBytes;
         std::optional<uint64_t> m_clientSeed;
         std::vector<uint64_t> m_serverSeeds;
+        // logins whose answer couldn't be read, the generator may have been seeded at one
+        std::vector<uint64_t> m_loginTimes;
+        bool m_compressedLogin = false;
         uint64_t m_sentMs = 0;
         std::string m_problem;
     };
