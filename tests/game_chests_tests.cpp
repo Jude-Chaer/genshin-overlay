@@ -106,6 +106,23 @@ TEST_CASE("Match takes the chest's marker only when nothing else is close") {
     CHECK(Match(domain, {}, markers) == 0);
 }
 
+TEST_CASE("Sealed and mora chests are chests too") {
+    // what HoYoLAB calls a Sealed Chest, a Wooden and a Stone Pile Mora Chest
+    std::string body = object(1, 70210063, 133104041, 1, 0, 0, 0) + object(2, 70210105, 133104041, 2, 0, 0, 0) +
+        object(3, 70217020, 133104041, 3, 0, 0, 0) + object(4, 70610001, 133104041, 4, 0, 0, 0);
+    std::vector<Chest> chests;
+    ReadAppeared(body, chests);
+    CHECK(chests.size() == 3);
+
+    // a sealed chest fits a sealed marker, a mora chest only its own kind
+    Chest sealed = chestAt(70210063, 100, 100), mora = chestAt(70210105, 100, 100);
+    CHECK(Match(sealed, {}, { { 1, 75, 103, 100 } }) == 1);
+    CHECK(Match(sealed, {}, { { 1, 17, 103, 100 } }) == 0);
+    CHECK(Match(mora, {}, { { 2, 129, 103, 100 } }) == 2);
+    CHECK(Match(mora, {}, { { 2, 359, 103, 100 } }) == 0);
+    CHECK(Match(mora, {}, { { 2, 75, 103, 100 } }) == 0);
+}
+
 TEST_CASE("Tracker knows where an opened chest was") {
     Tracker tracker;
     Chest opened;

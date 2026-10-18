@@ -9,8 +9,9 @@
 
 namespace GameChests {
     // HoYoLAB's chest labels: common, exquisite, precious, luxurious, remarkable,
-    // then buried and sealed ones, which can be any of those
-    static constexpr int LABELS[] = { 17, 44, 45, 46, 269, 24, 25, 69, 75 };
+    // then buried and sealed ones, which can be any of those, then the wooden
+    // and the stone pile mora chests
+    static constexpr int LABELS[] = { 17, 44, 45, 46, 269, 24, 25, 69, 75, 129, 359 };
     static constexpr int TEYVAT = 2;
     // a chest's marker is at most this far, and the next one has to be clearly further
     static constexpr double MATCH = 20.0;
@@ -28,13 +29,27 @@ namespace GameChests {
         return 0;
     }
 
+    // which mora chest label a gadget is, 0 when it's no mora chest
+    static int moraOf(uint32_t gadget) {
+        switch (gadget) {
+        case 70210105: return 129;
+        case 70217012: case 70217014: case 70217020: case 70330342: return 359;
+        }
+        return 0;
+    }
+
+    // a sealed chest that isn't a 70211 one
+    static constexpr uint32_t SEALED = 70210063;
+
     static bool fits(uint32_t gadget, int label) {
+        if (moraOf(gadget))
+            return moraOf(gadget) == label;
         if (label == 24 || label == 25 || label == 69 || label == 75)
             return true;
         return tierOf(gadget) == label;
     }
 
-    static bool isChest(uint32_t gadget) { return gadget / 1000 == 70211; }
+    static bool isChest(uint32_t gadget) { return gadget / 1000 == 70211 || gadget == SEALED || moraOf(gadget); }
 
     static float toFloat(uint64_t value) {
         uint32_t bits = uint32_t(value);
