@@ -277,18 +277,54 @@ local function faded(color, a)
     return color - (color & 0xFF) + math.floor((color & 0xFF) * a)
 end
 
+-- What the game showed about chest markers the player came near, when the
+-- player reads the game's traffic: stillThere[id] the game still has the
+-- chest, probablyOpened[id] it sent no chest there. Asked about once a second.
+local stillThere, probablyOpened = {}, {}
+local hintsAt = -1
+
+local function readHints()
+    if GetOSTimeMS() - hintsAt < 1000 then return end
+    hintsAt = GetOSTimeMS()
+    stillThere, probablyOpened = {}, {}
+    local hints = GetChestHints()
+    for _, id in ipairs(hints.stillThere) do stillThere[id] = true end
+    for _, id in ipairs(hints.probablyOpened) do probablyOpened[id] = true end
+end
+
+-- "!" for one marked done that the game says is still there, "?" for one not
+-- done that the game sent no chest for. Only with marking from the game on.
+local function hintOf(id)
+    if not sync.game.on then return nil end
+    if done[id] and stillThere[id] then return "!" end
+    if not done[id] and probablyOpened[id] then return "?" end
+    return nil
+end
+
+local HINT_COLOR = 0xF2A33AFF
+
 -- A round badge like the game's map icons: light ring, dark inside, the
 -- item in the middle. Done ones get a grey ring and the whole badge fades.
--- The one whose guide is open gets a blue ring.
-local function drawMarker(x, y, half, icon, isDone, isOpen)
+-- The one whose guide is open gets a blue ring. One with a hint gets an
+-- orange ring and the sign in a bubble at its top left, and doesn't fade.
+local function drawMarker(x, y, half, icon, isDone, isOpen, hint)
     local a = isDone and DONE_OPACITY or 1.0
-    local ring = isOpen and 0x4FB8FFFF or isDone and 0x969696FF or 0xECE5D8FF
-    if isOpen then a = 1.0 end
+    local ring = isOpen and 0x4FB8FFFF or hint and HINT_COLOR or isDone and 0x969696FF or 0xECE5D8FF
+    if isOpen or hint then a = 1.0 end
     DrawCircle(x, y + half * 0.08, half, faded(0x00000050, a))
     DrawCircle(x, y, half * 0.94, faded(ring, a))
     DrawCircle(x, y, half * 0.8, faded(0x3B4255FF, a))
     local item = half * 0.6
     DrawImage(icon, x - item, y - item, x + item, y + item, a)
+    if hint then
+        local r = half * 0.42
+        local bx, by = x - half * 0.72, y - half * 0.72
+        DrawCircle(bx, by, r, 0x3B4255FF)
+        DrawCircle(bx, by, r * 0.86, HINT_COLOR)
+        local size = r * 1.5
+        local w, h = TextSize(hint, size)
+        DrawText(hint, bx - w / 2, by - h / 2, size, 0x1C2030FF)
+    end
 end
 
 -- underground only the floor you're on, above ground only what's above ground
@@ -597,6 +633,13 @@ local function layoutGuide(guide, x0, y0, width, maxPicture, draw)
     end
     y = y + px(46)
 
+    local hint = hintOf(openGuide.id)
+    if hint == "!" then
+        y = y + textBlock("The game still has this chest, it isn't opened yet.", x, y, text, HINT_COLOR, inner, draw) + px(12)
+    elseif hint == "?" then
+        y = y + textBlock("The game sent no chest here when you were close, so it's probably opened. Chests behind a puzzle or a quest only show up once that's done.", x, y, text, HINT_COLOR, inner, draw) + px(12)
+    end
+
     if not guide or guide.failed then
         local message = guide and "Couldn't load the guide, trying again in a bit." or "Loading the guide..."
         return y + textBlock(message, x, y, text, DIM, inner, draw) + px(16) - y0
@@ -782,7 +825,7 @@ local function drawOnMap(view)
         if list then
             for _, point in ipairs(list) do
                 if onFloor(point, view.groupId, view.floorId) and (not filter or filter[point.area])
-                    and not (hideDone and done[point.id] and not (openGuide and openGuide.id == point.id)) then
+                    and not (hideDone and done[point.id] and not stillThere[point.id] and not (openGuide and openGuide.id == point.id)) then
                     -- x_pos / y_pos are the same map units as the view's lng / lat
                     local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
                     local y = view.centerY + (point.y - view.lat) / view.unitsPerPixel
@@ -803,13 +846,14 @@ local function drawOnMap(view)
         for _, group in ipairs(mergeOnScreen(reach)) do
             local first = group[1]
             local x, y = onScreen.x[first], onScreen.y[first]
-            local allDone, isOpen = true, false
+            local allDone, isOpen, hint = true, false, nil
             for _, i in ipairs(group) do
                 local id = onScreen.point[i].id
                 if not done[id] then allDone = false end
                 if openGuide and openGuide.id == id then isOpen = true end
+                hint = hint or hintOf(id)
             end
-            drawMarker(x, y, half, iconOf(onScreen.type[first]), allDone, isOpen)
+            drawMarker(x, y, half, iconOf(onScreen.type[first]), allDone, isOpen, hint)
             if #group > 1 then drawCount(x, y, half, #group, allDone) end
             if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
                 and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
@@ -823,7 +867,7 @@ local function drawOnMap(view)
             local x, y = onScreen.x[i], onScreen.y[i]
             local point = onScreen.point[i]
             if openGuide and openGuide.id == point.id then open = i end
-            drawMarker(x, y, half, iconOf(onScreen.type[i]), done[point.id])
+            drawMarker(x, y, half, iconOf(onScreen.type[i]), done[point.id], false, hintOf(point.id))
             if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
                 and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
                 tapped = i
@@ -831,7 +875,8 @@ local function drawOnMap(view)
         end
         -- the open one again on top, so its blue ring isn't under the others
         if open then
-            drawMarker(onScreen.x[open], onScreen.y[open], half, iconOf(onScreen.type[open]), done[onScreen.point[open].id], true)
+            local id = onScreen.point[open].id
+            drawMarker(onScreen.x[open], onScreen.y[open], half, iconOf(onScreen.type[open]), done[id], true, hintOf(id))
         end
         if tapped then
             local group = { tapped }
@@ -863,12 +908,12 @@ local function drawOnMinimap(player)
         if list then
             local icon = iconOf(id)
             for _, point in ipairs(list) do
-                if onFloor(point, player.groupId, player.floorId) and not (hideDone and done[point.id])
+                if onFloor(point, player.groupId, player.floorId) and not (hideDone and done[point.id] and not stillThere[point.id])
                     and (not filter or filter[point.area]) then
                     local dx = (point.x - player.lng) / player.unitsPerPixel
                     local dy = (point.y - player.lat) / player.unitsPerPixel
                     if dx * dx + dy * dy <= inside * inside then
-                        drawMarker(player.centerX + dx, player.centerY + dy, half, icon, done[point.id])
+                        drawMarker(player.centerX + dx, player.centerY + dy, half, icon, done[point.id], false, hintOf(point.id))
                     end
                 end
             end
@@ -1250,6 +1295,7 @@ function Update()
         end
     end
     if opened then saveDone() end
+    readHints()
 
     syncTick()
 
