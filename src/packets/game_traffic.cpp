@@ -1,8 +1,7 @@
 #include "game_traffic.hpp"
 #include "game_chests.hpp"
-#include "game_oculi.hpp"
+#include "game_finds.hpp"
 #include "game_packets.hpp"
-#include "game_puzzles.hpp"
 #include "npcap_capture.hpp"
 #include "../capture.hpp"
 #include "../helpers.hpp"
@@ -19,8 +18,6 @@ namespace GameTraffic {
     // how long a note stays on screen
     static constexpr auto NOTICE_TIME = std::chrono::seconds(10);
     static constexpr const char* STARTED_LATE = "the game was already logged in, log out to the door and back in once";
-    static constexpr const char* NOT_MATCHED = "opened a chest or picked up a spincrystal it can't match to a marker, mark it yourself";
-    static constexpr const char* OCULUS_NOT_MATCHED = "picked up an oculus, agate or carp it can't match to a marker, mark it yourself";
 
     static std::thread worker;
     static std::atomic<bool> stopping = false;
@@ -65,21 +62,6 @@ namespace GameTraffic {
         return ticks / 10000 - 11644473600000ull;
     }
 
-    static int64_t pointOf(const GameChests::Chest& chest, const GameChests::Tracker& tracker,
-        std::vector<GameChests::Marker>& markers) {
-        // the item files may still be downloading when the overlay starts
-        if (markers.empty())
-            GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
-        return GameChests::Match(chest, tracker.Chests(), markers);
-    }
-
-    static int64_t pointOf(const GameOculi::Picked& picked, const GameOculi::Tracker& tracker,
-        std::vector<GameChests::Marker>& markers) {
-        if (markers.empty())
-            GameOculi::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
-        return GameOculi::Match(picked.object, picked.label, tracker.Objects(), markers);
-    }
-
     static void listen() {
         GamePackets::Keys keys;
         if (!GamePackets::LoadKeys(Helpers::exeDirectory() / "packets", keys)) {
@@ -96,14 +78,8 @@ namespace GameTraffic {
         setStatus(State::Waiting, "");
 
         GamePackets::Sniffer sniffer(keys);
-        GameChests::Tracker chests;
-        GameChests::Hints hints;
-        std::vector<GameChests::Marker> markers;
-        GameOculi::Tracker oculi;
-        std::vector<GameChests::Marker> oculusMarkers;
-        GamePuzzles::Tracker puzzles;
-        std::vector<GameChests::Marker> puzzleMarkers;
-        std::vector<GamePuzzles::Done> puzzlesDone;
+        GameFinds::Finder finder(Helpers::exeDirectory() / "items" / "positions");
+        std::vector<GameFinds::Found> found;
         std::vector<NpcapCapture::Frame> frames;
         std::vector<GamePackets::Command> commands;
         // a login seen since the start, without one the key can't be found yet
@@ -119,59 +95,23 @@ namespace GameTraffic {
                     sniffer.SetGameStart(GameStart());
                 }
                 for (const GamePackets::Command& command : commands) {
-                    if (command.direction == GamePackets::Direction::Sent && command.id == GameChests::MOVED) {
-                        GameChests::Chest player;
-                        if (!chests.OnTeyvat() || !hints.Due(frame.ms) || !GameChests::ReadPlayer(command.body, player))
-                            continue;
-                        if (markers.empty())
-                            GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
-                        hints.Moved(player, frame.ms, chests.Chests(), markers);
+                    found.clear();
+                    if (finder.Feed(command, frame.ms, found)) {
                         std::lock_guard lock(mutex);
-                        chestHints = hints.All();
-                        continue;
+                        chestHints = finder.Hints();
                     }
-                    if (command.direction != GamePackets::Direction::Received)
-                        continue;
-                    puzzlesDone.clear();
-                    puzzles.Feed(command.id, command.body, frame.ms, puzzlesDone);
-                    if (!puzzlesDone.empty() && puzzleMarkers.empty())
-                        GamePuzzles::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", puzzleMarkers);
-                    for (const GamePuzzles::Done& done : puzzlesDone) {
-                        int64_t point = GamePuzzles::Match(done, puzzleMarkers);
-                        if (point == 0 && done.loose) continue;
-                        std::cout << "Game traffic: puzzle " << done.label << " in group " << done.group << " done, point " << point << std::endl;
-                        if (point == 0) continue;
-                        std::lock_guard lock(mutex);
-                        opened.push_back(point);
-                    }
-                    GameOculi::Picked picked;
-                    if (oculi.Feed(command.id, command.body, frame.ms, picked)) {
-                        int64_t point = pointOf(picked, oculi, oculusMarkers);
-                        std::cout << "Game traffic: oculus " << picked.object.group << " " << picked.object.config << " picked up, point " << point << std::endl;
-                        if (point == 0) {
-                            showNotice(OCULUS_NOT_MATCHED);
-                            continue;
+                    for (const GameFinds::Found& f : found) {
+                        std::cout << "Game traffic: " << f.what;
+                        if (f.notMatched || f.point) std::cout << ", point " << f.point;
+                        std::cout << std::endl;
+                        if (f.point) {
+                            std::lock_guard lock(mutex);
+                            opened.push_back(f.point);
                         }
-                        std::lock_guard lock(mutex);
-                        opened.push_back(point);
-                        continue;
+                        else if (f.notMatched) {
+                            showNotice(f.notMatched);
+                        }
                     }
-                    GameChests::Chest chest;
-                    bool placed = false;
-                    if (!chests.Feed(command.id, command.body, chest, placed))
-                        continue;
-                    // inspecting things and places of interest come as opened too,
-                    // only the chests the game showed us have a gadget to tell
-                    if (!placed)
-                        continue;
-                    int64_t point = pointOf(chest, chests, markers);
-                    std::cout << "Game traffic: chest " << chest.group << " " << chest.config << " opened, point " << point << std::endl;
-                    if (point == 0) {
-                        showNotice(NOT_MATCHED);
-                        continue;
-                    }
-                    std::lock_guard lock(mutex);
-                    opened.push_back(point);
                 }
             }
             if (frames.empty()) continue;

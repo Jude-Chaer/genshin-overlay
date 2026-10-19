@@ -271,6 +271,8 @@ namespace GameChests {
         return true;
     }
 
+    void Tracker::Forget(const Chest& chest) { m_chests.erase(keyOf(chest)); }
+
     std::vector<Chest> Tracker::Chests() const {
         std::vector<Chest> out;
         out.reserve(m_chests.size());

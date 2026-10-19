@@ -26,8 +26,7 @@
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
 #include "packets/game_chests.hpp"
-#include "packets/game_oculi.hpp"
-#include "packets/game_puzzles.hpp"
+#include "packets/game_finds.hpp"
 #include "packets/game_packets.hpp"
 #include "packets/npcap_capture.hpp"
 #include "packets/game_traffic.hpp"
@@ -231,20 +230,11 @@ struct PacketLog {
     uint64_t firstFrame = 0;
     // the last thing said about whether the recording can be read
     std::string verdict;
-    GameChests::Tracker chests;
-    std::vector<GameChests::Marker> markers;
-    GameChests::Hints hints;
-    GameOculi::Tracker oculi;
-    std::vector<GameChests::Marker> oculusMarkers;
-    GamePuzzles::Tracker puzzles;
-    std::vector<GameChests::Marker> puzzleMarkers;
-    std::vector<GamePuzzles::Done> puzzlesDone;
+    GameFinds::Finder finder;
+    std::vector<GameFinds::Found> found;
 
-    PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file) : sniffer(keys), out(file) {
-        GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
-        GameOculi::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", oculusMarkers);
-        GamePuzzles::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", puzzleMarkers);
-    }
+    PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file)
+        : sniffer(keys), out(file), finder(Helpers::exeDirectory() / "items" / "positions") {}
 
     void Feed(uint64_t t, const uint8_t* frame, size_t size) {
         commands.clear();
@@ -307,50 +297,26 @@ struct PacketLog {
 
     // prints each chest marker whose hint changed: "!" the game still has the chest, "?" it sent
     // none there (probably opened), "-" no hint any more
-    void sayHints(const GameChests::Chest& player, uint64_t t) {
-        std::unordered_map<int64_t, GameChests::Hint> before = hints.All();
-        hints.Moved(player, t, chests.Chests(), markers);
-        for (const auto& [point, hint] : hints.All()) {
+    void sayHints(const std::unordered_map<int64_t, GameChests::Hint>& before) {
+        for (const auto& [point, hint] : finder.Hints()) {
             auto it = before.find(point);
             if (it == before.end() || it->second != hint)
                 std::cout << "hint " << (hint == GameChests::Hint::StillThere ? "!" : "?") << " point " << point << std::endl;
         }
         for (const auto& [point, hint] : before)
-            if (!hints.All().count(point)) std::cout << "hint - point " << point << std::endl;
+            if (!finder.Hints().count(point)) std::cout << "hint - point " << point << std::endl;
     }
 
     void write(uint64_t t) {
         for (const GamePackets::Command& command : commands) {
-            GameChests::Chest player;
-            if (command.direction == GamePackets::Direction::Sent && command.id == GameChests::MOVED && chests.OnTeyvat()
-                && hints.Due(t) && GameChests::ReadPlayer(command.body, player)) {
-                sayHints(player, t);
-            }
-            if (command.direction == GamePackets::Direction::Received) {
-                puzzlesDone.clear();
-                puzzles.Feed(command.id, command.body, t, puzzlesDone);
-                for (const GamePuzzles::Done& done : puzzlesDone) {
-                    int64_t point = GamePuzzles::Match(done, puzzleMarkers);
-                    if (point || !done.loose)
-                        std::cout << "puzzle " << done.label << " in group " << done.group << " done, point " << point << std::endl;
-                }
-            }
-            GameOculi::Picked picked;
-            if (command.direction == GamePackets::Direction::Received && oculi.Feed(command.id, command.body, t, picked)) {
-                double x, y;
-                GameChests::ToMap(picked.object, x, y);
-                std::cout << "oculus " << picked.object.group << " " << picked.object.config << " picked up at " << x << " " << y
-                    << ", point " << GameOculi::Match(picked.object, picked.label, oculi.Objects(), oculusMarkers) << std::endl;
-            }
-            GameChests::Chest chest;
-            bool placed = false;
-            if (command.direction == GamePackets::Direction::Received && chests.Feed(command.id, command.body, chest, placed)) {
-                std::cout << "chest " << chest.group << " " << chest.config << " opened";
-                if (placed) {
-                    double x, y;
-                    GameChests::ToMap(chest, x, y);
-                    std::cout << " at " << x << " " << y << ", point " << GameChests::Match(chest, chests.Chests(), markers);
-                }
+            // only what we send can change the hints
+            std::unordered_map<int64_t, GameChests::Hint> before;
+            if (command.direction == GamePackets::Direction::Sent) before = finder.Hints();
+            found.clear();
+            if (finder.Feed(command, t, found)) sayHints(before);
+            for (const GameFinds::Found& f : found) {
+                std::cout << f.what;
+                if (f.notMatched || f.point) std::cout << ", point " << f.point;
                 std::cout << std::endl;
             }
             nlohmann::json line = {

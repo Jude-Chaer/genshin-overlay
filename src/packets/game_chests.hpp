@@ -66,6 +66,8 @@ namespace GameChests {
         // the game never said where that chest is. A spincrystal comes as opened too
         bool Feed(uint16_t id, std::string_view body, Chest& opened, bool& placed);
         std::vector<Chest> Chests() const;
+        // takes out one that was found some other way
+        void Forget(const Chest& chest);
         // the last objects the game sent were on Teyvat
         bool OnTeyvat() const { return m_teyvat; }
 
