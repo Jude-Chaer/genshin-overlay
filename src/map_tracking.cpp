@@ -45,6 +45,10 @@ namespace MapTracking {
     // Finding the map needs this many matching points. Following it takes
     // any match SIFT calls found.
     static constexpr int FIRST_FIX_INLIERS = 15;
+    // how often the layer switcher is read, and how many reads without it
+    // before what it said goes
+    static constexpr auto BAR_EVERY = std::chrono::milliseconds(250);
+    static constexpr int BAR_GONE = 2;
 
     static std::atomic<Status> status{ Status::NoData };
     static std::atomic<bool> stopping{ false };
@@ -81,6 +85,8 @@ namespace MapTracking {
     // looked. Guarded by mutex
     static Layer forced;
     static bool layerChanged = false;
+    // HoYoLAB's underground floors in its order, set once the data is loaded
+    static std::vector<MapData::Floor> allFloors;
 
     // follow thread only
     static MapFollow::Follower follower;
@@ -92,6 +98,12 @@ namespace MapTracking {
     static LONG panelLeft = -1;
     // the layer SIFT found last
     static Layer found;
+    // The layer the game's switcher shows, read now and then. It beats SIFT's,
+    // one picked by hand beats it.
+    static Layer onBar;
+    static std::vector<MapData::Floor> floors;
+    static std::chrono::steady_clock::time_point barReadAt;
+    static int barMissed = 0;
     // The frame SIFT was given. Session goes up with every reset, a result
     // from before the reset is dropped.
     static int sentId = 0;
@@ -158,6 +170,11 @@ namespace MapTracking {
             std::cerr << "Could not load map data from " << manifestPath << std::endl;
             return;
         }
+        {
+            std::vector<MapData::Floor> read = MapData::readManifest(dataFolder).floors;
+            std::lock_guard<std::mutex> lock(mutex);
+            allFloors = std::move(read);
+        }
 
         while (true) {
             std::unique_lock<std::mutex> lock(mutex);
@@ -206,6 +223,24 @@ namespace MapTracking {
         answered.notify_all();
     }
 
+    // Reads the game's layer switcher and moves the view to the layer it shows,
+    // unless one was picked by hand.
+    static void readBar(HWND game, const RECT& rect, const Layer& force) {
+        cv::Mat strip;
+        if (!Capture::grabGame(game, GameUi::SwitcherStrip(rect, panelLeft), strip)) return;
+        const MapLocator::Result& at = follower.View();
+        GameUi::Switcher read = GameUi::ReadSwitcher(strip, rect.bottom - rect.top);
+        int groupId = 0, floorId = 0;
+        int sift = found.on && found.mapId == at.mapId && found.groupId != 0 ? found.groupId : -1;
+        if (!GameUi::SwitcherLayer(read, floors, at.mapId, at.lng, at.lat, sift, groupId, floorId)) {
+            if (onBar.on && ++barMissed >= BAR_GONE) onBar = {};
+            return;
+        }
+        barMissed = 0;
+        onBar = { true, at.mapId, groupId, floorId };
+        if (!force.on && (at.groupId != groupId || at.floorId != floorId)) follower.SetLayer(groupId, floorId);
+    }
+
     // One step of following: takes back SIFT's and the tile check's answers,
     // grabs the newest frame for the follower, and hands SIFT a whole grab
     // when the follower wants one.
@@ -221,7 +256,10 @@ namespace MapTracking {
             forced = {};
             layerChanged = false;
             found = {};
+            onBar = {};
+            barMissed = 0;
         }
+        if (floors.empty()) floors = allFloors;
         bool canSend = !busy && !frameWaiting;
         bool gotMatch = matchDone;
         MapLocator::Result match = matched;
@@ -234,15 +272,16 @@ namespace MapTracking {
         double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
             found = { true, match.mapId, match.groupId, match.floorId };
-            if (force.on && match.mapId == force.mapId) {
-                match.groupId = force.groupId;
-                match.floorId = force.floorId;
+            const Layer& over = force.on ? force : onBar;
+            if (over.on && match.mapId == over.mapId) {
+                match.groupId = over.groupId;
+                match.floorId = over.floorId;
             }
             follower.Matched(sentId, match, seconds);
         }
         if (changed && follower.Visible()) {
             // picked now, or back to auto: SIFT's last pick until it looks again
-            const Layer& to = force.on ? force : found;
+            const Layer& to = force.on ? force : onBar.on ? onBar : found;
             if (to.on && to.mapId == follower.View().mapId) follower.SetLayer(to.groupId, to.floorId);
         }
         int checkedId = 0;
@@ -283,6 +322,10 @@ namespace MapTracking {
             follower.Frame(++frameId, patches, wide, rect, gameFrame.seconds, frames);
             int panel = GameUi::FindPanel(wide);
             panelLeft = panel < 0 ? -1 : rect.left + (LONG)((double)panel * (rect.right - rect.left) / wide.cols);
+            if (follower.Visible() && now - barReadAt >= BAR_EVERY) {
+                barReadAt = now;
+                readBar(game, rect, force);
+            }
             // loosely it's hidden while it moves, nothing to line up
             if (followExact && follower.Visible() && Settings::lineUpWithMap) {
                 MapCheck::Check(frameId, patches, rect, follower.View());
