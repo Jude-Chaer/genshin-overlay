@@ -50,6 +50,8 @@ namespace MapTiles {
     static std::map<int, MapData::Grid> maps;
     // by group and floor
     static std::map<std::pair<int, int>, MapData::Floor> floors;
+    // HoYoLAB's order, which the game's layer switcher has too
+    static std::vector<std::pair<int, int>> floorOrder;
 
     // main thread only
     static std::map<Key, Entry> textures;
@@ -77,7 +79,10 @@ namespace MapTiles {
 
         MapData::Manifest manifest = MapData::readManifest(dataFolder);
         maps = manifest.grids;
-        for (const MapData::Floor& floor : manifest.floors) floors[{ floor.groupId, floor.floorId }] = floor;
+        for (const MapData::Floor& floor : manifest.floors) {
+            floors[{ floor.groupId, floor.floorId }] = floor;
+            floorOrder.push_back({ floor.groupId, floor.floorId });
+        }
         gridsLoaded = true;
     }
 
@@ -222,7 +227,8 @@ namespace MapTiles {
     std::vector<std::pair<int, int>> FloorsAt(int mapId, double x, double y) {
         loadGrids();
         std::vector<std::pair<int, int>> out;
-        for (const auto& [key, floor] : floors) {
+        for (const auto& key : floorOrder) {
+            const MapData::Floor& floor = floors[key];
             if (floor.mapId != mapId) continue;
             if (x >= (std::min)(floor.left, floor.right) && x <= (std::max)(floor.left, floor.right)
                 && y >= (std::min)(floor.top, floor.bottom) && y <= (std::max)(floor.top, floor.bottom)) {

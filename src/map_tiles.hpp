@@ -32,7 +32,8 @@ namespace MapTiles {
     extern GLuint GetTile(int mapId, int x, int y, int size);
     // false until the image is loaded, or if the floor has no image
     extern bool GetFloor(int groupId, int floorId, Floor& out);
-    // the underground floors on that map whose box holds the spot, as group and floor
+    // the underground floors on that map whose box holds the spot, as group and
+    // floor, in HoYoLAB's order
     extern std::vector<std::pair<int, int>> FloorsAt(int mapId, double x, double y);
     // call once per frame after drawing, uploads finished tiles and frees unused ones
     extern void EndFrame();
