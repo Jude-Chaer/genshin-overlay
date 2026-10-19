@@ -1484,6 +1484,16 @@ local function allChip(types, id)
     end
 end
 
+-- what's typed in the search box, and the types whose name has it
+local search = ""
+local function found(text)
+    local out, want = {}, text:lower()
+    for _, kind in ipairs(allTypes) do
+        if kind.name:lower():find(want, 1, true) then out[#out + 1] = kind end
+    end
+    return out
+end
+
 local function typeTiles(types, id)
     allChip(types, id)
     for _, kind in ipairs(types) do
@@ -1710,6 +1720,17 @@ function Menu()
             saveSelection()
         end)
     end
+    search = ImGUI_InputText("Search##types", search)
+    if search ~= "" then
+        local list = found(search)
+        if #list == 0 then
+            ImGUI_TextDisabled("No type has \"" .. search .. "\" in its name.")
+        else
+            typeTiles(list, "search")
+        end
+        return
+    end
+
     -- every type of every group at once
     ImGUI_TextDisabled("Everything (big, takes a moment to load)")
     allChip(allTypes, "everything")
