@@ -26,7 +26,7 @@ TEST_CASE("the map alone has no panel", "[game_ui]") {
 
 TEST_CASE("a flat strip past where panels start isn't one", "[game_ui]") {
     cv::Mat wide = wideMap();
-    // dark space right of the layer switcher
+    // dark space to the right of the layer switcher
     wide.colRange(226, wide.cols).setTo(20);
     REQUIRE(GameUi::FindPanel(wide) == -1);
 }
@@ -41,7 +41,7 @@ TEST_CASE("an open panel hides most of the game UI", "[game_ui]") {
     REQUIRE(boxes.back().left == 1500);
     REQUIRE(boxes.back().right == 2020);
     REQUIRE(boxes.back().bottom == 1130);
-    // the layer switcher sits just left of it
+    // the layer switcher sits just to the left of it
     REQUIRE(boxes[1].right < 1500);
     REQUIRE(boxes[1].left > 1350);
 }

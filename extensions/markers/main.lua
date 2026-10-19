@@ -387,7 +387,7 @@ local barOpen = false
 local barGap
 
 -- The widest stretch along the top that the game's UI leaves free, at the
--- bar's height. An open panel is one of the boxes, so it's left of that too.
+-- bar's height. An open panel is one of the boxes, so it's to the left of that too.
 local function topGap(view, y0, y1)
     local spans = { { view.left, view.right } }
     for _, box in ipairs(view.ui) do

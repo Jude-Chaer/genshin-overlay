@@ -67,7 +67,7 @@ TEST_CASE("the tile check gets through a view past the top or left edge of the m
     MapCheck::Start(dataFolder());
     MapFollow::Patches patches = MapFollow::cut(TestMap::screen(map(), 1000, 700), GAME);
     MapLocator::Result out;
-    // the top patches are all above the first row of tiles, then the left ones all left of the first column
+    // the top patches are all above the first row of tiles, then the left ones all to the left of the first column
     MapCheck::Check(1, patches, GAME, viewAt(1000, -100));
     bool afterTop = ask(2, patches, viewAt(1000, 700), out);
     MapCheck::Check(3, patches, GAME, viewAt(100, 700));
