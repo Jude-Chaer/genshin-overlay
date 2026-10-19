@@ -271,6 +271,8 @@ local MINIMAP_MARKER = 0.08
 
 -- how much of a done marker still shows
 local DONE_OPACITY = 0.4
+-- and of one on another level than the one showing
+local OTHER_LEVEL_OPACITY = 0.45
 
 -- a color with its opacity (the last byte) times a
 local function faded(color, a)
@@ -307,10 +309,13 @@ local HINT_COLOR = 0xF2A33AFF
 -- item in the middle. Done ones get a grey ring and the whole badge fades.
 -- The one whose guide is open gets a blue ring. One with a hint gets an
 -- orange ring and the sign in a bubble at its top left, and doesn't fade.
-local function drawMarker(x, y, half, icon, isDone, isOpen, hint)
+-- Like the game's map, one underground gets a layers sign at its bottom
+-- right, and one on another level than the one showing fades.
+local function drawMarker(x, y, half, icon, isDone, isOpen, hint, underground, otherLevel)
     local a = isDone and DONE_OPACITY or 1.0
     local ring = isOpen and 0x4FB8FFFF or hint and HINT_COLOR or isDone and 0x969696FF or 0xECE5D8FF
     if isOpen or hint then a = 1.0 end
+    if otherLevel and not isOpen then a = a * OTHER_LEVEL_OPACITY end
     DrawCircle(x, y + half * 0.08, half, faded(0x00000050, a))
     DrawCircle(x, y, half * 0.94, faded(ring, a))
     DrawCircle(x, y, half * 0.8, faded(0x3B4255FF, a))
@@ -325,11 +330,29 @@ local function drawMarker(x, y, half, icon, isDone, isOpen, hint)
         local w, h = TextSize(hint, size)
         DrawText(hint, bx - w / 2, by - h / 2, size, 0x1C2030FF)
     end
+    if underground then
+        -- three stacked bars in a bubble
+        local r = half * 0.4
+        local bx, by = x + half * 0.72, y + half * 0.72
+        DrawCircle(bx, by, r, faded(0x3B4255FF, a))
+        DrawCircle(bx, by, r * 0.86, faded(0xD3BC8EFF, a))
+        local w, h = r * 0.5, math.max(1, r * 0.13)
+        for i = -1, 1 do
+            local cy = by + i * r * 0.34
+            DrawRect(bx - w, cy - h, bx + w, cy + h, faded(0x1C2030FF, a), h)
+        end
+    end
 end
 
--- underground only the floor you're on, above ground only what's above ground
-local function onFloor(point, groupId, floorId)
+-- on the level showing: underground the floor you're on, above ground what's above ground
+local function onLevel(point, groupId, floorId)
     return point.group == groupId and (point.group == 0 or point.floor == floorId)
+end
+
+-- Above ground everything shows as it is, like the game's map. Underground
+-- what's on other levels fades.
+local function otherLevel(point, groupId, floorId)
+    return groupId ~= 0 and not onLevel(point, groupId, floorId)
 end
 
 local function shown(id, mapId)
@@ -824,7 +847,7 @@ local function drawOnMap(view)
         local list = shown(id, view.mapId)
         if list then
             for _, point in ipairs(list) do
-                if onFloor(point, view.groupId, view.floorId) and (not filter or filter[point.area])
+                if (not filter or filter[point.area])
                     and not (hideDone and done[point.id] and not stillThere[point.id] and not (openGuide and openGuide.id == point.id)) then
                     -- x_pos / y_pos are the same map units as the view's lng / lat
                     local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
@@ -842,41 +865,55 @@ local function drawOnMap(view)
 
     local reach = half * 2 * SAME_SPOT
     PushClipRect(view.left, view.top, view.right, view.bottom)
+    -- the faded ones first, so the level showing is on top
     if GetSetting("mergeClose") then
-        for _, group in ipairs(mergeOnScreen(reach)) do
-            local first = group[1]
-            local x, y = onScreen.x[first], onScreen.y[first]
-            local allDone, isOpen, hint = true, false, nil
-            for _, i in ipairs(group) do
-                local id = onScreen.point[i].id
-                if not done[id] then allDone = false end
-                if openGuide and openGuide.id == id then isOpen = true end
-                hint = hint or hintOf(id)
-            end
-            drawMarker(x, y, half, iconOf(onScreen.type[first]), allDone, isOpen, hint)
-            if #group > 1 then drawCount(x, y, half, #group, allDone) end
-            if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
-                and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
-                tapMarker(stackOf(group, view.mapId))
+        local groups = mergeOnScreen(reach)
+        for _, faint in ipairs({ true, false }) do
+            for _, group in ipairs(groups) do
+                local first = group[1]
+                local x, y = onScreen.x[first], onScreen.y[first]
+                local allDone, isOpen, hint, underground, allOther = true, false, nil, false, true
+                for _, i in ipairs(group) do
+                    local point = onScreen.point[i]
+                    if not done[point.id] then allDone = false end
+                    if openGuide and openGuide.id == point.id then isOpen = true end
+                    hint = hint or hintOf(point.id)
+                    if point.group ~= 0 then underground = true end
+                    if not otherLevel(point, view.groupId, view.floorId) then allOther = false end
+                end
+                if allOther == faint then
+                    drawMarker(x, y, half, iconOf(onScreen.type[first]), allDone, isOpen, hint, underground, allOther)
+                    if #group > 1 then drawCount(x, y, half, #group, allDone) end
+                    if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
+                        and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
+                        tapMarker(stackOf(group, view.mapId))
+                    end
+                end
             end
         end
     else
         -- each on its own spot, a tap takes every one that overlaps the tapped one
         local tapped, open
-        for i = 1, n do
-            local x, y = onScreen.x[i], onScreen.y[i]
-            local point = onScreen.point[i]
-            if openGuide and openGuide.id == point.id then open = i end
-            drawMarker(x, y, half, iconOf(onScreen.type[i]), done[point.id], false, hintOf(point.id))
-            if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
-                and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
-                tapped = i
+        for _, faint in ipairs({ true, false }) do
+            for i = 1, n do
+                local point = onScreen.point[i]
+                local other = otherLevel(point, view.groupId, view.floorId)
+                if other == faint then
+                    local x, y = onScreen.x[i], onScreen.y[i]
+                    if openGuide and openGuide.id == point.id then open = i end
+                    drawMarker(x, y, half, iconOf(onScreen.type[i]), done[point.id], false, hintOf(point.id), point.group ~= 0, other)
+                    if tapHalf and math.abs(mouseX - x) <= tapHalf and math.abs(mouseY - y) <= tapHalf
+                        and ClickArea(x - tapHalf, y - tapHalf, x + tapHalf, y + tapHalf) then
+                        tapped = i
+                    end
+                end
             end
         end
         -- the open one again on top, so its blue ring isn't under the others
         if open then
-            local id = onScreen.point[open].id
-            drawMarker(onScreen.x[open], onScreen.y[open], half, iconOf(onScreen.type[open]), done[id], true, hintOf(id))
+            local point = onScreen.point[open]
+            drawMarker(onScreen.x[open], onScreen.y[open], half, iconOf(onScreen.type[open]), done[point.id], true, hintOf(point.id),
+                point.group ~= 0, otherLevel(point, view.groupId, view.floorId))
         end
         if tapped then
             local group = { tapped }
@@ -903,17 +940,22 @@ local function drawOnMinimap(player)
     local inside = player.radius - half
     local hideDone = GetSetting("hideDoneMinimap")
     local filter = regionFilter(player.mapId, player.lng, player.lat)
-    for _, id in ipairs(barTypes) do
-        local list = shown(id, player.mapId)
-        if list then
-            local icon = iconOf(id)
-            for _, point in ipairs(list) do
-                if onFloor(point, player.groupId, player.floorId) and not (hideDone and done[point.id] and not stillThere[point.id])
-                    and (not filter or filter[point.area]) then
-                    local dx = (point.x - player.lng) / player.unitsPerPixel
-                    local dy = (point.y - player.lat) / player.unitsPerPixel
-                    if dx * dx + dy * dy <= inside * inside then
-                        drawMarker(player.centerX + dx, player.centerY + dy, half, icon, done[point.id], false, hintOf(point.id))
+    -- the faded ones first, so the level the player is on is on top
+    for _, faint in ipairs({ true, false }) do
+        for _, id in ipairs(barTypes) do
+            local list = shown(id, player.mapId)
+            if list then
+                local icon = iconOf(id)
+                for _, point in ipairs(list) do
+                    local other = otherLevel(point, player.groupId, player.floorId)
+                    if other == faint and not (hideDone and done[point.id] and not stillThere[point.id])
+                        and (not filter or filter[point.area]) then
+                        local dx = (point.x - player.lng) / player.unitsPerPixel
+                        local dy = (point.y - player.lat) / player.unitsPerPixel
+                        if dx * dx + dy * dy <= inside * inside then
+                            drawMarker(player.centerX + dx, player.centerY + dy, half, icon, done[point.id], false, hintOf(point.id),
+                                point.group ~= 0, other)
+                        end
                     end
                 end
             end
