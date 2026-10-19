@@ -72,6 +72,15 @@ namespace MapTracking {
     // goes up with every publish, WaitForDraw waits for the next one
     static uint64_t answers = 0;
     static std::condition_variable answered;
+    // a layer: underground group and floor, 0 0 above ground
+    struct Layer {
+        bool on = false;
+        int mapId = 0, groupId = 0, floorId = 0;
+    };
+    // the one picked by hand, and that it changed since the follow thread
+    // looked. Guarded by mutex
+    static Layer forced;
+    static bool layerChanged = false;
 
     // follow thread only
     static MapFollow::Follower follower;
@@ -81,6 +90,8 @@ namespace MapTracking {
     static Capture::Frame lastGameFrame;
     static int frameId = 0;
     static LONG panelLeft = -1;
+    // the layer SIFT found last
+    static Layer found;
     // The frame SIFT was given. Session goes up with every reset, a result
     // from before the reset is dropped.
     static int sentId = 0;
@@ -189,6 +200,7 @@ namespace MapTracking {
         view.result = follower.View();
         view.gameRect = rect;
         view.panelLeft = panelLeft;
+        view.layerForced = forced.on;
         lastUpdate = now;
         answers++;
         answered.notify_all();
@@ -205,16 +217,33 @@ namespace MapTracking {
             follower.Reset();
             lastGameFrame = {};
             panelLeft = -1;
+            // a layer picked by hand holds until the map closes
+            forced = {};
+            layerChanged = false;
+            found = {};
         }
         bool canSend = !busy && !frameWaiting;
         bool gotMatch = matchDone;
         MapLocator::Result match = matched;
         matchDone = false;
+        Layer force = forced;
+        bool changed = layerChanged;
+        layerChanged = false;
         lock.unlock();
 
         double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
+            found = { true, match.mapId, match.groupId, match.floorId };
+            if (force.on && match.mapId == force.mapId) {
+                match.groupId = force.groupId;
+                match.floorId = force.floorId;
+            }
             follower.Matched(sentId, match, seconds);
+        }
+        if (changed && follower.Visible()) {
+            // picked now, or back to auto: SIFT's last pick until it looks again
+            const Layer& to = force.on ? force : found;
+            if (to.on && to.mapId == follower.View().mapId) follower.SetLayer(to.groupId, to.floorId);
         }
         int checkedId = 0;
         MapLocator::Result checked;
@@ -422,6 +451,19 @@ namespace MapTracking {
 
     void FollowWhileMoving() {
         followAskedAt = std::chrono::steady_clock::now().time_since_epoch().count();
+    }
+
+    void ForceLayer(int mapId, int groupId, int floorId) {
+        std::lock_guard<std::mutex> lock(mutex);
+        forced = { true, mapId, groupId, floorId };
+        layerChanged = true;
+    }
+
+    void AutoLayer() {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!forced.on) return;
+        forced = {};
+        layerChanged = true;
     }
 
     MapLocator::Result Locate(const cv::Mat& image) {

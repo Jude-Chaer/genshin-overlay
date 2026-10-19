@@ -79,6 +79,8 @@ namespace LuaFunctions {
 		luaState.set_function("GetMapGrid", GetMapGrid);
 		luaState.set_function("GetMapTile", GetMapTile);
 		luaState.set_function("GetMapFloor", GetMapFloor);
+		luaState.set_function("GetMapFloors", GetMapFloors);
+		luaState.set_function("SetMapLayer", SetMapLayer);
 		luaState.set_function("DrawImage", DrawImage);
 		luaState.set_function("DrawText", GDrawText);
 		luaState.set_function("DrawCircle", DrawCircle);
@@ -490,7 +492,9 @@ namespace LuaFunctions {
 
 	// Where the in-game map is looking, or nil when it isn't open. Positions are
 	// in overlay pixels, the same ones DrawImage uses. lat/lng is the map
-	// position at centerX, centerY. moving is true while the map moves, and
+	// position at centerX, centerY. groupId and floorId are the underground
+	// layer showing, 0 above ground, and layerForced says the user picked it
+	// (SetMapLayer). moving is true while the map moves, and
 	// after it stops until it's lined up exactly. panelLeft is where a panel
 	// on the right starts (the region list, a point's info), nil with none
 	// open. ui is the game's own UI showing now, a list of {left, top, right,
@@ -519,6 +523,7 @@ namespace LuaFunctions {
 			"mapId", view.result.mapId,
 			"groupId", view.result.groupId,
 			"floorId", view.result.floorId,
+			"layerForced", view.layerForced,
 			"lat", view.result.lat,
 			"lng", view.result.lng,
 			"unitsPerPixel", view.result.unitsPerPixel,
@@ -624,6 +629,29 @@ namespace LuaFunctions {
 			"right", floor.right,
 			"bottom", floor.bottom
 		));
+	}
+
+	// the underground floors under that spot of a map, a list of { groupId, floorId }
+	sol::table GetMapFloors(int mapId, double lng, double lat, sol::this_state state) {
+		sol::state_view lua(state);
+		sol::table list = lua.create_table();
+		for (const auto& [group, floor] : MapTiles::FloorsAt(mapId, lng, lat)) {
+			list.add(lua.create_table_with("groupId", group, "floorId", floor));
+		}
+		return list;
+	}
+
+	// Puts the open map on a layer the user picked, when the overlay found the
+	// wrong one: SetMapLayer(groupId, floorId), 0 0 above ground. It holds until
+	// the map closes. SetMapLayer() goes back to the layer the overlay finds.
+	void SetMapLayer(sol::optional<int> groupId, sol::optional<int> floorId) {
+		if (!groupId) {
+			MapTracking::AutoLayer();
+			return;
+		}
+		MapTracking::MapView view = MapTracking::LastView();
+		if (!view.visible) return;
+		MapTracking::ForceLayer(view.result.mapId, *groupId, floorId.value_or(0));
 	}
 
 	// draws behind every ImGui window, straight onto the overlay

@@ -96,6 +96,8 @@ namespace LuaFunctions {
     sol::object GetPointGuide(int mapId, int64_t pointId, int typeId, sol::this_state state);
     std::tuple<GLuint, int, int> GetWebImage(const std::string& url);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
+    sol::table GetMapFloors(int mapId, double lng, double lat, sol::this_state state);
+    void SetMapLayer(sol::optional<int> groupId, sol::optional<int> floorId);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color, sol::optional<float> wrapWidth); // The "G" is only there because DrawText is already used by the Windows API
     void DrawCircle(float x, float y, float radius, uint32_t color, sol::optional<float> thickness);

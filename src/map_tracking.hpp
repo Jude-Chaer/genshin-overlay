@@ -22,6 +22,8 @@ namespace MapTracking {
         bool moving = false;
         // screen x where a panel on the right starts, -1 with none open
         LONG panelLeft = -1;
+        // the layer was picked by hand, see ForceLayer
+        bool layerForced = false;
     };
 
     struct Diamond
@@ -44,6 +46,12 @@ namespace MapTracking {
     // there's no view while the map moves, it's only followed loosely and
     // found exactly once it stops.
     extern void FollowWhileMoving();
+    // The user picked the layer: underground group and floor, 0 0 above
+    // ground, on that map. The view stays on it whatever SIFT finds, until the
+    // map closes or AutoLayer.
+    extern void ForceLayer(int mapId, int groupId, int floorId);
+    // back to the layer SIFT finds
+    extern void AutoLayer();
     // what the download is doing, while the status is Downloading
     extern std::string GetDownloadStage(int& percent);
     // where the map is when what's drawn now shows up

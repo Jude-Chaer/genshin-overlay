@@ -66,6 +66,9 @@ namespace MapFollow {
     class Follower {
     public:
         void Reset();
+        // Puts the map on another layer (underground group and floor, 0 0
+        // above ground) from the last frame on, for a layer picked by hand
+        void SetLayer(int groupId, int floorId);
 
         // Call for every new frame of the game, in order. Matched and Checked
         // name the frame by id. Seconds is when the game drew it, frames how

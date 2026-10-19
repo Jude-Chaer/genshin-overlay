@@ -219,6 +219,19 @@ namespace MapTiles {
         return true;
     }
 
+    std::vector<std::pair<int, int>> FloorsAt(int mapId, double x, double y) {
+        loadGrids();
+        std::vector<std::pair<int, int>> out;
+        for (const auto& [key, floor] : floors) {
+            if (floor.mapId != mapId) continue;
+            if (x >= (std::min)(floor.left, floor.right) && x <= (std::max)(floor.left, floor.right)
+                && y >= (std::min)(floor.top, floor.bottom) && y <= (std::max)(floor.top, floor.bottom)) {
+                out.push_back(key);
+            }
+        }
+        return out;
+    }
+
     GLuint GetTile(int mapId, int x, int y, int size) {
         loadGrids();
         if (maps.count(mapId) == 0) return 0;

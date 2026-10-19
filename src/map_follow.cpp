@@ -361,6 +361,17 @@ namespace MapFollow {
         *this = Follower();
     }
 
+    void Follower::SetLayer(int groupId, int floorId) {
+        auto set = [&](MapLocator::Result& view) {
+            view.groupId = groupId;
+            view.floorId = floorId;
+        };
+        for (Past& past : m_past) set(past.view);
+        set(m_view);
+        set(m_keyView);
+        set(m_rest);
+    }
+
     // how far apart two views are in pixels, and how much they're zoomed
     static double pixelsApart(const MapLocator::Result& a, const MapLocator::Result& b) {
         return std::hypot(a.lng - b.lng, a.lat - b.lat) / b.unitsPerPixel;
