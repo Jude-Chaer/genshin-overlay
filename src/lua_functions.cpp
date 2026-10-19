@@ -201,7 +201,8 @@ namespace LuaFunctions {
 
 		strncpy_s(buffer, sizeof(buffer), value.c_str(), _TRUNCATE);
 
-		if (ImGui::InputText(label.c_str(), buffer, sizeof(buffer)))
+		// Esc leaves the box and keeps what's in it, ImGui would put back the text from before
+		if (ImGui::InputText(label.c_str(), buffer, sizeof(buffer)) && !(ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
 			value = buffer;
 
 		return value;

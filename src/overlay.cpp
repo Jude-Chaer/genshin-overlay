@@ -13,6 +13,7 @@
 #include "stats.hpp"
 #include "settings.hpp"
 #include "capture.hpp"
+#include <imgui_internal.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -184,6 +185,44 @@ namespace Overlay {
         mouseCaptured = capture;
         glfwSetWindowAttrib(Overlay::Window, GLFW_MOUSE_PASSTHROUGH, capture ? GLFW_FALSE : GLFW_TRUE);
         // changing the window style can drop it below the game
+        keepOnTop(true);
+    }
+
+    // The window never takes focus, so keys go to the game and we can't read them
+    // without admin. While a text box is typed in we take focus after all, and
+    // hand it back to the game once the box is done (Enter, Esc, a click elsewhere).
+    static bool typing = false;
+    static HWND typingFrom = nullptr;
+    static void updateTyping(bool drawing) {
+        HWND hwnd = glfwGetWin32Window(Overlay::Window);
+        bool wanted = drawing && Overlay::IO->WantTextInput;
+        // clicked on the game or another window, so the box is done too, and the
+        // focus already went where the click was
+        if (typing && GetForegroundWindow() != hwnd) {
+            ImGui::ClearActiveID();
+            typingFrom = nullptr;
+            wanted = false;
+        }
+        if (wanted == typing) return;
+        typing = wanted;
+        LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if (wanted) {
+            typingFrom = GetForegroundWindow();
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_NOACTIVATE);
+            if (!SetForegroundWindow(hwnd)) std::cout << "Couldn't take the focus for typing" << std::endl;
+        }
+        else {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE);
+            // A fullscreen game minimizes once it loses focus, and can't be restored by
+            // us without admin. Bringing it to the front is allowed though, and it
+            // restores itself then. SwitchToThisWindow in case it didn't.
+            HWND to = typingFrom && IsWindow(typingFrom) ? typingFrom : Capture::findGameWindow();
+            if (to) {
+                SetForegroundWindow(to);
+                if (GetForegroundWindow() != to) SwitchToThisWindow(to, TRUE);
+            }
+            typingFrom = nullptr;
+        }
         keepOnTop(true);
     }
 
@@ -519,6 +558,7 @@ namespace Overlay {
             bool forPlayer = !showing && MiniMap::Wanted();
             if (!showing && !forPlayer) {
                 updateClickThrough();
+                if (typing) updateTyping(false);
                 if (drewLastFrame) {
                     // an empty frame so the last one doesn't stay on screen
                     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -556,6 +596,7 @@ namespace Overlay {
             HoyolabMarks::DrawConfirm();
 
             ImGui::Render();
+            updateTyping(true);
 
             int width = 0, height = 0;
             glfwGetFramebufferSize(Overlay::Window, &width, &height);
