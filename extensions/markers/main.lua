@@ -515,6 +515,90 @@ local function drawBar(view)
         DrawRect(labelX - 8, ty - 5, labelX + w + 8, ty + h + 5, 0x1C2030E0, 6)
         DrawText(label, labelX, ty, 16, 0xECE5D8FF)
     end
+    return x0 + width
+end
+
+-- Picks the map's layer by hand when the overlay shows the wrong one: Auto,
+-- the surface, and the floors under the middle of the map, to the right of the bar.
+-- Only there when there's a floor to pick. Holds until the map closes.
+local function drawLayers(view, barRight)
+    local floors = GetMapFloors(view.mapId, view.lng, view.lat)
+    if #floors == 0 and not view.layerForced then return end
+
+    local buttons = { { text = "Auto", tip = "Let the overlay find the layer", on = not view.layerForced } }
+    local function add(text, tip, groupId, floorId, apart)
+        local here = view.groupId == groupId and (groupId == 0 or view.floorId == floorId)
+        buttons[#buttons + 1] = { text = text, tip = tip, groupId = groupId, floorId = floorId,
+            on = view.layerForced and here, showing = here, apart = apart }
+    end
+    add("Surface", "Show the surface", 0, 0)
+    -- Underground areas can overlap here, each counts its floors like the
+    -- game's switcher does and sits a little apart from the others.
+    local listed, lastGroup, i = false, nil, 0
+    for _, floor in ipairs(floors) do
+        local apart = lastGroup ~= nil and floor.groupId ~= lastGroup
+        if floor.groupId ~= lastGroup then i = 0 end
+        i, lastGroup = i + 1, floor.groupId
+        add(tostring(i), "Show underground floor " .. i, floor.groupId, floor.floorId, apart)
+        if floor.groupId == view.groupId and floor.floorId == view.floorId then listed = true end
+    end
+    -- picked here and dragged away from it, still there to see
+    if view.groupId ~= 0 and not listed then add("Floor", "The floor showing now", view.groupId, view.floorId) end
+
+    local size, pad, gap, apartGap, height = 15, 10, 4, 14, BAR_BADGE + BAR_PAD * 2
+    local width = BAR_PAD * 2 - gap
+    for _, button in ipairs(buttons) do
+        button.w = TextSize(button.text, size) + pad * 2
+        width = width + button.w + gap + (button.apart and apartGap or 0)
+    end
+    local y0 = view.top + 18
+    local left, right = topGap(view, y0, y0 + height)
+    local x0 = (left + right) / 2 - width / 2
+    if barRight then
+        x0 = barRight + 10
+        -- no room to the right of the bar, under its right end then
+        if x0 + width > right then
+            x0 = math.max(left, barRight - width)
+            y0 = y0 + height + 6
+        end
+    end
+    local bottom = y0 + height
+    ClickArea(x0, y0, x0 + width, bottom)
+    DrawRect(x0, y0, x0 + width, bottom, 0x1C2030D0, height / 2)
+    DrawRect(x0, y0, x0 + width, bottom, 0xD3BC8E60, height / 2, 1.5)
+
+    local x, top, label, labelX = x0 + BAR_PAD, y0 + BAR_PAD, nil, nil
+    for _, button in ipairs(buttons) do
+        if button.apart then
+            DrawRect(x + (apartGap - gap) / 2 - 0.5, top + 4, x + (apartGap - gap) / 2 + 0.5, top + BAR_BADGE - 4, 0xD3BC8E60)
+            x = x + apartGap
+        end
+        local x1, y1 = x + button.w, top + BAR_BADGE
+        local clicked, hovered = ClickArea(x, top, x1, y1)
+        if clicked then
+            if button.groupId then SetMapLayer(button.groupId, button.floorId) else SetMapLayer() end
+        end
+        if button.on then
+            DrawRect(x, top, x1, y1, 0xECE5D8FF, BAR_BADGE / 2)
+        elseif hovered then
+            DrawRect(x, top, x1, y1, 0xECE5D830, BAR_BADGE / 2)
+        end
+        -- under Auto, the layer the overlay found gets a ring
+        if button.showing and not view.layerForced then
+            DrawRect(x, top, x1, y1, 0xD3BC8EFF, BAR_BADGE / 2, 1.5)
+        end
+        local w, h = TextSize(button.text, size)
+        DrawText(button.text, x + (button.w - w) / 2, top + (BAR_BADGE - h) / 2, size, button.on and 0x1C2030FF or 0xECE5D8FF)
+        if hovered then label, labelX = button.tip, x end
+        x = x1 + gap
+    end
+
+    if label then
+        local w, h = TextSize(label, 16)
+        local ty = bottom + 8
+        DrawRect(labelX - 8, ty - 5, labelX + w + 8, ty + h + 5, 0x1C2030E0, 6)
+        DrawText(label, labelX, ty, 16, 0xECE5D8FF)
+    end
 end
 
 local function writeDone()
@@ -927,7 +1011,7 @@ local function drawOnMap(view)
     PopClipRect()
 
     -- after the markers, so they sit on top of them
-    drawBar(view)
+    drawLayers(view, drawBar(view))
     drawGuide(view, half)
 end
 
