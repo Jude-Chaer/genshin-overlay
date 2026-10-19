@@ -172,6 +172,11 @@ TEST_CASE("HintFor tells a chest still there from one probably opened") {
     // a buried chest isn't there until it's dug up
     CHECK(HintFor({ 4, 69, 300, 100 }, chests, markers) == Hint::None);
     CHECK(HintFor({ 5, 24, 300, 100 }, chests, markers) == Hint::None);
+    // one on a lower floor isn't sent until the player is right there
+    CHECK(HintFor({ 6, 17, 300, 100, 30 }, chests, markers) == Hint::None);
+    // but a sent chest still proves it
+    std::vector<Marker> under = { { 7, 17, 100, 100, 30 } };
+    CHECK(HintFor(under[0], chests, under) == Hint::StillThere);
 }
 
 TEST_CASE("Hints says probably opened only after the player was close a while") {

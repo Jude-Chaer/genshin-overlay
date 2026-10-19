@@ -30,6 +30,8 @@ namespace GameChests {
         int label = 0;
         // HoYoLAB's x_pos / y_pos
         double x = 0.0, y = 0.0;
+        // HoYoLAB's underground floor, 0 above ground
+        int floor = 0;
     };
 
     // the objects of the world (with a group and config) in an APPEARED message,

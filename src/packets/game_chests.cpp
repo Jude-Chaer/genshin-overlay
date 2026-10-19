@@ -137,6 +137,8 @@ namespace GameChests {
                 marker.label = label;
                 marker.x = point.value("x_pos", 0.0);
                 marker.y = point.value("y_pos", 0.0);
+                const nlohmann::json& group = point.contains("point_group") ? point["point_group"] : nlohmann::json();
+                if (group.is_object()) marker.floor = group.value("floor_id", 0);
                 if (marker.id) out.push_back(marker);
             }
         }
@@ -271,8 +273,10 @@ namespace GameChests {
             any = true;
             if (Match(chest, chests, markers) == marker.id) return Hint::StillThere;
         }
-        // a buried chest is only there once it's dug up, so a missing one says nothing
-        if (any || marker.label == 24 || marker.label == 69) return Hint::None;
+        // a buried chest is only there once it's dug up, so a missing one says nothing.
+        // Things on a lower floor are only sent from close by, height too, which
+        // the map doesn't know.
+        if (any || marker.label == 24 || marker.label == 69 || marker.floor != 0) return Hint::None;
         return Hint::ProbablyOpened;
     }
 

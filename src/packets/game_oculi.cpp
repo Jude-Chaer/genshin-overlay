@@ -76,6 +76,8 @@ namespace GameOculi {
                 marker.label = oculus.label;
                 marker.x = point.value("x_pos", 0.0);
                 marker.y = point.value("y_pos", 0.0);
+                const nlohmann::json& group = point.contains("point_group") ? point["point_group"] : nlohmann::json();
+                if (group.is_object()) marker.floor = group.value("floor_id", 0);
                 if (marker.id) out.push_back(marker);
             }
         }
