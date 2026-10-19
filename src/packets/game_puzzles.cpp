@@ -11,12 +11,32 @@ namespace GamePuzzles {
     // HoYoLAB's labels
     static constexpr int SEELIE = 18, MONUMENT = 70, TORCH = 71, SEEDS = 407, TRIAL = 64;
     // the parts the game sends for each kind, from recorded traffic
-    static constexpr uint32_t TORCHES[] = { 70310011, 70310012, 70320005, 70330335, 70330336 };
-    static constexpr uint32_t MONUMENTS[] = { 70900050, 70900051, 70900039, 70900008 };
-    static constexpr uint32_t TRIAL_STARTS[] = { 70350082, 70350083, 70350084, 70350093, 70330343, 70330344 };
-    static constexpr uint32_t SEED = 70320004;
-    static constexpr uint32_t SEELIE_ITSELF = 70710010;
-    static constexpr uint32_t COURT = 70710006;
+    // every torch and fire basin the game has for puzzles in the world, from its gadget
+    // names (FireBasin, ImmortalFire, TorchPuzzle and the regions' own), leaving out
+    // enemies' torches, event domains, hide and seek, quests and Miliastra builds
+    static constexpr uint32_t TORCHES[] = {
+        70220031, 70310001, 70310002, 70310003, 70310011, 70310012, 70310015, 70310034, 70310147, 70310238,
+        70310475, 70310479, 70320005, 70320020, 70330278, 70330335, 70330336, 70330394, 70330395, 70330411,
+        70330704, 70330729, 70331421, 70331422, 70331536, 70331537, 70360338, 70900393, 73003038, 73005126,
+        73054002, 73076016, 73122070,
+    };
+    // the elemental monuments (Tablet in the game's names), not the ones that follow the player
+    static constexpr uint32_t MONUMENTS[] = {
+        70310300, 70310301, 70330332, 70330400, 70330401, 70330402, 70330403, 70330404, 70330405, 70330441,
+        70900007, 70900008, 70900009, 70900039, 70900049, 70900050, 70900051, 70900052, 70900053, 70900054,
+        70900055, 70900056, 70900057, 70900058, 70900102,
+    };
+    // the time trial starts (Challengestarter), on land and under water, not the events' ones
+    static constexpr uint32_t TRIAL_STARTS[] = {
+        70330334, 70330343, 70330344, 70330438, 70330439, 70330440, 70330658, 70330659, 70330660, 70330735,
+        70330736, 70330737, 70330763, 70330764, 70330765, 70350082, 70350083, 70350084, 70350092, 70350093,
+        70350094, 70350357, 73003068,
+    };
+    static constexpr uint32_t SEED_GADGETS[] = { 70290526, 70320004 };
+    // the Seelies HoYoLAB has under Seelie, Electro and Warming Seelies have their own markers
+    static constexpr uint32_t SEELIES[] = { 70710010, 70330741, 74006087 };
+    // where a Seelie flies home to (Lamp_Post)
+    static constexpr uint32_t COURTS[] = { 70290293, 70330331, 70710006, 70900274 };
     // states: a locked chest, a lit torch or monument (201..299), a won trial,
     // a Seelie home at its court
     static constexpr uint32_t LOCKED = 101, LIT = 201, WON = 202, ARRIVED = 203;
@@ -153,9 +173,9 @@ namespace GamePuzzles {
             if (isAny(object.gadget, TORCHES)) torches.push_back(object);
             if (isAny(object.gadget, MONUMENTS)) monuments.push_back(object);
             if (isAny(object.gadget, TRIAL_STARTS)) starts.push_back(object);
-            if (object.gadget == SEELIE_ITSELF) seelies.push_back(object);
-            if (object.gadget == COURT) seelie = true;
-            if (object.gadget == COURT && object.state == ARRIVED) court = true;
+            if (isAny(object.gadget, SEELIES)) seelies.push_back(object);
+            if (isAny(object.gadget, COURTS)) seelie = true;
+            if (isAny(object.gadget, COURTS) && object.state == ARRIVED) court = true;
         }
         auto add = [&](int label, uint32_t config, const std::vector<GameChests::Chest>& at, bool loose = false) {
             if (!m_done.insert({ label, group, config }).second || !changed) return;
@@ -172,7 +192,7 @@ namespace GamePuzzles {
         }
         // the seeds can be done in any order, each has its own marker
         for (const GameChests::Chest& part : parts)
-            if (part.gadget == SEED && part.state == LIT) add(SEEDS, part.config, { part });
+            if (isAny(part.gadget, SEED_GADGETS) && part.state == LIT) add(SEEDS, part.config, { part });
         // a chest can show up during a trial and go again when the time runs out,
         // only a won start or the chest opened says it's done
         bool won = std::any_of(starts.begin(), starts.end(), [](const GameChests::Chest& o) { return o.state == WON; });

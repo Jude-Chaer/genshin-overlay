@@ -70,6 +70,21 @@ TEST_CASE("A torch puzzle lit while listening is done, at its torches") {
     CHECK(after(tracker, 41).empty());
 }
 
+TEST_CASE("Fire basins that show up one by one are done only after the last") {
+    // Natlan basins from recorded traffic: lighting one brings the next
+    Tracker tracker;
+    feed(tracker, GameChests::APPEARED, object(1, 70310001, 1, 0, 100, 100), 1);
+    feed(tracker, CHANGED, changed(1, 201), 10);
+    feed(tracker, GameChests::APPEARED, object(2, 70310001, 2, 0, 104, 100), 10);
+    CHECK(after(tracker, 11).empty());
+    feed(tracker, CHANGED, changed(2, 201), 20);
+    feed(tracker, GameChests::APPEARED, object(3, 70211121, 3, 0, 102, 104), 20);
+    std::vector<Done> done = after(tracker, 21);
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].label == 71);
+    CHECK(done[0].parts.size() == 2);
+}
+
 TEST_CASE("A puzzle that comes in already done is left alone") {
     Tracker tracker;
     feed(tracker, GameChests::APPEARED, object(1, 70310011, 1, 201, 100, 100) + object(2, 70310011, 2, 201, 104, 100)
