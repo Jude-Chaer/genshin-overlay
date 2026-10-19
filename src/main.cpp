@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include <opencv2/imgcodecs.hpp>
 #include "overlay.hpp"
@@ -213,6 +214,7 @@ struct PacketLog {
     std::string verdict;
     GameChests::Tracker chests;
     std::vector<GameChests::Marker> markers;
+    GameChests::Hints hints;
     GameOculi::Tracker oculi;
     std::vector<GameChests::Marker> oculusMarkers;
 
@@ -280,8 +282,27 @@ struct PacketLog {
         check(0);
     }
 
+    // prints each chest marker whose hint changed: "!" the game still has the chest, "?" it sent
+    // none there (probably opened), "-" no hint any more
+    void sayHints(const GameChests::Chest& player, uint64_t t) {
+        std::unordered_map<int64_t, GameChests::Hint> before = hints.All();
+        hints.Moved(player, t, chests.Chests(), markers);
+        for (const auto& [point, hint] : hints.All()) {
+            auto it = before.find(point);
+            if (it == before.end() || it->second != hint)
+                std::cout << "hint " << (hint == GameChests::Hint::StillThere ? "!" : "?") << " point " << point << std::endl;
+        }
+        for (const auto& [point, hint] : before)
+            if (!hints.All().count(point)) std::cout << "hint - point " << point << std::endl;
+    }
+
     void write(uint64_t t) {
         for (const GamePackets::Command& command : commands) {
+            GameChests::Chest player;
+            if (command.direction == GamePackets::Direction::Sent && command.id == GameChests::MOVED && chests.OnTeyvat()
+                && hints.Due(t) && GameChests::ReadPlayer(command.body, player)) {
+                sayHints(player, t);
+            }
             GameOculi::Picked picked;
             if (command.direction == GamePackets::Direction::Received && oculi.Feed(command.id, command.body, t, picked)) {
                 double x, y;

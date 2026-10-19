@@ -141,3 +141,57 @@ TEST_CASE("Tracker knows where an opened chest was") {
     CHECK_FALSE(placed);
     CHECK_FALSE(tracker.Feed(1, "", opened, placed));
 }
+
+// one move of the player in the game's MOVED message: 8, 6, 9 hold the 15s
+static std::string moved(uint32_t entity, float x, float y, float z) {
+    std::string move = bytes(15, number(1, entity) + bytes(2, bytes(1, real(1, x) + real(2, y) + real(3, z))));
+    return bytes(8, bytes(6, bytes(9, move)));
+}
+
+TEST_CASE("ReadPlayer takes where the player's character moved") {
+    Chest where;
+    REQUIRE(ReadPlayer(moved(2097802, 725.0f, 202.0f, 227.0f), where));
+    CHECK(where.x == 725.0f);
+    CHECK(where.z == 227.0f);
+    // seen live, still the player's
+    CHECK(ReadPlayer(moved(2104768, 1.0f, 2.0f, 3.0f), where));
+    // an enemy moving isn't the player
+    CHECK_FALSE(ReadPlayer(moved(4201255, 1.0f, 2.0f, 3.0f), where));
+    CHECK_FALSE(ReadPlayer("", where));
+}
+
+TEST_CASE("HintFor tells a chest still there from one probably opened") {
+    const uint32_t COMMON = 70211002;
+    std::vector<Marker> markers = { { 1, 17, 100, 100 }, { 2, 17, 300, 100 } };
+    std::vector<Chest> chests = { chestAt(COMMON, 102, 100) };
+    CHECK(HintFor(markers[0], chests, markers) == Hint::StillThere);
+    CHECK(HintFor(markers[1], chests, markers) == Hint::ProbablyOpened);
+    // a chest near the marker that can't surely be told is neither
+    std::vector<Marker> close = { { 1, 17, 100, 100 }, { 3, 17, 104, 100 } };
+    CHECK(HintFor(close[0], chests, close) == Hint::None);
+    // a buried chest isn't there until it's dug up
+    CHECK(HintFor({ 4, 69, 300, 100 }, chests, markers) == Hint::None);
+    CHECK(HintFor({ 5, 24, 300, 100 }, chests, markers) == Hint::None);
+}
+
+TEST_CASE("Hints says probably opened only after the player was close a while") {
+    const uint32_t COMMON = 70211002;
+    std::vector<Marker> markers = { { 1, 17, 100, 100 }, { 2, 17, 220, 100 } };
+    std::vector<Chest> chests = { chestAt(COMMON, 220, 101) };
+    Hints hints;
+    Chest player = chestAt(0, 110, 100);
+    hints.Moved(player, 1000, chests, markers);
+    // the chest the game sent proves its marker from further away
+    CHECK(hints.All().at(2) == Hint::StillThere);
+    // just got there, the game may still be sending
+    CHECK(hints.All().count(1) == 0);
+    CHECK_FALSE(hints.Due(1500));
+    REQUIRE(hints.Due(7000));
+    hints.Moved(player, 7000, chests, markers);
+    CHECK(hints.All().at(1) == Hint::ProbablyOpened);
+
+    // a chest showing up there later (a puzzle solved) takes the hint back
+    chests.push_back(chestAt(COMMON, 101, 100, 2));
+    hints.Moved(player, 8000, chests, markers);
+    CHECK(hints.All().at(1) == Hint::StillThere);
+}

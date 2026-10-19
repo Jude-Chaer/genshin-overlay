@@ -42,6 +42,9 @@ namespace GameTraffic {
     // the HoYoLAB points of the chests opened and oculi picked up since the overlay started, from
     // the from-th on, gives back how many there are in all
     extern size_t OpenedPoints(size_t from, std::vector<int64_t>& out);
+    // the HoYoLAB chest points the player came near since the overlay started: the ones whose
+    // chest the game still has, and the ones it sent no chest for (probably opened)
+    extern void ChestHints(std::vector<int64_t>& stillThere, std::vector<int64_t>& probablyOpened);
 
     // the status, inside the menu
     extern void DrawStatus();

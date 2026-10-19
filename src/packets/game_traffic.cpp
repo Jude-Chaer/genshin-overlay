@@ -10,6 +10,7 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include <imgui.h>
 
@@ -29,6 +30,8 @@ namespace GameTraffic {
     static std::chrono::steady_clock::time_point noticeUntil;
     // the HoYoLAB points of the chests opened and oculi picked up, oldest first, never cleared
     static std::vector<int64_t> opened;
+    // what the game shows about the chest markers the player came near
+    static std::unordered_map<int64_t, GameChests::Hint> chestHints;
 
     static void setStatus(State state, const std::string& text) {
         std::lock_guard lock(mutex);
@@ -93,6 +96,7 @@ namespace GameTraffic {
 
         GamePackets::Sniffer sniffer(keys);
         GameChests::Tracker chests;
+        GameChests::Hints hints;
         std::vector<GameChests::Marker> markers;
         GameOculi::Tracker oculi;
         std::vector<GameChests::Marker> oculusMarkers;
@@ -111,6 +115,17 @@ namespace GameTraffic {
                     sniffer.SetGameStart(GameStart());
                 }
                 for (const GamePackets::Command& command : commands) {
+                    if (command.direction == GamePackets::Direction::Sent && command.id == GameChests::MOVED) {
+                        GameChests::Chest player;
+                        if (!chests.OnTeyvat() || !hints.Due(frame.ms) || !GameChests::ReadPlayer(command.body, player))
+                            continue;
+                        if (markers.empty())
+                            GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
+                        hints.Moved(player, frame.ms, chests.Chests(), markers);
+                        std::lock_guard lock(mutex);
+                        chestHints = hints.All();
+                        continue;
+                    }
                     if (command.direction != GamePackets::Direction::Received)
                         continue;
                     GameOculi::Picked picked;
@@ -184,6 +199,12 @@ namespace GameTraffic {
         std::lock_guard lock(mutex);
         for (size_t i = from; i < opened.size(); i++) out.push_back(opened[i]);
         return opened.size();
+    }
+
+    void ChestHints(std::vector<int64_t>& stillThere, std::vector<int64_t>& probablyOpened) {
+        std::lock_guard lock(mutex);
+        for (const auto& [point, hint] : chestHints)
+            (hint == GameChests::Hint::StillThere ? stillThere : probablyOpened).push_back(point);
     }
 
     Status GetStatus() {

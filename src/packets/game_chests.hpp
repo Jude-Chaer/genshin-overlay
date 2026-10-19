@@ -58,8 +58,42 @@ namespace GameChests {
         // the game never said where that chest is
         bool Feed(uint16_t id, std::string_view body, Chest& opened, bool& placed);
         std::vector<Chest> Chests() const;
+        // the last objects the game sent were on Teyvat
+        bool OnTeyvat() const { return m_teyvat; }
 
     private:
         std::unordered_map<uint64_t, Chest> m_chests;
+        bool m_teyvat = false;
+    };
+
+    // the game's message with where the player moved, one the game gets from us
+    static constexpr uint16_t MOVED = 2246;
+    // where the player is, false when the message doesn't say
+    extern bool ReadPlayer(std::string_view body, Chest& where);
+
+    // What the game shows about a chest marker. Opened chests aren't sent at
+    // all, so a chest marker the player came close to with no chest sent near
+    // it is probably opened. Only probably: a chest behind a puzzle or a quest
+    // isn't there either until that's done, so it's never marked from this.
+    enum class Hint { None, StillThere, ProbablyOpened };
+
+    // StillThere when a chest the game sent is surely this marker's,
+    // ProbablyOpened when the game sent no chest near it at all
+    extern Hint HintFor(const Marker& marker, const std::vector<Chest>& chests, const std::vector<Marker>& markers);
+
+    // The hints for the chest markers around the player, kept as the player moves.
+    class Hints {
+    public:
+        // true when it's time to look again, about once a second
+        bool Due(uint64_t ms) const { return ms >= m_last + 1000; }
+        // ms is when the player was there, chests the ones the game sent and not opened
+        void Moved(const Chest& player, uint64_t ms, const std::vector<Chest>& chests, const std::vector<Marker>& markers);
+        const std::unordered_map<int64_t, Hint>& All() const { return m_hints; }
+
+    private:
+        // when the player first came close to a marker
+        std::unordered_map<int64_t, uint64_t> m_near;
+        std::unordered_map<int64_t, Hint> m_hints;
+        uint64_t m_last = 0;
     };
 }

@@ -116,6 +116,7 @@ namespace LuaFunctions {
 		luaState.set_function("HoYoLAB_Result", HoyolabResult);
 		luaState.set_function("HoYoLAB_Backups", HoyolabBackups);
 		luaState.set_function("GetOpenedPoints", GetOpenedPoints);
+		luaState.set_function("GetChestHints", GetChestHints);
 		luaState.set_function("GetGameTraffic", GetGameTraffic);
 		luaState.set_function("AskForGameTraffic", AskForGameTraffic);
 		luaState["KeybindFlags"] = luaState.create_table_with(
@@ -1446,6 +1447,21 @@ namespace LuaFunctions {
 		sol::table list = lua.create_table();
 		for (size_t i = 0; i < points.size(); i++) list[i + 1] = points[i];
 		return list;
+	}
+
+	// what the game shows about the chest markers the player came near: { stillThere = { points },
+	// probablyOpened = { points } }. Still there means the game sent its chest, probably opened that
+	// it sent none near the marker, which a chest behind a puzzle or a quest does too.
+	sol::table GetChestHints(sol::this_state state)
+	{
+		CHECK_PERMISSIONS();
+		std::vector<int64_t> stillThere, probablyOpened;
+		GameTraffic::ChestHints(stillThere, probablyOpened);
+		sol::state_view lua(state);
+		sol::table still = lua.create_table(), probably = lua.create_table();
+		for (size_t i = 0; i < stillThere.size(); i++) still[i + 1] = stillThere[i];
+		for (size_t i = 0; i < probablyOpened.size(); i++) probably[i + 1] = probablyOpened[i];
+		return lua.create_table_with("stillThere", still, "probablyOpened", probably);
 	}
 
 	// Reading the game's traffic, for what needs it: on is the switch in the

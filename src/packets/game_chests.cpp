@@ -188,11 +188,13 @@ namespace GameChests {
 
     bool Tracker::Feed(uint16_t id, std::string_view body, Chest& opened, bool& placed) {
         if (id == APPEARED) {
-            std::vector<Chest> chests;
-            ReadAppeared(body, chests);
+            std::vector<Chest> objects;
+            ReadObjects(body, objects);
+            if (!objects.empty()) m_teyvat = GameChests::OnTeyvat(objects.front());
             // a long trip leaves a lot behind
             if (m_chests.size() > 20000) m_chests.clear();
-            for (const Chest& chest : chests) m_chests[keyOf(chest)] = chest;
+            for (const Chest& object : objects)
+                if (isChest(object.gadget)) m_chests[keyOf(object)] = object;
             return false;
         }
         if (id != OPENED || !ReadOpened(body, opened))
@@ -211,5 +213,101 @@ namespace GameChests {
         out.reserve(m_chests.size());
         for (const auto& [key, chest] : m_chests) out.push_back(chest);
         return out;
+    }
+
+    // the player's characters, other numbers are enemies, objects and so on
+    static bool isPlayer(uint32_t entity) { return entity >= 0x200000 && entity < 0x400000; }
+
+    // the message's field number, inside the one before
+    static bool inside(std::string_view body, uint32_t number, std::string_view& out) {
+        GamePackets::Field field;
+        while (GamePackets::NextField(body, field)) {
+            if (field.number == number && field.wire == 2) {
+                out = field.bytes;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool ReadPlayer(std::string_view body, Chest& where) {
+        // 8, 6, 9 hold a list of 15s: { 1 entity, 2 { 1 where } }
+        std::string_view a, b, list;
+        if (!inside(body, 8, a) || !inside(a, 6, b) || !inside(b, 9, list))
+            return false;
+        bool found = false;
+        GamePackets::Field field;
+        while (GamePackets::NextField(list, field)) {
+            if (field.number != 15 || field.wire != 2) continue;
+            uint32_t entity = 0;
+            std::string_view motion, vector;
+            std::string_view move = field.bytes;
+            GamePackets::Field part;
+            while (GamePackets::NextField(move, part)) {
+                if (part.number == 1 && part.wire == 0) entity = uint32_t(part.value);
+                else if (part.number == 2 && part.wire == 2) motion = part.bytes;
+            }
+            if (!isPlayer(entity) || !inside(motion, 1, vector)) continue;
+            GamePackets::Field v;
+            while (GamePackets::NextField(vector, v)) {
+                if (v.wire != 5) continue;
+                if (v.number == 1) where.x = toFloat(v.value);
+                else if (v.number == 2) where.y = toFloat(v.value);
+                else if (v.number == 3) where.z = toFloat(v.value);
+            }
+            where.entity = entity;
+            found = true;
+        }
+        return found;
+    }
+
+    Hint HintFor(const Marker& marker, const std::vector<Chest>& chests, const std::vector<Marker>& markers) {
+        bool any = false;
+        for (const Chest& chest : chests) {
+            if (!GameChests::OnTeyvat(chest)) continue;
+            double x, y;
+            ToMap(chest, x, y);
+            if (std::hypot(marker.x - x, marker.y - y) >= MATCH) continue;
+            any = true;
+            if (Match(chest, chests, markers) == marker.id) return Hint::StillThere;
+        }
+        // a buried chest is only there once it's dug up, so a missing one says nothing
+        if (any || marker.label == 24 || marker.label == 69) return Hint::None;
+        return Hint::ProbablyOpened;
+    }
+
+    // close enough that the game surely sent the chest (chests come from 73 m and further)
+    static constexpr double NEAR = 50.0;
+    // the game sends what's around a little after the player gets there, after a teleport too
+    static constexpr uint64_t SETTLE_MS = 5000;
+    // the hints around the player are looked at again, further ones stay as they were
+    static constexpr double AROUND = 150.0;
+
+    void Hints::Moved(const Chest& player, uint64_t ms, const std::vector<Chest>& chests, const std::vector<Marker>& markers) {
+        m_last = ms;
+        double px, py;
+        ToMap(player, px, py);
+        // only the chests and markers around, so it stays quick on a long trip
+        std::vector<Chest> around;
+        for (const Chest& chest : chests) {
+            double x, y;
+            ToMap(chest, x, y);
+            if (std::hypot(x - px, y - py) < AROUND + MATCH * 3) around.push_back(chest);
+        }
+        std::vector<Marker> close;
+        for (const Marker& marker : markers)
+            if (std::hypot(marker.x - px, marker.y - py) < AROUND + MATCH * 3) close.push_back(marker);
+        for (const Marker& marker : close) {
+            double d = std::hypot(marker.x - px, marker.y - py);
+            if (d >= AROUND) continue;
+            if (d < NEAR) m_near.try_emplace(marker.id, ms);
+            auto near = m_near.find(marker.id);
+            bool looked = near != m_near.end() && ms >= near->second + SETTLE_MS;
+            Hint hint = HintFor(marker, around, close);
+            // a chest that's sent proves it's there from any distance, a missing one only up close
+            if (hint == Hint::ProbablyOpened && !looked) hint = Hint::None;
+            if (hint == Hint::None) m_hints.erase(marker.id);
+            else m_hints[marker.id] = hint;
+        }
     }
 }
