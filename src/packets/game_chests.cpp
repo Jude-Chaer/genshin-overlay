@@ -139,6 +139,7 @@ namespace GameChests {
                         if (g.number == 1) chest.gadget = uint32_t(g.value);
                         else if (g.number == 2) chest.group = uint32_t(g.value);
                         else if (g.number == 3) chest.config = uint32_t(g.value);
+                        else if (g.number == 6) chest.state = uint32_t(g.value);
                     }
                 }
             }

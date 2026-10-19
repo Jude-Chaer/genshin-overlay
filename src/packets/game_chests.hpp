@@ -24,6 +24,9 @@ namespace GameChests {
         uint32_t gadget = 0;
         // the game's meters, y is up
         float x = 0.0f, y = 0.0f, z = 0.0f;
+        // what state it was in when the game sent it, like 101 for a locked chest
+        // or 201 for a lit torch
+        uint32_t state = 0;
     };
 
     struct Marker {

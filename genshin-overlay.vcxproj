@@ -112,6 +112,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\packets\game_chests.cpp" />
     <ClCompile Include="src\packets\game_oculi.cpp" />
+    <ClCompile Include="src\packets\game_puzzles.cpp" />
     <ClCompile Include="src\packets\game_packets.cpp" />
     <ClCompile Include="src\packets\game_traffic.cpp" />
     <ClCompile Include="src\packets\npcap_capture.cpp" />
@@ -144,6 +145,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\packets\game_chests.hpp" />
     <ClInclude Include="src\packets\game_oculi.hpp" />
+    <ClInclude Include="src\packets\game_puzzles.hpp" />
     <ClInclude Include="src\packets\game_packets.hpp" />
     <ClInclude Include="src\packets\game_traffic.hpp" />
     <ClInclude Include="src\packets\npcap_capture.hpp" />

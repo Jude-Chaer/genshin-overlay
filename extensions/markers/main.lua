@@ -1415,7 +1415,7 @@ function Update()
         end
     end
 
-    -- chests and oculi the game says were opened or picked up, when the player reads the game's traffic.
+    -- chests, oculi and puzzles the game says were opened, picked up or solved, when the player reads the game's traffic.
     -- read even when off, so turning it on doesn't mark the old ones
     local opened = false
     for _, id in ipairs(GetOpenedPoints()) do
@@ -1671,7 +1671,7 @@ local function syncPage()
 
     ImGUI_Separator()
     ImGUI_Text("Game")
-    local on = ImGUI_Checkbox("Mark chests and oculi when I find them", sync.game.on)
+    local on = ImGUI_Checkbox("Mark chests, oculi and puzzles when I find them", sync.game.on)
     if on ~= sync.game.on then
         sync.game.on = on
         saveSync()

@@ -27,6 +27,7 @@
 #include "locator/map_locator.hpp"
 #include "packets/game_chests.hpp"
 #include "packets/game_oculi.hpp"
+#include "packets/game_puzzles.hpp"
 #include "packets/game_packets.hpp"
 #include "packets/npcap_capture.hpp"
 #include "packets/game_traffic.hpp"
@@ -194,6 +195,24 @@ static std::string base64(const std::string& data) {
     return out;
 }
 
+static std::string fromBase64(const std::string& text) {
+    std::string out;
+    uint32_t n = 0;
+    int bits = 0;
+    for (char c : text) {
+        int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
+            : c == '+' ? 62 : c == '/' ? 63 : -1;
+        if (v < 0) continue;
+        n = n << 6 | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out += char(n >> bits & 0xff);
+        }
+    }
+    return out;
+}
+
 // one frame into the sniffer, the messages it finishes go to out as json lines
 struct PacketLog {
     GamePackets::Sniffer sniffer;
@@ -217,10 +236,14 @@ struct PacketLog {
     GameChests::Hints hints;
     GameOculi::Tracker oculi;
     std::vector<GameChests::Marker> oculusMarkers;
+    GamePuzzles::Tracker puzzles;
+    std::vector<GameChests::Marker> puzzleMarkers;
+    std::vector<GamePuzzles::Done> puzzlesDone;
 
     PacketLog(const GamePackets::Keys& keys, const std::filesystem::path& file) : sniffer(keys), out(file) {
         GameChests::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", markers);
         GameOculi::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", oculusMarkers);
+        GamePuzzles::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", puzzleMarkers);
     }
 
     void Feed(uint64_t t, const uint8_t* frame, size_t size) {
@@ -303,6 +326,15 @@ struct PacketLog {
                 && hints.Due(t) && GameChests::ReadPlayer(command.body, player)) {
                 sayHints(player, t);
             }
+            if (command.direction == GamePackets::Direction::Received) {
+                puzzlesDone.clear();
+                puzzles.Feed(command.id, command.body, t, puzzlesDone);
+                for (const GamePuzzles::Done& done : puzzlesDone) {
+                    int64_t point = GamePuzzles::Match(done, puzzleMarkers);
+                    if (point || !done.loose)
+                        std::cout << "puzzle " << done.label << " in group " << done.group << " done, point " << point << std::endl;
+                }
+            }
             GameOculi::Picked picked;
             if (command.direction == GamePackets::Direction::Received && oculi.Feed(command.id, command.body, t, picked)) {
                 double x, y;
@@ -344,10 +376,37 @@ static bool loadPacketKeys(GamePackets::Keys& keys) {
 // Decodes the frames.bin a packet recording saved again and writes every
 // message to packets-cpp.jsonl next to it. frames.bin has one record per
 // frame: u64 unix ms, u8 adapter, u32 size, the frame (little endian).
-// With the game's start time a missed login gets searched for too.
+// With the game's start time a missed login gets searched for too. A folder
+// with only packets-cpp.jsonl is read from that instead.
 static int replayPackets(const std::filesystem::path& folder, uint64_t gameStart) {
     GamePackets::Keys keys;
     if (!loadPacketKeys(keys)) return 1;
+    // a folder with only the messages, read again without the frames
+    if (!std::filesystem::exists(folder / "frames.bin") && std::filesystem::exists(folder / "packets-cpp.jsonl")) {
+        std::ifstream messages(folder / "packets-cpp.jsonl");
+        PacketLog log(keys, "");
+        std::string text;
+        while (std::getline(messages, text)) {
+            nlohmann::json line = nlohmann::json::parse(text, nullptr, false);
+            if (!line.is_object()) continue;
+            GamePackets::Command command;
+            command.id = line.value("id", 0);
+            command.direction = line.value("dir", "") == "sent" ? GamePackets::Direction::Sent : GamePackets::Direction::Received;
+            std::string data = fromBase64(line.value("data", ""));
+            size_t head = std::min(data.size(), line.value("head", size_t(0)));
+            command.head = data.substr(0, head);
+            command.body = data.substr(head);
+            log.commands = { command };
+            log.write(line.value("t", uint64_t(0)));
+        }
+        // the last moment's puzzles come out with a later one
+        GamePackets::Command later;
+        later.id = 0;
+        log.commands = { later };
+        log.write(UINT64_MAX);
+        std::cout << log.messages << " messages" << std::endl;
+        return 0;
+    }
     std::ifstream in(folder / "frames.bin", std::ios::binary);
     if (!in) {
         std::cerr << "Could not read " << folder / "frames.bin" << std::endl;

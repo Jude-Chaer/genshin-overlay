@@ -2,6 +2,7 @@
 #include "game_chests.hpp"
 #include "game_oculi.hpp"
 #include "game_packets.hpp"
+#include "game_puzzles.hpp"
 #include "npcap_capture.hpp"
 #include "../capture.hpp"
 #include "../helpers.hpp"
@@ -28,7 +29,7 @@ namespace GameTraffic {
     static Status status;
     static std::string notice;
     static std::chrono::steady_clock::time_point noticeUntil;
-    // the HoYoLAB points of the chests opened and oculi picked up, oldest first, never cleared
+    // the HoYoLAB points of the chests opened, oculi picked up and puzzles solved, oldest first, never cleared
     static std::vector<int64_t> opened;
     // what the game shows about the chest markers the player came near
     static std::unordered_map<int64_t, GameChests::Hint> chestHints;
@@ -100,6 +101,9 @@ namespace GameTraffic {
         std::vector<GameChests::Marker> markers;
         GameOculi::Tracker oculi;
         std::vector<GameChests::Marker> oculusMarkers;
+        GamePuzzles::Tracker puzzles;
+        std::vector<GameChests::Marker> puzzleMarkers;
+        std::vector<GamePuzzles::Done> puzzlesDone;
         std::vector<NpcapCapture::Frame> frames;
         std::vector<GamePackets::Command> commands;
         // a login seen since the start, without one the key can't be found yet
@@ -128,6 +132,18 @@ namespace GameTraffic {
                     }
                     if (command.direction != GamePackets::Direction::Received)
                         continue;
+                    puzzlesDone.clear();
+                    puzzles.Feed(command.id, command.body, frame.ms, puzzlesDone);
+                    if (!puzzlesDone.empty() && puzzleMarkers.empty())
+                        GamePuzzles::LoadMarkers(Helpers::exeDirectory() / "items" / "positions", puzzleMarkers);
+                    for (const GamePuzzles::Done& done : puzzlesDone) {
+                        int64_t point = GamePuzzles::Match(done, puzzleMarkers);
+                        if (point == 0 && done.loose) continue;
+                        std::cout << "Game traffic: puzzle " << done.label << " in group " << done.group << " done, point " << point << std::endl;
+                        if (point == 0) continue;
+                        std::lock_guard lock(mutex);
+                        opened.push_back(point);
+                    }
                     GameOculi::Picked picked;
                     if (oculi.Feed(command.id, command.body, frame.ms, picked)) {
                         int64_t point = pointOf(picked, oculi, oculusMarkers);

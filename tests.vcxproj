@@ -106,6 +106,7 @@
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\packets\game_chests.cpp" />
     <ClCompile Include="src\packets\game_oculi.cpp" />
+    <ClCompile Include="src\packets\game_puzzles.cpp" />
     <ClCompile Include="src\packets\game_packets.cpp" />
     <ClCompile Include="src\packets\game_traffic.cpp" />
     <ClCompile Include="src\packets\npcap_capture.cpp" />
@@ -116,6 +117,7 @@
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\game_chests_tests.cpp" />
     <ClCompile Include="tests\game_oculi_tests.cpp" />
+    <ClCompile Include="tests\game_puzzles_tests.cpp" />
     <ClCompile Include="tests\game_packets_tests.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
@@ -149,6 +151,7 @@
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\packets\game_chests.hpp" />
     <ClInclude Include="src\packets\game_oculi.hpp" />
+    <ClInclude Include="src\packets\game_puzzles.hpp" />
     <ClInclude Include="src\packets\game_packets.hpp" />
     <ClInclude Include="src\packets\game_traffic.hpp" />
     <ClInclude Include="src\packets\npcap_capture.hpp" />
