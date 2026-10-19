@@ -162,7 +162,7 @@ namespace GamePuzzles {
     }
 
     // A group that only came in is looked at too, so what's done already is
-    // known and not given out when something else changes in it later
+    // known, comes out as already done and isn't given out again later
     void Tracker::check(uint32_t group, bool opened, bool changed, std::vector<Done>& done) {
         std::vector<GameChests::Chest> parts, torches, monuments, starts, seelies;
         bool locked = false, court = false, seelie = false;
@@ -178,8 +178,12 @@ namespace GamePuzzles {
             if (isAny(object.gadget, COURTS) && object.state == ARRIVED) court = true;
         }
         auto add = [&](int label, uint32_t config, const std::vector<GameChests::Chest>& at, bool loose = false) {
-            if (!m_done.insert({ label, group, config }).second || !changed) return;
-            done.push_back({ label, group, at, loose });
+            // one done while listening can still come in done after a relog, for its hint
+            // but one that came in done is never done just now
+            std::tuple<int, uint32_t, uint32_t> key{ label, group, config };
+            bool fresh = changed ? !m_seenDone.count(key) && m_done.insert(key).second : m_seenDone.insert(key).second;
+            if (!fresh) return;
+            done.push_back({ label, group, at, loose, !changed });
         };
         auto lit = [](const GameChests::Chest& o) { return o.state >= LIT && o.state < 300; };
 

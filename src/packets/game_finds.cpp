@@ -84,9 +84,11 @@ namespace GameFinds {
                 // only a guess from a chest opened, no marker there is normal
                 if (point == 0 && d.loose) continue;
                 Found f;
-                f.what = "puzzle " + std::to_string(d.label) + " in group " + std::to_string(d.group) + " done";
+                f.what = "puzzle " + std::to_string(d.label) + " in group " + std::to_string(d.group)
+                    + (d.already ? " done already" : " done");
                 f.point = point;
                 f.objects = d.parts;
+                f.already = d.already;
                 found.push_back(f);
             }
         }
@@ -116,9 +118,26 @@ namespace GameFinds {
         size_t before = found.size();
         for (const std::unique_ptr<Kind>& kind : m_kinds)
             kind->Feed(command.id, command.body, ms, found);
+        // what came in done already only gives a hint, it isn't found just now
+        bool hinted = false;
+        auto it = found.begin() + before;
+        while (it != found.end()) {
+            if (!it->already) {
+                ++it;
+                continue;
+            }
+            if (it->point && m_already.emplace(it->point, GameChests::Hint::ProbablyOpened).second) hinted = true;
+            it = found.erase(it);
+        }
         // whatever was found isn't there any more
         for (size_t i = before; i < found.size(); i++)
             for (const GameChests::Chest& object : found[i].objects) m_world.Forget(object);
-        return false;
+        return hinted;
+    }
+
+    std::unordered_map<int64_t, GameChests::Hint> Finder::Hints() const {
+        std::unordered_map<int64_t, GameChests::Hint> all = m_already;
+        for (const auto& [point, hint] : m_hints.All()) all[point] = hint;
+        return all;
     }
 }

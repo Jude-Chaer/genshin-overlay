@@ -58,6 +58,24 @@ static std::filesystem::path positionsWithOneDendroculus() {
     return folder;
 }
 
+TEST_CASE("A puzzle that comes in already lit gives a ? and isn't found") {
+    std::filesystem::path folder = positionsWithOneDendroculus();
+    std::ofstream(folder / "71.json") << "[{\"id\":8,\"map_id\":2,\"x_pos\":100,\"y_pos\":100}]";
+    Finder finder(folder);
+    std::vector<Found> found;
+    auto torch = [](uint32_t entity, uint32_t config, double mapX) {
+        std::string where = bytes(1, vec(float(2321.0 - 100), 200.0f, float(-750.0 - mapX)));
+        std::string kind = number(1, 70310001) + number(2, 133503104) + number(3, config) + number(6, 201);
+        return bytes(8, number(2, entity) + bytes(4, where) + bytes(13, kind));
+    };
+    finder.Feed(received(GameChests::APPEARED, torch(1, 1, 100) + torch(2, 2, 104)), 1, found);
+    // the moment is looked at when the next one comes
+    CHECK(finder.Feed(received(0, ""), 2, found));
+    CHECK(found.empty());
+    REQUIRE(finder.Hints().count(8));
+    CHECK(finder.Hints().at(8) == GameChests::Hint::ProbablyOpened);
+}
+
 TEST_CASE("Something found leaves the hints, it doesn't stay still there") {
     Finder finder(positionsWithOneDendroculus());
     std::vector<Found> found;

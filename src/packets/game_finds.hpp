@@ -26,6 +26,9 @@ namespace GameFinds {
         // what to tell the player when there's no point, nothing when no marker was
         // expected (a chest the game never said where it is, for one)
         const char* notMatched = nullptr;
+        // it was done before it came in, like a torch puzzle already lit. Never
+        // marked, its marker only gets a ? when the player hasn't marked it
+        bool already = false;
     };
 
     // One kind of thing the player can find. The Finder hands it every message the
@@ -43,10 +46,11 @@ namespace GameFinds {
         // positions is the item files' positions folder. The files can still be
         // downloading when the overlay starts, so they're read when first needed
         explicit Finder(std::filesystem::path positions);
-        // reads one message and adds what the player found. True when the hints
-        // were looked at again
+        // reads one message and adds what the player found just now. True when
+        // the hints changed
         bool Feed(const GamePackets::Command& command, uint64_t ms, std::vector<Found>& found);
-        const std::unordered_map<int64_t, GameChests::Hint>& Hints() const { return m_hints.All(); }
+        // the hints for the markers around the player, and the ones found already done
+        std::unordered_map<int64_t, GameChests::Hint> Hints() const;
 
     private:
         std::filesystem::path m_positions;
@@ -54,6 +58,8 @@ namespace GameFinds {
         GameChests::Tracker m_world;
         std::vector<GameChests::Marker> m_markers;
         GameChests::Hints m_hints;
+        // the points of what came in already done
+        std::unordered_map<int64_t, GameChests::Hint> m_already;
         std::vector<std::unique_ptr<Kind>> m_kinds;
     };
 }

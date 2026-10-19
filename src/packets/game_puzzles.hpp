@@ -27,6 +27,8 @@ namespace GamePuzzles {
         std::vector<GameChests::Chest> parts;
         // only a guess from a chest opened, no marker there is normal
         bool loose = false;
+        // it was done before it came in, only good for a hint
+        bool already = false;
     };
 
     // the entity and its new state in a CHANGED message, false when it has none
@@ -53,6 +55,8 @@ namespace GamePuzzles {
         std::unordered_map<uint32_t, std::vector<uint64_t>> m_groups;
         // label, group and config of what's done already, so nothing comes out twice
         std::set<std::tuple<int, uint32_t, uint32_t>> m_done;
+        // the same for what came in done already, said once for its hint
+        std::set<std::tuple<int, uint32_t, uint32_t>> m_seenDone;
         // the moment being read and the groups it touched
         uint64_t m_ms = 0;
         std::set<uint32_t> m_arrived, m_changed, m_opened;

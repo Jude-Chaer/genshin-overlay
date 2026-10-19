@@ -68,6 +68,11 @@ TEST_CASE("A torch puzzle lit while listening is done, at its torches") {
     // nothing twice
     feed(tracker, GameChests::OPENED, opened(3), 40);
     CHECK(after(tracker, 41).empty());
+    // coming back after a relog it's only done already, for the hint
+    feed(tracker, GameChests::APPEARED, object(4, 70310011, 1, 201, 100, 100) + object(5, 70310011, 2, 201, 104, 100), 50);
+    done = after(tracker, 51);
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].already);
 }
 
 TEST_CASE("Fire basins that show up one by one are done only after the last") {
@@ -89,12 +94,19 @@ TEST_CASE("A puzzle that comes in already done is left alone") {
     Tracker tracker;
     feed(tracker, GameChests::APPEARED, object(1, 70310011, 1, 201, 100, 100) + object(2, 70310011, 2, 201, 104, 100)
         + object(3, 70211102, 3, 0, 102, 104), 1);
-    CHECK(after(tracker, 2).empty());
+    // it says so once, for a hint
+    std::vector<Done> done = after(tracker, 2);
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].label == 71);
+    CHECK(done[0].already);
     // opening its chest now doesn't make it new
     feed(tracker, GameChests::OPENED, opened(3), 10);
     CHECK(after(tracker, 11).empty());
     // a won trial seen again the same way
     feed(tracker, GameChests::APPEARED, object(4, 70350083, 4, 202, 300, 300), 20);
+    done = after(tracker, 21);
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].already);
     feed(tracker, CHANGED, changed(4, 202), 30);
     CHECK(after(tracker, 31).empty());
 }
