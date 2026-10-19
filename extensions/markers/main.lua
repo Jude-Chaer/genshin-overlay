@@ -48,6 +48,7 @@ function RegisterSettings()
     DefineExtensionSetting("minimapScale", "Marker size on the minimap (%)", "int", 100, 20, 200)
     DefineExtensionSetting("hideDoneMinimap", "Hide collected ones on the minimap", "bool", true)
     DefineExtensionSetting("hideDoneMap", "Hide collected ones on the map", "bool", false)
+    DefineExtensionSetting("hideOtherLevels", "Underground, hide markers on other levels instead of fading them", "bool", false)
     DefineExtensionSetting("mapBar", "Show the picked types as a bar on the map", "bool", true)
     DefineExtensionSetting("mergeClose", "Merge markers that overlap into one with a count", "bool", false)
     DefineExtensionSetting("tapGuides", "Tap a marker on the map to see its guide", "bool", true)
@@ -926,13 +927,15 @@ local function drawOnMap(view)
 
     -- the one whose guide is open stays, so it can still be unmarked
     local hideDone = GetSetting("hideDoneMap")
+    local hideOther = GetSetting("hideOtherLevels")
     local n = 0
     for _, id in ipairs(barTypes) do
         local list = shown(id, view.mapId)
         if list then
             for _, point in ipairs(list) do
                 if (not filter or filter[point.area])
-                    and not (hideDone and done[point.id] and not stillThere[point.id] and not (openGuide and openGuide.id == point.id)) then
+                    and not (hideDone and done[point.id] and not stillThere[point.id] and not (openGuide and openGuide.id == point.id))
+                    and not (hideOther and otherLevel(point, view.groupId, view.floorId) and not (openGuide and openGuide.id == point.id)) then
                     -- x_pos / y_pos are the same map units as the view's lng / lat
                     local x = view.centerX + (point.x - view.lng) / view.unitsPerPixel
                     local y = view.centerY + (point.y - view.lat) / view.unitsPerPixel
@@ -1023,6 +1026,7 @@ local function drawOnMinimap(player)
     -- the minimap is a circle, only what's fully inside it is drawn
     local inside = player.radius - half
     local hideDone = GetSetting("hideDoneMinimap")
+    local hideOther = GetSetting("hideOtherLevels")
     local filter = regionFilter(player.mapId, player.lng, player.lat)
     -- the faded ones first, so the level the player is on is on top
     for _, faint in ipairs({ true, false }) do
@@ -1032,7 +1036,7 @@ local function drawOnMinimap(player)
                 local icon = iconOf(id)
                 for _, point in ipairs(list) do
                     local other = otherLevel(point, player.groupId, player.floorId)
-                    if other == faint and not (hideDone and done[point.id] and not stillThere[point.id])
+                    if other == faint and not (hideOther and other) and not (hideDone and done[point.id] and not stillThere[point.id])
                         and (not filter or filter[point.area]) then
                         local dx = (point.x - player.lng) / player.unitsPerPixel
                         local dy = (point.y - player.lat) / player.unitsPerPixel
