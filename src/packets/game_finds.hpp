@@ -11,8 +11,8 @@
 
 // Everything the player finds in the world, from the game's messages: chests
 // opened, oculi picked up and puzzles solved, each with its HoYoLAB point, and
-// the hints for the markers around the player. The overlay and the packet
-// recorder both read the game through a Finder, so they always do the same.
+// the hints for the markers around the player. Every kind is a Kind the Finder
+// hands each message to, so a new kind gets the same handling as the others.
 
 namespace GameFinds {
     // something the player just found
