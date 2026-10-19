@@ -53,6 +53,7 @@ static Chest oculusAt(uint32_t entity, double mapX, double mapY) {
 TEST_CASE("LabelOf knows the oculus items") {
     CHECK(LabelOf(107017) == 403);
     CHECK(LabelOf(107023) == 508);
+    CHECK(LabelOf(107026) == 554);
     CHECK(LabelOf(101218) == 0);
 }
 

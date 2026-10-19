@@ -18,8 +18,8 @@ namespace GameTraffic {
     // how long a note stays on screen
     static constexpr auto NOTICE_TIME = std::chrono::seconds(10);
     static constexpr const char* STARTED_LATE = "the game was already logged in, log out to the door and back in once";
-    static constexpr const char* NOT_MATCHED = "opened a chest it can't match to a marker, mark it yourself";
-    static constexpr const char* OCULUS_NOT_MATCHED = "picked up an oculus it can't match to a marker, mark it yourself";
+    static constexpr const char* NOT_MATCHED = "opened a chest or picked up a spincrystal it can't match to a marker, mark it yourself";
+    static constexpr const char* OCULUS_NOT_MATCHED = "picked up an oculus, agate or carp it can't match to a marker, mark it yourself";
 
     static std::thread worker;
     static std::atomic<bool> stopping = false;

@@ -200,3 +200,50 @@ TEST_CASE("Hints says probably opened only after the player was close a while") 
     hints.Moved(player, 8000, chests, markers);
     CHECK(hints.All().at(1) == Hint::StillThere);
 }
+
+TEST_CASE("Spincrystals and oculi get hints like the chests") {
+    const uint32_t SPINCRYSTAL = 70217013, COMMON = 70211002;
+    std::vector<Marker> markers = { { 1, 356, 100, 100 }, { 2, 356, 300, 100 }, { 3, 17, 500, 100 } };
+    std::vector<Chest> objects = { chestAt(SPINCRYSTAL, 102, 100), chestAt(SPINCRYSTAL, 501, 100, 2) };
+    CHECK(HintFor(markers[0], objects, markers) == Hint::StillThere);
+    CHECK(HintFor(markers[1], objects, markers) == Hint::ProbablyOpened);
+    // a spincrystal at a chest marker isn't that chest, and says nothing about it
+    CHECK(Match(objects[1], objects, markers) == 0);
+    CHECK(HintFor(markers[2], objects, markers) == Hint::ProbablyOpened);
+    // and a chest isn't a spincrystal
+    std::vector<Chest> chest = { chestAt(COMMON, 101, 100) };
+    CHECK(Match(chest[0], chest, markers) == 0);
+    CHECK(HintFor(markers[0], chest, markers) == Hint::ProbablyOpened);
+}
+
+TEST_CASE("Both Geo Sigil objects are Geo Sigils") {
+    std::vector<Marker> markers = { { 1, 128, 100, 100 }, { 2, 128, 300, 100 } };
+    std::vector<Chest> sigils = { chestAt(70210107, 101, 100), chestAt(70210108, 299, 100, 2) };
+    CHECK(Match(sigils[0], sigils, markers) == 1);
+    CHECK(Match(sigils[1], sigils, markers) == 2);
+}
+
+TEST_CASE("Tracker forgets a spincrystal once it's picked up") {
+    Tracker tracker;
+    Chest opened;
+    bool placed = false;
+    tracker.Feed(APPEARED, object(7, 70217013, 133104041, 72, 725.0f, 202.0f, 227.0f)
+        + object(8, 70211002, 133104041, 73, 735.0f, 202.0f, 227.0f), opened, placed);
+    CHECK(tracker.Chests().size() == 2);
+    // going out of reach isn't picked up
+    CHECK_FALSE(tracker.Feed(24935, number(5, 7) + number(11, 1), opened, placed));
+    CHECK(tracker.Chests().size() == 2);
+    // a chest only goes when it's opened
+    CHECK_FALSE(tracker.Feed(24935, number(5, 8) + number(11, 2), opened, placed));
+    CHECK(tracker.Chests().size() == 2);
+    CHECK_FALSE(tracker.Feed(24935, number(5, 7) + number(11, 2), opened, placed));
+    REQUIRE(tracker.Chests().size() == 1);
+    CHECK(tracker.Chests()[0].gadget == 70211002);
+
+    // picking one up comes as opened, like a chest
+    tracker.Feed(APPEARED, object(7, 70217013, 133104041, 72, 725.0f, 202.0f, 227.0f), opened, placed);
+    REQUIRE(tracker.Feed(OPENED, number(11, 72) + number(12, 133104041), opened, placed));
+    CHECK(placed);
+    CHECK(opened.gadget == 70217013);
+    CHECK(tracker.Chests().size() == 1);
+}

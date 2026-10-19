@@ -16,8 +16,8 @@ namespace GameOculi {
     static constexpr double MATCH = 20.0;
     static constexpr double MARGIN = 5.0;
 
-    // the game's oculus items and HoYoLAB's labels for them. Cryoculi aren't
-    // here, their item number isn't known yet
+    // the game's oculus items and HoYoLAB's labels for them, and the other things
+    // picked up the same way. Cryoculi aren't here, their item number isn't known yet
     static constexpr struct { uint32_t item; int label; } OCULI[] = {
         { 107001, 5 },   // Anemoculus
         { 107003, 6 },   // Geoculus
@@ -26,6 +26,9 @@ namespace GameOculi {
         { 107023, 508 }, // Hydroculus
         { 107028, 626 }, // Pyroculus
         { 107030, 694 }, // Lunoculus
+        { 107010, 141 }, // Crimson Agate
+        { 107015, 472 }, // Khvarena Inscription Fragment
+        { 107026, 554 }, // Spirit Carp
     };
 
     int LabelOf(uint32_t item) {

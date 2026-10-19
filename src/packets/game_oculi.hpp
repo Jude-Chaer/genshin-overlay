@@ -9,6 +9,7 @@
 // Oculi the player picked up. The game says "you got a Hydroculus, picked up in
 // the world" and right after that the object leaves, so the object that left is
 // the oculus, and where it was gives the oculus marker on HoYoLAB's Teyvat map.
+// Crimson Agates, Spirit Carps and Khvarena fragments are picked up the same way.
 
 namespace GameOculi {
     // the game's messages for getting an item and for an object leaving

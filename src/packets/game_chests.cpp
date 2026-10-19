@@ -1,5 +1,6 @@
 #include "game_chests.hpp"
 #include "game_packets.hpp"
+#include "game_oculi.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -12,6 +13,25 @@ namespace GameChests {
     // then buried and sealed ones, which can be any of those, then the wooden
     // and the stone pile mora chests
     static constexpr int LABELS[] = { 17, 44, 45, 46, 269, 24, 25, 69, 75, 129, 359 };
+    // Things picked up once that have their own object, so they get hints like
+    // the chests. From the game's gather table, checked against the markers in
+    // the 3.7 scene scripts and recorded traffic. Cryoculi aren't here, their object
+    // isn't known yet
+    static constexpr struct { uint32_t gadget; int label; } KINDS[] = {
+        { 70217013, 356 }, // Radiant Spincrystal
+        { 70590004, 5 },   // Anemoculus
+        { 70590021, 6 },   // Geoculus
+        { 70590041, 194 }, // Electroculus
+        { 70590063, 403 }, // Dendroculus
+        { 70590074, 508 }, // Hydroculus
+        { 70590086, 626 }, // Pyroculus
+        { 70590088, 694 }, // Lunoculus
+        { 70590084, 554 }, // Spirit Carp
+        { 70590031, 141 }, // Crimson Agate
+        { 70590042, 472 }, // Khvarena Inscription Fragment
+        { 70210107, 128 }, // Geo Sigil
+        { 70210108, 128 }, // Geo Sigil
+    };
     static constexpr int TEYVAT = 2;
     // a chest's marker is at most this far, and the next one has to be clearly further
     static constexpr double MATCH = 20.0;
@@ -38,10 +58,25 @@ namespace GameChests {
         return 0;
     }
 
+    // which of the KINDS a gadget is, 0 when it's none of them
+    static int kindOf(uint32_t gadget) {
+        for (const auto& kind : KINDS)
+            if (kind.gadget == gadget) return kind.label;
+        return 0;
+    }
+
+    static bool isKind(int label) {
+        for (const auto& kind : KINDS)
+            if (kind.label == label) return true;
+        return false;
+    }
+
     // a sealed chest that isn't a 70211 one
     static constexpr uint32_t SEALED = 70210063;
 
     static bool fits(uint32_t gadget, int label) {
+        if (kindOf(gadget) || isKind(label))
+            return kindOf(gadget) == label;
         if (moraOf(gadget))
             return moraOf(gadget) == label;
         if (label == 24 || label == 25 || label == 69 || label == 75)
@@ -50,6 +85,8 @@ namespace GameChests {
     }
 
     static bool isChest(uint32_t gadget) { return gadget / 1000 == 70211 || gadget == SEALED || moraOf(gadget); }
+    // what gets hints, the chests and the KINDS
+    static bool isKept(uint32_t gadget) { return isChest(gadget) || kindOf(gadget); }
 
     static float toFloat(uint64_t value) {
         uint32_t bits = uint32_t(value);
@@ -125,7 +162,10 @@ namespace GameChests {
 
     bool LoadMarkers(const std::filesystem::path& positions, std::vector<Marker>& out) {
         out.clear();
-        for (int label : LABELS) {
+        std::vector<int> labels(std::begin(LABELS), std::end(LABELS));
+        for (const auto& kind : KINDS)
+            if (std::find(labels.begin(), labels.end(), kind.label) == labels.end()) labels.push_back(kind.label);
+        for (int label : labels) {
             std::ifstream in(positions / (std::to_string(label) + ".json"), std::ios::binary);
             if (!in) continue;
             nlohmann::json points = nlohmann::json::parse(in, nullptr, false);
@@ -186,6 +226,9 @@ namespace GameChests {
         return best->id;
     }
 
+    // why an object left: taken or broken, the rest is going out of reach
+    static constexpr uint32_t TAKEN = 2;
+
     static uint64_t keyOf(const Chest& chest) { return uint64_t(chest.group) << 32 | chest.config; }
 
     bool Tracker::Feed(uint16_t id, std::string_view body, Chest& opened, bool& placed) {
@@ -196,7 +239,18 @@ namespace GameChests {
             // a long trip leaves a lot behind
             if (m_chests.size() > 20000) m_chests.clear();
             for (const Chest& object : objects)
-                if (isChest(object.gadget)) m_chests[keyOf(object)] = object;
+                if (isKept(object.gadget)) m_chests[keyOf(object)] = object;
+            return false;
+        }
+        uint32_t entity, reason;
+        if (id == GameOculi::LEFT && GameOculi::ReadLeft(body, entity, reason) && reason == TAKEN) {
+            // a spincrystal or an oculus picked up is gone, chests stay until opened
+            for (auto it = m_chests.begin(); it != m_chests.end(); ++it) {
+                if (it->second.entity == entity && !isChest(it->second.gadget)) {
+                    m_chests.erase(it);
+                    break;
+                }
+            }
             return false;
         }
         if (id != OPENED || !ReadOpened(body, opened))
@@ -205,6 +259,7 @@ namespace GameChests {
         placed = it != m_chests.end();
         if (placed) {
             opened = it->second;
+            // a spincrystal picked up comes as opened too
             m_chests.erase(it);
         }
         return true;
@@ -267,6 +322,8 @@ namespace GameChests {
         bool any = false;
         for (const Chest& chest : chests) {
             if (!GameChests::OnTeyvat(chest)) continue;
+            // a chest marker looks at the chests, a spincrystal one at spincrystals
+            if (isKind(marker.label) ? kindOf(chest.gadget) != marker.label : !isChest(chest.gadget)) continue;
             double x, y;
             ToMap(chest, x, y);
             if (std::hypot(marker.x - x, marker.y - y) >= MATCH) continue;

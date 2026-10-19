@@ -8,7 +8,8 @@
 // Chests the game says were opened, and their HoYoLAB points. The game sends
 // every chest near the player with where it is, so an opened one is matched to
 // the chest marker at that spot on HoYoLAB's Teyvat map, only when there's no
-// other marker or chest close enough to mix it up with.
+// other marker or chest close enough to mix it up with. Spincrystals and some
+// oculi are kept the same way, for the hints.
 
 namespace GameChests {
     // the game's messages for objects showing up near the player, and a chest opened
@@ -42,7 +43,8 @@ namespace GameChests {
     // group and config of the opened chest, false when the message has none
     extern bool ReadOpened(std::string_view body, Chest& out);
 
-    // HoYoLAB's chest markers on Teyvat, from the item files' positions folder
+    // HoYoLAB's chest markers on Teyvat, and the spincrystal and oculus ones that
+    // get hints, from the item files' positions folder
     extern bool LoadMarkers(const std::filesystem::path& positions, std::vector<Marker>& out);
     // Teyvat's groups start with 131 to 133, the Chasm underground's with 166
     // and a domain's with 220, so another world's chest isn't put on Teyvat
@@ -53,11 +55,12 @@ namespace GameChests {
     // other chests the game sent, they can sit at the marker too
     extern int64_t Match(const Chest& chest, const std::vector<Chest>& nearby, const std::vector<Marker>& markers);
 
-    // Keeps the chests the game sent, so an opened one is known by where it was.
+    // Keeps the chests the game sent, so an opened one is known by where it was,
+    // and the spincrystals and oculi until they're picked up.
     class Tracker {
     public:
         // true when the message says a chest was opened. placed is false when
-        // the game never said where that chest is
+        // the game never said where that chest is. A spincrystal comes as opened too
         bool Feed(uint16_t id, std::string_view body, Chest& opened, bool& placed);
         std::vector<Chest> Chests() const;
         // the last objects the game sent were on Teyvat

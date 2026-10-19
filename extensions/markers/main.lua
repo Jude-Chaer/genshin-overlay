@@ -280,9 +280,9 @@ local function faded(color, a)
     return color - (color & 0xFF) + math.floor((color & 0xFF) * a)
 end
 
--- What the game showed about chest markers the player came near, when the
--- player reads the game's traffic: stillThere[id] the game still has the
--- chest, probablyOpened[id] it sent no chest there. Asked about once a second.
+-- What the game showed about the chest, spincrystal and oculus markers the
+-- player came near, when the player reads the game's traffic: stillThere[id]
+-- the game still has it, probablyOpened[id] it sent nothing there. Asked about once a second.
 local stillThere, probablyOpened = {}, {}
 local hintsAt = -1
 
@@ -296,7 +296,7 @@ local function readHints()
 end
 
 -- "!" for one marked done that the game says is still there, "?" for one not
--- done that the game sent no chest for. Only with marking from the game on.
+-- done that the game sent nothing for (chests, spincrystals, oculi and so on). Only with marking from the game on.
 local function hintOf(id)
     if not sync.game.on then return nil end
     if done[id] and stillThere[id] then return "!" end
@@ -743,9 +743,9 @@ local function layoutGuide(guide, x0, y0, width, maxPicture, draw)
 
     local hint = hintOf(openGuide.id)
     if hint == "!" then
-        y = y + textBlock("The game still has this chest, it isn't opened yet.", x, y, text, HINT_COLOR, inner, draw) + px(12)
+        y = y + textBlock("The game still has this one, it isn't opened or picked up yet.", x, y, text, HINT_COLOR, inner, draw) + px(12)
     elseif hint == "?" then
-        y = y + textBlock("The game sent no chest here when you were close, so it's probably opened. Chests behind a puzzle or a quest only show up once that's done.", x, y, text, HINT_COLOR, inner, draw) + px(12)
+        y = y + textBlock("The game sent nothing here when you were close, so it's probably opened or picked up already. Things behind a puzzle or a quest only show up once that's done.", x, y, text, HINT_COLOR, inner, draw) + px(12)
     end
 
     if not guide or guide.failed then
