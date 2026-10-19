@@ -10,9 +10,9 @@
 
 namespace GameChests {
     // HoYoLAB's chest labels: common, exquisite, precious, luxurious, remarkable,
-    // then buried and sealed ones, which can be any of those, then the wooden
-    // and the stone pile mora chests
-    static constexpr int LABELS[] = { 17, 44, 45, 46, 269, 24, 25, 69, 75, 129, 359 };
+    // then buried and sealed ones, which can be any of those, then the mora
+    // chests: wooden, stone pile, Fontaine, Natlan and Nod-Krai
+    static constexpr int LABELS[] = { 17, 44, 45, 46, 269, 24, 25, 69, 75, 129, 359, 366, 596, 723 };
     // Things picked up once that have their own object, so they get hints like
     // the chests. From the game's gather table, checked against the markers in
     // the 3.7 scene scripts and recorded traffic. Cryoculi aren't here, their object
@@ -49,11 +49,16 @@ namespace GameChests {
         return 0;
     }
 
-    // which mora chest label a gadget is, 0 when it's no mora chest
+    // which mora chest label a gadget is, 0 when it's no mora chest. The region
+    // ones are the CrudeChest objects in the game's gadget table. Snezhnaya, Frost
+    // Moon and Gravel mora chests aren't here, their objects aren't known yet
     static int moraOf(uint32_t gadget) {
         switch (gadget) {
         case 70210105: return 129;
         case 70217012: case 70217014: case 70217020: case 70330342: return 359;
+        case 70217026: case 70217027: return 366;
+        case 73003003: return 596;
+        case 70217046: return 723;
         }
         return 0;
     }

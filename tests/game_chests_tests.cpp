@@ -123,6 +123,17 @@ TEST_CASE("Sealed and mora chests are chests too") {
     CHECK(Match(mora, {}, { { 2, 75, 103, 100 } }) == 0);
 }
 
+TEST_CASE("Fontaine, Natlan and Nod-Krai mora chests fit their own markers") {
+    std::vector<Marker> markers = { { 1, 366, 103, 100 }, { 2, 596, 100, 103 }, { 3, 723, 97, 100 } };
+    // each sits right on another region's marker, the label still picks its own
+    CHECK(Match(chestAt(70217026, 100, 103), {}, markers) == 1);
+    CHECK(Match(chestAt(70217027, 97, 100), {}, markers) == 1);
+    CHECK(Match(chestAt(73003003, 103, 100), {}, markers) == 2);
+    CHECK(Match(chestAt(70217046, 100, 103), {}, markers) == 3);
+    // and a mora chest doesn't fit a chest marker
+    CHECK(Match(chestAt(70217046, 100, 100), {}, { { 4, 17, 100, 100 } }) == 0);
+}
+
 TEST_CASE("Tracker knows where an opened chest was") {
     Tracker tracker;
     Chest opened;
