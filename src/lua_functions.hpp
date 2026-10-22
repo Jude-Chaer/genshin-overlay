@@ -15,6 +15,7 @@ namespace LuaFunctions {
         { "LuaFunctions::NetGet", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::NetPost", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::RegisterKeybind", { Extensions::ExtensionPermissionTypes::Keybinds } },
+        { "LuaFunctions::DeleteKeybind", {Extensions::ExtensionPermissionTypes::Keybinds }},
         { "LuaFunctions::DrawImage", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
 		{ "LuaFunctions::GDrawText", {Extensions::ExtensionPermissionTypes::DisplayOverlay}}, 
         { "LuaFunctions::ReadFile", {Extensions::ExtensionPermissionTypes::InternalReadfile}}, // External has to be checked within the function, once the paths are resolved
