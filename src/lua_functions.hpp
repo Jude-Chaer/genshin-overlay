@@ -15,6 +15,7 @@ namespace LuaFunctions {
         { "LuaFunctions::NetGet", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::NetPost", { Extensions::ExtensionPermissionTypes::NetworkAccess } },
         { "LuaFunctions::RegisterKeybind", { Extensions::ExtensionPermissionTypes::Keybinds } },
+        { "LuaFunctions::DeleteKeybind", {Extensions::ExtensionPermissionTypes::Keybinds }},
         { "LuaFunctions::DrawImage", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
 		{ "LuaFunctions::GDrawText", {Extensions::ExtensionPermissionTypes::DisplayOverlay}}, 
         { "LuaFunctions::ClickArea", {Extensions::ExtensionPermissionTypes::DisplayOverlay}},
