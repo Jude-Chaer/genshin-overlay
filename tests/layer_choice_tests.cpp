@@ -208,6 +208,49 @@ TEST_CASE("the Electro Regisvine's cave under its panel", "[layer_choice]") {
     CHECK(choice.Why() == From::Game);
 }
 
+// Where the locator put the map's middle on the shots (x is lng, y is lat),
+// from "[locate-set]" on 2026-10-23
+static constexpr double PARDIS_X = -4091.35, PARDIS_Y = 3138.43;        // 31
+static constexpr double DRAGONSPINE_X = -2852.12, DRAGONSPINE_Y = 2240.85; // 27
+
+TEST_CASE("the picker's area above ground is the one round the map's middle", "[layer_choice]") {
+    // the map opens above ground at Pardis Dhyai, the buttons show 5
+    LayerChoice choice = opened(SHOT_31);
+    CHECK(choice.Area(PARDIS_X, PARDIS_Y) == 19);
+    read(choice, "five_floors_top_lit");
+    REQUIRE(choice.Now() == Layer{ 2, 0, 0 });
+    CHECK(choice.Area(PARDIS_X, PARDIS_Y) == 19);
+
+    // away from any floors
+    CHECK(choice.Area(0.0, 0.0) == 0);
+
+    // underground the layer's own area
+    choice.Guess(SHOT_35);
+    read(choice, "five_floors_bottom_lit");
+    REQUIRE(choice.Now() == Layer{ 2, 19, 109 });
+    CHECK(choice.Area(PARDIS_X, PARDIS_Y) == 19);
+
+    // a pick holds when the map is dragged away, the picker lists what's there
+    choice.Pick({ 2, 19, 41 });
+    CHECK(choice.Area(DRAGONSPINE_X, DRAGONSPINE_Y) == 26);
+
+    // a pick above ground still lists the floors round it
+    choice.Pick({ 2, 0, 0 });
+    CHECK(choice.Area(PARDIS_X, PARDIS_Y) == 19);
+}
+
+TEST_CASE("the picker's area at the Dragonspine cave", "[layer_choice]") {
+    LayerChoice choice = opened(SHOT_30);
+    read(choice, "two_floors");
+    CHECK(choice.Area(DRAGONSPINE_X, DRAGONSPINE_Y) == 26);
+}
+
+TEST_CASE("nothing to list before SIFT found the map", "[layer_choice]") {
+    LayerChoice choice;
+    choice.SetFloors(MapScreen::floors());
+    CHECK(choice.Area(PARDIS_X, PARDIS_Y) == 0);
+}
+
 // Not part of the normal run, it gives the layers above. Set
 // MAP_SCREEN_SET to the screenshots' folder and MAP_DATA to a map_data folder,
 // then run tests.exe "[locate-set]": the locator on each shot, as the follower

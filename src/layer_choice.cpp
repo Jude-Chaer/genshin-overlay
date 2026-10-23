@@ -1,4 +1,5 @@
 #include "layer_choice.hpp"
+#include <set>
 
 void LayerChoice::Reset() {
     m_guessed = m_read = m_picked = false;
@@ -75,6 +76,39 @@ LayerChoice::From LayerChoice::Why() const {
     if (m_picked) return From::Picked;
     if (m_read) return From::Game;
     return From::Guess;
+}
+
+int LayerChoice::Area(double x, double y) const {
+    if (!m_guessed && !m_read) return 0;
+    Layer now = Now();
+    auto holds = [&](int groupId, int& floors, double& size) {
+        MapData::Box b;
+        if (!MapData::groupBox(m_floors, now.mapId, groupId, b)) return false;
+        floors = (int)MapData::groupFloors(m_floors, now.mapId, groupId).size();
+        size = (b.right - b.left) * (b.bottom - b.top);
+        return x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
+    };
+    int floors = 0;
+    double size = 0.0;
+    if (now.groupId != 0 && holds(now.groupId, floors, size)) return now.groupId;
+
+    std::set<int> groups;
+    for (const MapData::Floor& floor : m_floors) {
+        if (floor.mapId == now.mapId) groups.insert(floor.groupId);
+    }
+    int best = 0;
+    bool bestFits = false;
+    double bestSize = 0.0;
+    for (int id : groups) {
+        if (!holds(id, floors, size)) continue;
+        bool fits = m_buttons.seen && floors + 1 == m_buttons.count;
+        if (best == 0 || (fits && !bestFits) || (fits == bestFits && size < bestSize)) {
+            best = id;
+            bestFits = fits;
+            bestSize = size;
+        }
+    }
+    return best;
 }
 
 const char* LayerChoice::Name(From from) {

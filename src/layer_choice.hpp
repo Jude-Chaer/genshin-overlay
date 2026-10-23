@@ -39,6 +39,12 @@ public:
 
     Layer Now() const;
     From Why() const;
+    // The underground area whose floors the overlay's picker lists, 0 for
+    // none: the layer's own while its floors' box holds x, y (map units), or
+    // else the smallest one that does. With the buttons read, one with as
+    // many floors as they show goes first. Above ground the buttons don't
+    // name the area, the map's place does.
+    int Area(double x, double y) const;
     // "picked", "game" or "guess"
     static const char* Name(From from);
 
