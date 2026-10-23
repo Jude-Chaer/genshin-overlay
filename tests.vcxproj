@@ -87,6 +87,7 @@
   <ItemGroup>
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\extensions.cpp" />
+    <ClCompile Include="src\game_ui.cpp" />
     <ClCompile Include="src\helpers.cpp" />
     <ClCompile Include="src\keybindings.cpp" />
     <ClCompile Include="src\locator\map_locator.cpp" />
@@ -101,6 +102,7 @@
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\locator_tests.cpp" />
@@ -114,6 +116,7 @@
   <ItemGroup>
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\extensions.hpp" />
+    <ClInclude Include="src\game_ui.hpp" />
     <ClInclude Include="src\helpers.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
     <ClInclude Include="src\locator\map_locator.hpp" />
@@ -131,6 +134,7 @@
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
     <ClInclude Include="tests\test_map.hpp" />
+    <ClInclude Include="tests\map_screen.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
