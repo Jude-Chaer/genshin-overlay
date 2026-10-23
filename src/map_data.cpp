@@ -3,6 +3,7 @@
 #include "locator/map_locator.hpp"
 #include <windows.h>
 #include <bcrypt.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <ctime>
@@ -72,6 +73,32 @@ namespace MapData {
 		if (!ec) return true;
 		fs::remove(tmp, ec);
 		return false;
+	}
+
+	Box bounds(const Floor& floor) {
+		return { (std::min)(floor.left, floor.right), (std::min)(floor.top, floor.bottom),
+			(std::max)(floor.left, floor.right), (std::max)(floor.top, floor.bottom) };
+	}
+
+	std::vector<int> groupFloors(const std::vector<Floor>& floors, int mapId, int groupId, Box* round) {
+		std::vector<int> out;
+		Box all = { 1e300, 1e300, -1e300, -1e300 };
+		for (const Floor& floor : floors) {
+			if (floor.mapId != mapId || floor.groupId != groupId) continue;
+			out.push_back(floor.floorId);
+			Box box = bounds(floor);
+			all = { (std::min)(all.left, box.left), (std::min)(all.top, box.top),
+				(std::max)(all.right, box.right), (std::max)(all.bottom, box.bottom) };
+		}
+		if (round) *round = all;
+		return out;
+	}
+
+	bool groupInside(const std::vector<Floor>& floors, int mapId, int inner, int outer) {
+		Box in, out;
+		if (groupFloors(floors, mapId, inner, &in).empty() || groupFloors(floors, mapId, outer, &out).empty()) return false;
+		double x = (in.left + in.right) / 2, y = (in.top + in.bottom) / 2;
+		return x >= out.left && x <= out.right && y >= out.top && y <= out.bottom;
 	}
 
 	Manifest readManifest(const fs::path& folder) {

@@ -53,6 +53,18 @@ namespace MapData {
         std::string url;
     };
 
+    // The floor's box with left above right and top above bottom, HoYoLAB
+    // doesn't always give them that way round.
+    struct Box {
+        double left = 0.0, top = 0.0, right = 0.0, bottom = 0.0;
+    };
+    extern Box bounds(const Floor& floor);
+    // A group's floors in HoYoLAB's order, the order of the game's layer
+    // buttons from the second one down. round gets the box round all of them.
+    extern std::vector<int> groupFloors(const std::vector<Floor>& floors, int mapId, int groupId, Box* round = nullptr);
+    // If the middle of one group's floors is inside the box round another's
+    extern bool groupInside(const std::vector<Floor>& floors, int mapId, int inner, int outer);
+
     struct Manifest {
         std::map<int, Grid> grids;
         std::vector<Floor> floors;
