@@ -195,6 +195,33 @@ TEST_CASE("the game's UI boxes follow the panel", "[game_ui]") {
     CHECK(Boxes(game, { Seen::Unsure, PanelKind::None, -1 }).size() == 6);
 }
 
+TEST_CASE("the floor picker's spot left of the layer switcher", "[game_ui]") {
+    const RECT game = { 100, 50, 100 + 3840, 50 + 2160 };
+    auto at4k = [](const char* name) {
+        cv::Mat big;
+        cv::resize(screen(name), big, cv::Size(3840, 2160), 0, 0, cv::INTER_CUBIC);
+        return ReadPanel(big);
+    };
+    // the switcher's box starts 130.5 from the right, the picker 10 left of
+    // that, half way down at 564: times 1.92
+    POINT at;
+    REQUIRE(BesideSwitcher(game, at4k("no_panel"), at));
+    CHECK(at.x == game.right - 251 - 19);
+    CHECK(at.y == game.top + 1083);
+
+    // left of the panel, where the switcher moves: its box starts 113.5
+    // from it
+    Panel info = at4k("info_panel");
+    REQUIRE(info.kind == PanelKind::Info);
+    REQUIRE(BesideSwitcher(game, info, at));
+    CHECK(at.x == game.left + info.left - 218 - 19);
+    CHECK(at.y == game.top + 1083);
+
+    // the region list hides the switcher, and not sure there's a panel
+    CHECK_FALSE(BesideSwitcher(game, at4k("region_list"), at));
+    CHECK_FALSE(BesideSwitcher(game, { Seen::Unsure, PanelKind::None, -1 }, at));
+}
+
 TEST_CASE("the lit button is HoYoLAB's floor in its order", "[game_ui]") {
     int group = -1, floor = -1;
     // Pardis Dhyai, the game showed 5 buttons

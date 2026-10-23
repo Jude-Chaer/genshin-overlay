@@ -304,6 +304,17 @@ namespace GameUi {
         return boxes;
     }
 
+    // the gap between the picker and the switcher's box
+    static constexpr int BESIDE_GAP = 10;
+
+    bool BesideSwitcher(const RECT& game, const Panel& panel, POINT& out) {
+        if (panel.seen == Seen::Unsure || hidesSwitcher(panel)) return false;
+        double s = (game.bottom - game.top) / HEIGHT;
+        LONG boxLeft = switcherBox(game, panel.left >= 0 ? panel : Panel{}).left;
+        out = { boxLeft - rounded(BESIDE_GAP * s), game.top + rounded(MIDDLE * s) };
+        return true;
+    }
+
     bool SwitcherFloor(const Switcher& read, const std::vector<MapData::Floor>& floors, int mapId,
         int area, int& groupId, int& floorId) {
         if (read.seen != Seen::Read || read.count < 2 || read.lit < 0 || read.lit >= read.count) return false;
