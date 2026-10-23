@@ -327,8 +327,8 @@ namespace LuaFunctions {
 	// after it stops until it's lined up exactly. groupId and floorId are the
 	// layer shown, layerFrom says who chose it: "game" (its layer buttons),
 	// "picked" (the overlay's floor picker) or "guess" (from the map's picture). ui is the game's
-	// own UI as boxes to keep off, panelLeft where a panel on the right starts,
-	// only while one is open.
+	// own UI as boxes to keep off, and the overlay's floor picker while it's
+	// there. panelLeft is where a panel on the right starts, only while one is open.
 	sol::object GetMapView(sol::this_state state) {
 		MapTracking::MapView view = MapTracking::GetView();
 		if (!view.visible) return sol::lua_nil;
@@ -345,13 +345,16 @@ namespace LuaFunctions {
 
 		sol::state_view lua(state);
 		sol::table ui = lua.create_table();
-		for (const RECT& box : GameUi::Boxes(game, view.panel)) {
+		auto addBox = [&](const RECT& box) {
 			ui.add(lua.create_table_with(
 				"left", (float)box.left,
 				"top", (float)box.top,
 				"right", (float)box.right,
 				"bottom", (float)box.bottom));
-		}
+		};
+		for (const RECT& box : GameUi::Boxes(game, view.panel)) addBox(box);
+		RECT picker;
+		if (Overlay::PickerBox(picker)) addBox(picker);
 		sol::table result = lua.create_table_with(
 			"mapId", view.result.mapId,
 			"groupId", view.result.groupId,
