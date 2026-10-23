@@ -478,6 +478,9 @@ namespace Capture {
         cv::Mat* out;
         int shrink = 0;
         int atLeast = 0;
+        // more parts of the same frame, in colour
+        const std::vector<RECT>* colour = nullptr;
+        std::vector<cv::Mat>* colourOut = nullptr;
     };
 
     // opens the capture of the game if it isn't. With gameMutex held.
@@ -514,10 +517,18 @@ namespace Capture {
             // right after opening there's no frame yet, the next grab has one
             if (!latest) return false;
             if (also && also->shrink > 0) {
-                return copyShrunk(game, rects, also->shrink, also->atLeast, also->whole, also->maxWidth, out, *also->out);
+                if (!copyShrunk(game, rects, also->shrink, also->atLeast, also->whole, also->maxWidth, out, *also->out)) return false;
             }
-            if (!copyOut(game, rects, conversion, out)) return false;
-            return !also || copySmall(game, also->whole, also->maxWidth, *also->out);
+            else {
+                if (!copyOut(game, rects, conversion, out)) return false;
+                if (also && !copySmall(game, also->whole, also->maxWidth, *also->out)) return false;
+            }
+            if (also && also->colourOut) {
+                also->colourOut->clear();
+                // a part off the window gives none, the gray ones are still good
+                if (also->colour && !also->colour->empty() && !copyOut(game, *also->colour, cv::COLOR_BGRA2BGR, *also->colourOut)) also->colourOut->clear();
+            }
+            return true;
         }
         catch (...) {
             // the window closed or the device was lost, opened again next time
@@ -597,8 +608,9 @@ namespace Capture {
     }
 
     bool grabGameGray(HWND game, const std::vector<RECT>& rects, std::vector<cv::Mat>& out, Frame& frame,
-        const RECT& whole, int maxWidth, cv::Mat& shrunk, int shrink, int atLeast) {
-        Small both = { whole, maxWidth, &shrunk, shrink, atLeast };
+        const RECT& whole, int maxWidth, cv::Mat& shrunk, int shrink, int atLeast,
+        const std::vector<RECT>* colour, std::vector<cv::Mat>* colourOut) {
+        Small both = { whole, maxWidth, &shrunk, shrink, atLeast, colour, colourOut };
         return grab(game, rects, cv::COLOR_BGRA2GRAY, out, &frame, true, &both);
     }
 
