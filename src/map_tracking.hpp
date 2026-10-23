@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <string>
 #include "locator/map_locator.hpp"
+#include "game_ui.hpp"
+#include "layer_choice.hpp"
 
 namespace MapTracking {
     enum class Status {
@@ -20,6 +22,10 @@ namespace MapTracking {
         double secondsSinceUpdate = 0.0;
         // moving, or stopped but SIFT didn't say exactly where yet
         bool moving = false;
+        // a panel open on the right, its left in the game's pixels from gameRect's left
+        GameUi::Panel panel;
+        // who said the result's layer
+        LayerChoice::From layerFrom = LayerChoice::From::Guess;
     };
 
     struct Diamond

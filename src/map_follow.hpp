@@ -40,7 +40,8 @@ namespace MapFollow {
     // Grabs the patches and the whole game shrunk (wide) from one frame. Game
     // is its client rect on screen. False if the game drew no frame after
     // frame, see Capture::grabGameGray.
-    extern bool grab(HWND window, const RECT& game, Patches& out, cv::Mat& wide, Capture::Frame& frame);
+    extern bool grab(HWND window, const RECT& game, Patches& out, cv::Mat& wide, Capture::Frame& frame,
+        const std::vector<RECT>* colour = nullptr, std::vector<cv::Mat>* colourOut = nullptr);
     // the same two, cut out of a BGR grab of the whole game
     extern Patches cut(const cv::Mat& bgr, const RECT& game);
     extern cv::Mat cutWide(const cv::Mat& bgr);
@@ -76,6 +77,9 @@ namespace MapFollow {
         // The tile check says where the map was on that frame. Only part of
         // the way is taken, see CHECK_PART.
         void Checked(int id, const MapLocator::Result& result);
+        // Moves the view to that layer, also the views it keeps from before,
+        // so a late answer for an older frame doesn't bring the old one back.
+        void SetLayer(int groupId, int floorId);
 
         // SIFT found the map and the compare has followed it since
         bool Visible() const { return m_anchored; }
