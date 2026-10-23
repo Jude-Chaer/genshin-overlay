@@ -75,6 +75,13 @@ namespace MapTracking {
     static std::condition_variable answered;
     // HoYoLAB's floors, once the map data is loaded
     static std::vector<MapData::Floor> loadedFloors;
+    // a click on the overlay's floor picker, for the follow thread
+    struct PickerClick {
+        bool waiting = false, toAuto = false;
+        int opening = 0;
+        LayerChoice::Layer layer;
+    };
+    static PickerClick pickerClick;
 
     // follow thread only
     static MapFollow::Follower follower;
@@ -197,6 +204,9 @@ namespace MapTracking {
         view.gameRect = rect;
         view.panel = panel;
         view.layerFrom = layers.Why();
+        view.pickerGroup = view.visible ? layers.Area(view.result.lng, view.result.lat) : 0;
+        view.opening = session;
+        view.pickerFloors = view.pickerGroup ? MapData::groupFloors(loadedFloors, view.result.mapId, view.pickerGroup) : std::vector<int>{};
         lastUpdate = now;
         answers++;
         answered.notify_all();
@@ -245,11 +255,19 @@ namespace MapTracking {
             // window is new to it.
             if (!layers.HasFloors()) layers.SetFloors(loadedFloors);
         }
+        PickerClick click = pickerClick;
+        pickerClick = {};
         bool canSend = !busy && !frameWaiting;
         bool gotMatch = matchDone;
         MapLocator::Result match = matched;
         matchDone = false;
         lock.unlock();
+
+        if (click.waiting && click.opening == session) {
+            if (click.toAuto) layers.Auto();
+            else layers.Pick(click.layer);
+            useLayer();
+        }
 
         double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
@@ -560,6 +578,16 @@ namespace MapTracking {
         }
         viewGiven = copy.visible;
         return copy;
+    }
+
+    void PickLayer(int opening, const LayerChoice::Layer& layer) {
+        std::lock_guard<std::mutex> lock(mutex);
+        pickerClick = { true, false, opening, layer };
+    }
+
+    void PickAuto(int opening) {
+        std::lock_guard<std::mutex> lock(mutex);
+        pickerClick = { true, true, opening, {} };
     }
 
     MapView LastView() {

@@ -26,6 +26,12 @@ namespace MapTracking {
         GameUi::Panel panel;
         // who said the result's layer
         LayerChoice::From layerFrom = LayerChoice::From::Guess;
+        // The floor picker's area and its floors from the top, in the order
+        // of the game's buttons. 0 and empty where there are none.
+        int pickerGroup = 0;
+        std::vector<int> pickerFloors;
+        // goes up every time the map opens, a picker click names the one it was made on
+        int opening = 0;
     };
 
     struct Diamond
@@ -52,6 +58,12 @@ namespace MapTracking {
     extern std::string GetDownloadStage(int& percent);
     // where the map is when what's drawn now shows up
     extern MapView GetView();
+    // The overlay's floor picker: a floor of the map shown (group 0 is above
+    // ground), or Auto to go back to the game's buttons. opening is the view's
+    // the click was made on, the follow thread takes it on its next step only
+    // if the map is still open from then.
+    extern void PickLayer(int opening, const LayerChoice::Layer& layer);
+    extern void PickAuto(int opening);
     // The big map's view as it was last found, also after it closed. Its
     // visible says nothing here.
     extern MapView LastView();
