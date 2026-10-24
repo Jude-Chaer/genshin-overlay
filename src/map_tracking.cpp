@@ -10,8 +10,6 @@
 #include <condition_variable>
 #include <dwmapi.h>
 #include <iostream>
-#include <iomanip>
-#include <sstream>
 #include <mutex>
 #include <thread>
 #include <opencv2/imgproc.hpp>
@@ -89,9 +87,6 @@ namespace MapTracking {
     static LayerChoice layers;
     static GameUi::Panel panel;
     static std::chrono::steady_clock::time_point switcherReadAt;
-    // SIFT's last layer, and what the console last said about the layer
-    static LayerChoice::Layer siftSaid;
-    static std::string layerSaid;
     // The frame SIFT was given. Session goes up with every reset, a result
     // from before the reset is dropped.
     static int sentId = 0;
@@ -217,23 +212,6 @@ namespace MapTracking {
         }
     }
 
-    // Prints the layer buttons' read and the layer chosen whenever either
-    // changes.
-    static void sayLayer(const GameUi::Switcher& read, const MapLocator::Result& at, double seconds) {
-        LayerChoice::Layer layer = layers.Now();
-        std::ostringstream line;
-        line << "Layer buttons: ";
-        if (read.seen == GameUi::Seen::Read) line << read.count << ", lit " << read.lit;
-        else line << (read.seen == GameUi::Seen::None ? "none" : "unsure");
-        line << "  ->  group " << layer.groupId << " floor " << layer.floorId << " (" << LayerChoice::Name(layers.Why()) << ")";
-        if (line.str() == layerSaid) return;
-        layerSaid = line.str();
-        std::ostringstream rest;
-        rest << std::fixed << std::setprecision(2) << "  at map " << at.mapId << " " << at.lng << ", " << at.lat
-            << "  SIFT said group " << siftSaid.groupId << " floor " << siftSaid.floorId << "  " << seconds;
-        std::cout << layerSaid << rest.str() << std::endl;
-    }
-
     // The parts of the game's frame the panel and, when it's time, the
     // switcher are read from. In the frame's pixels and on screen.
     static std::vector<cv::Rect> uiParts(const RECT& rect, bool withSwitcher, std::vector<RECT>& onScreen) {
@@ -263,10 +241,10 @@ namespace MapTracking {
             layers.Reset();
             panel = {};
             switcherReadAt = {};
-            siftSaid = {};
-            layerSaid.clear();
+            // Loaded before the first step, which always resets: the game
+            // window is new to it.
+            if (!layers.HasFloors()) layers.SetFloors(loadedFloors);
         }
-        if (!layers.HasFloors()) layers.SetFloors(loadedFloors);
         bool canSend = !busy && !frameWaiting;
         bool gotMatch = matchDone;
         MapLocator::Result match = matched;
@@ -275,8 +253,7 @@ namespace MapTracking {
 
         double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
-            siftSaid = { match.mapId, match.groupId, match.floorId };
-            layers.Guess(siftSaid);
+            layers.Guess({ match.mapId, match.groupId, match.floorId });
             LayerChoice::Layer layer = layers.Now();
             if (layer.mapId == match.mapId) {
                 match.groupId = layer.groupId;
@@ -338,7 +315,6 @@ namespace MapTracking {
                     GameUi::Switcher read = GameUi::ReadSwitcher(picture, panel);
                     layers.Read(read, at.mapId);
                     useLayer();
-                    sayLayer(read, at, seconds);
                 }
             }
             // loosely it's hidden while it moves, nothing to line up

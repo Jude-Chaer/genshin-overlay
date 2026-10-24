@@ -27,11 +27,20 @@ namespace GameUi {
         return picture;
     }
 
+    // An x in 2000x1125 units, kept from the right edge, in the pixels of a
+    // picture width wide at scale s. And back.
+    static double toPixels(double width, double s, double x) {
+        return width - (WIDTH - x) * s;
+    }
+    static double toUnits(double width, double s, double x) {
+        return WIDTH - (width - x) / s;
+    }
+
     // Where a part given in 2000x1125 units is in a picture that big
     static cv::Rect place(cv::Size size, double x0, double y0, double x1, double y1) {
         double s = size.height / HEIGHT;
         int w = (int)std::lround(x1 - x0), h = (int)std::lround(y1 - y0);
-        return { (int)std::floor(size.width - (WIDTH - x0) * s), (int)std::floor(y0 * s),
+        return { (int)std::floor(toPixels(size.width, s, x0)), (int)std::floor(y0 * s),
             (int)std::lround(w * s), (int)std::lround(h * s) };
     }
 
@@ -75,8 +84,7 @@ namespace GameUi {
         double off;
         bool hidesSwitcher;
     };
-    static constexpr int PANEL_LOOKS = 2;
-    static const PanelLook PANELS[PANEL_LOOKS] = {
+    static const PanelLook PANELS[] = {
         { PanelKind::RegionList, 1338, { 62, 50, 42 }, 15, true },
         { PanelKind::Info, 1488, { 205, 216, 221 }, 30, false },
     };
@@ -89,6 +97,11 @@ namespace GameUi {
     // Share of rows in the panel's colour. An info panel with a picture on top
     // still fills 0.8, the map alone stays under 0.17.
     static constexpr double OPEN = 0.6, SHUT = 0.3;
+
+    // where that panel starts in a picture that big
+    static int panelLeft(cv::Size size, const PanelLook& look) {
+        return (int)std::lround(toPixels(size.width, size.height / HEIGHT, look.edge));
+    }
 
     std::vector<cv::Rect> PanelParts(cv::Size size) {
         std::vector<cv::Rect> parts;
@@ -125,8 +138,7 @@ namespace GameUi {
         }
         if (!best || bestShare <= SHUT) return none;
         if (bestShare < OPEN) return { Seen::Unsure, PanelKind::None, -1 };
-        double s = frame.size.height / HEIGHT;
-        return { Seen::Read, best->kind, (int)std::lround(frame.size.width - (WIDTH - best->edge) * s) };
+        return { Seen::Read, best->kind, panelLeft(frame.size, *best) };
     }
 
     // The switcher is a column of round buttons 63.7 apart, kept in the
@@ -138,10 +150,13 @@ namespace GameUi {
     static constexpr double AREA_HALF = 40.0, AREA_TOP = 230.0, AREA_BOTTOM = 900.0;
     // the box over a button's icon
     static constexpr int ICON_HALF_WIDTH = 14, ICON_HALF_HEIGHT = 10;
-    // An icon is about 210 pixels of white, a lit floor's is all cyan. With
+    // An icon's pixels have blue and green over BRIGHT. White ones have blue
+    // about as high as red, cyan ones more than CYAN over it.
+    static constexpr int BRIGHT = 150, CYAN = 80;
+    // An icon is about 210 of those pixels, a lit floor's all cyan. With
     // nothing lit underground, a cyan ring about 68 wide goes round the top
     // button. The mouse puts a thinner ring round a button, outside the icon.
-    static constexpr int ICON = 80, RING = 150;
+    static constexpr int ICON_PIXELS = 80, RING_PIXELS = 150;
     static constexpr int RING_OUT = 36, RING_IN = 24;
     // buttons looked for each way from the middle
     static constexpr int MOST = 5;
@@ -158,9 +173,9 @@ namespace GameUi {
             const cv::Vec3b* p = area.ptr<cv::Vec3b>(row);
             for (int col = box.x; col < box.x + box.width; col++) {
                 int b = p[col][0], g = p[col][1], r = p[col][2];
-                if (b <= 150 || g <= 150) continue;
+                if (b <= BRIGHT || g <= BRIGHT) continue;
                 out.icon++;
-                if (b - r > 80) out.cyan++;
+                if (b - r > CYAN) out.cyan++;
             }
         }
         return out;
@@ -175,8 +190,7 @@ namespace GameUi {
 
     // the switcher's middle in 2000x1125 units, with that panel open
     static double switcherMiddle(cv::Size size, const Panel& panel) {
-        double s = size.height / HEIGHT;
-        return panel.seen == Seen::Read ? WIDTH - (size.width - panel.left) / s - FROM_PANEL : WIDTH - FROM_RIGHT;
+        return panel.seen == Seen::Read ? toUnits(size.width, size.height / HEIGHT, panel.left) - FROM_PANEL : WIDTH - FROM_RIGHT;
     }
 
     static cv::Rect switcherArea(cv::Size size, const Panel& panel) {
@@ -187,10 +201,9 @@ namespace GameUi {
     // where it is with no panel, and left of each panel that doesn't hide it
     std::vector<cv::Rect> SwitcherParts(cv::Size size) {
         std::vector<cv::Rect> parts = { around(size, switcherArea(size, {}), 2) };
-        double s = size.height / HEIGHT;
         for (const PanelLook& look : PANELS) {
             if (look.hidesSwitcher) continue;
-            Panel open = { Seen::Read, look.kind, (int)std::lround(size.width - (WIDTH - look.edge) * s) };
+            Panel open = { Seen::Read, look.kind, panelLeft(size, look) };
             parts.push_back(around(size, switcherArea(size, open), 2));
         }
         return parts;
@@ -207,7 +220,7 @@ namespace GameUi {
         cv::Mat area = cut(frame, left, AREA_TOP, left + 2 * AREA_HALF, AREA_BOTTOM);
         double x = middleX - left;
         auto at = [&](double steps) { return MIDDLE - AREA_TOP + steps * STEP; };
-        auto icon = [&](double steps) { return spot(area, x, at(steps), ICON_HALF_WIDTH, ICON_HALF_HEIGHT).icon >= ICON; };
+        auto icon = [&](double steps) { return spot(area, x, at(steps), ICON_HALF_WIDTH, ICON_HALF_HEIGHT).icon >= ICON_PIXELS; };
 
         // An odd count has a button on the middle, an even one half a step
         // off. Buttons count only in pairs round the middle, so a marker just
@@ -227,38 +240,37 @@ namespace GameUi {
         int lit = -1;
         for (int i = 1; i < count; i++) {
             Spot here = spot(area, x, at(button(i)), ICON_HALF_WIDTH, ICON_HALF_HEIGHT);
-            if (here.cyan < ICON || here.cyan * 2 < here.icon) continue;
+            if (here.cyan < ICON_PIXELS || here.cyan * 2 < here.icon) continue;
             if (lit >= 0) return { Seen::Unsure, count, -1 };
             lit = i;
         }
         if (lit < 0) {
             double top = at(button(0));
             int ring = spot(area, x, top, RING_OUT, RING_OUT).cyan - spot(area, x, top, RING_IN, RING_IN).cyan;
-            if (ring < RING) return { Seen::Unsure, count, -1 };
+            if (ring < RING_PIXELS) return { Seen::Unsure, count, -1 };
             lit = 0;
         }
         return { Seen::Read, count, lit };
     }
 
     struct Box {
-        int x0, y0, x1, y1;
+        double x0, y0, x1, y1;
         bool right;
     };
 
     // with no panel open
     static constexpr Box ZOOM = { 0, 430, 90, 690, false };
-    static constexpr int SWITCHER_TOP = 280, SWITCHER_BOTTOM = 845;
     static constexpr Box MAP_UI[] = {
         { 0, 0, 370, 440, false },        // event banner and list
         ZOOM,                             // zoom slider
         { 0, 1015, 100, 1115, false },    // gear
         { 1030, 15, 2000, 85, true },     // resource bar
         { 1530, 1015, 2000, 1125, true }, // region name
-        { 1870, SWITCHER_TOP, 1970, SWITCHER_BOTTOM, true }, // layer switcher, as tall as with 7 floors
     };
-    // With a panel open only the zoom slider stays, and the layer switcher
-    // moves to the panel's left side.
-    static constexpr int SWITCHER_FROM = 100, SWITCHER_TO = 20;
+    // The layer switcher's box round its middle, as tall as with 7 floors. It
+    // moves with a panel like the switcher does. With a panel open only the
+    // zoom slider stays besides it.
+    static constexpr double SWITCHER_HALF_WIDTH = 50.0, SWITCHER_HALF_HEIGHT = 282.0;
 
     static LONG rounded(double v) {
         return (LONG)std::lround(v);
@@ -266,9 +278,16 @@ namespace GameUi {
 
     static RECT toScreen(const Box& box, const RECT& game) {
         double width = game.right - game.left, s = (game.bottom - game.top) / HEIGHT;
-        double x0 = box.right ? width - (WIDTH - box.x0) * s : box.x0 * s;
-        double x1 = box.right ? width - (WIDTH - box.x1) * s : box.x1 * s;
+        double x0 = box.right ? toPixels(width, s, box.x0) : box.x0 * s;
+        double x1 = box.right ? toPixels(width, s, box.x1) : box.x1 * s;
         return { game.left + rounded(x0), game.top + rounded(box.y0 * s), game.left + rounded(x1), game.top + rounded(box.y1 * s) };
+    }
+
+    static RECT switcherBox(const RECT& game, const Panel& panel) {
+        double middle = switcherMiddle(cv::Size(game.right - game.left, game.bottom - game.top), panel);
+        Box box = { middle - SWITCHER_HALF_WIDTH, MIDDLE - SWITCHER_HALF_HEIGHT,
+            middle + SWITCHER_HALF_WIDTH, MIDDLE + SWITCHER_HALF_HEIGHT, true };
+        return toScreen(box, game);
     }
 
     std::vector<RECT> Boxes(const RECT& game, const Panel& panel) {
@@ -276,16 +295,12 @@ namespace GameUi {
         // not sure there's one: all the boxes, they're generous anyway
         if (panel.seen != Seen::Read || panel.left < 0) {
             for (const Box& box : MAP_UI) boxes.push_back(toScreen(box, game));
+            boxes.push_back(switcherBox(game, {}));
             return boxes;
         }
-        double s = (game.bottom - game.top) / HEIGHT;
-        LONG left = game.left + panel.left;
         boxes.push_back(toScreen(ZOOM, game));
-        if (!hidesSwitcher(panel)) {
-            boxes.push_back({ left - rounded(SWITCHER_FROM * s), game.top + rounded(SWITCHER_TOP * s),
-                left - rounded(SWITCHER_TO * s), game.top + rounded(SWITCHER_BOTTOM * s) });
-        }
-        boxes.push_back({ left, game.top, game.right, game.bottom });
+        if (!hidesSwitcher(panel)) boxes.push_back(switcherBox(game, panel));
+        boxes.push_back({ game.left + panel.left, game.top, game.right, game.bottom });
         return boxes;
     }
 

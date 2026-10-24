@@ -169,13 +169,18 @@ TEST_CASE("the game's UI boxes follow the panel", "[game_ui]") {
     CHECK(none[4].top == 50 + 1949);
     CHECK(none[4].right == game.right);
     CHECK(none[4].bottom == game.bottom);
+    // the switcher, 50 each side of its middle 80.5 from the right edge:
+    // 130.5 and 30.5 from it, times 1.92
+    CHECK(none[5].left == game.right - 251);
+    CHECK(none[5].right == game.right - 59);
 
     Panel info = at4k("info_panel");
     REQUIRE(info.kind == PanelKind::Info);
     std::vector<RECT> withInfo = Boxes(game, info);
     REQUIRE(withInfo.size() == 3);
-    // the switcher left of the panel, then the panel itself
-    CHECK(withInfo[1].right == game.left + info.left - 38);
+    // the switcher left of the panel, its middle 63.5 from it: its box ends
+    // 13.5 from it, times 1.92. Then the panel itself.
+    CHECK(withInfo[1].right == game.left + info.left - 26);
     CHECK(withInfo[2].left == game.left + info.left);
     CHECK(withInfo[2].right == game.right);
 
