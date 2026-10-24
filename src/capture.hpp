@@ -24,9 +24,11 @@ namespace Capture {
     // maxWidth wide. The first shrink rects are halved on the GPU too, as often
     // as they stay at least atLeast pixels a side.
     // False if the game drew nothing since frame. Otherwise frame becomes the
-    // one that was grabbed.
+    // one that was grabbed. colour rects, if given, come out of the same frame
+    // in colour as BGR, none if one of them is off the window.
     extern bool grabGameGray(HWND game, const std::vector<RECT>& rects, std::vector<cv::Mat>& out, Frame& frame,
-        const RECT& whole, int maxWidth, cv::Mat& shrunk, int shrink = 0, int atLeast = 0);
+        const RECT& whole, int maxWidth, cv::Mat& shrunk, int shrink = 0, int atLeast = 0,
+        const std::vector<RECT>* colour = nullptr, std::vector<cv::Mat>* colourOut = nullptr);
     // Light is for while the map is closed and only the zoom bar is read:
     // Windows hands over a frame every 50 ms at most and no copy of the game
     // is kept. The capture starts out light.

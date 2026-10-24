@@ -6,6 +6,7 @@
 #include "helpers.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
+#include "game_ui.hpp"
 #include "minimap.hpp"
 #include "stats.hpp"
 #include "settings.hpp"
@@ -158,8 +159,24 @@ namespace Overlay {
     // The window covers the whole screen, so without this an open menu would swallow
     // every click. WantCaptureMouse is ImGui saying the cursor is over one of its windows.
     static bool mouseCaptured = false;
+    // where the floor picker is drawn this frame, overlay pixels, empty with none
+    static RECT pickerBox = {};
+    static bool cursorOnPicker() {
+        ImVec2 at = Overlay::IO->MousePos;
+        return at.x >= pickerBox.left && at.x < pickerBox.right && at.y >= pickerBox.top && at.y < pickerBox.bottom;
+    }
+
+    bool PickerBox(RECT& out) {
+        if (IsRectEmpty(&pickerBox)) return false;
+        out = pickerBox;
+        return true;
+    }
+
+    // The picker takes the mouse with the menu closed too, only while the
+    // cursor is over it. Windows only sees the change once the frame is
+    // done, so a click right as the cursor gets there can still go to the game.
     static void updateClickThrough() {
-        bool capture = Overlay::menuOpen && Overlay::IO->WantCaptureMouse;
+        bool capture = (Overlay::menuOpen && Overlay::IO->WantCaptureMouse) || cursorOnPicker();
         if (capture == mouseCaptured) return;
         mouseCaptured = capture;
         glfwSetWindowAttrib(Overlay::Window, GLFW_MOUSE_PASSTHROUGH, capture ? GLFW_FALSE : GLFW_TRUE);
@@ -210,6 +227,127 @@ namespace Overlay {
         ImGui::Text("Center: %.0f, %.0f", r.lng, r.lat);
         ImGui::Text("Zoom: %.2f units/px  (%d inliers)", r.unitsPerPixel, r.inliers);
         ImGui::TextDisabled("updated %.1f s ago", view.secondsSinceUpdate);
+    }
+
+    // The overlay's own floor picker, for when the floor read off the game's
+    // layer buttons is wrong. A chip left of the game's buttons shows the
+    // floor as a small row of boxes, lit like the buttons, and who chose it.
+    // A click opens a column of boxes laid out like the game's buttons, and
+    // Auto. A pick holds until the map closes, Auto, or a click on the game's
+    // own buttons (LayerChoice).
+    static bool pickerOpen = false;
+    static double pickerLeftAt = 0.0;
+    // how long the cursor can be off the open list before it closes
+    static constexpr double PICKER_LEAVE = 0.4;
+    static const ImU32 PICKER_CYAN = IM_COL32(110, 225, 245, 255);
+
+    // The open list closes once the cursor has been off it PICKER_LEAVE.
+    // Not on screen counts as off.
+    static void pickerCursor(bool onIt) {
+        double now = glfwGetTime();
+        if (!pickerOpen || onIt) pickerLeftAt = now;
+        else if (now - pickerLeftAt > PICKER_LEAVE) pickerOpen = false;
+    }
+
+    // a box like one of the game's layer buttons, lit or not
+    static void pickerButton(ImDrawList* draw, ImVec2 min, float size, bool lit, bool hovered) {
+        ImVec2 max(min.x + size, min.y + size);
+        float round = size * 0.2f;
+        if (lit) draw->AddRectFilled(min, max, PICKER_CYAN, round);
+        else if (hovered) draw->AddRectFilled(min, max, IM_COL32(255, 255, 255, 60), round);
+        draw->AddRect(min, max, lit ? PICKER_CYAN : IM_COL32(235, 235, 235, 255), round, 0, (std::max)(1.0f, size * 0.1f));
+    }
+
+    static void pickerArrow(ImDrawList* draw, float x, float y, float half, bool up, ImU32 colour) {
+        float tip = up ? -half / 2 : half / 2;
+        draw->AddTriangleFilled(ImVec2(x - half, y - tip), ImVec2(x + half, y - tip), ImVec2(x, y + tip), colour);
+    }
+
+    static void DrawFloorPicker(const MapTracking::MapView& view) {
+        pickerBox = {};
+        if (!view.visible || view.pickerGroup == 0 || view.pickerFloors.empty()) {
+            pickerCursor(false);
+            return;
+        }
+        int windowX = 0, windowY = 0;
+        glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+        RECT game = view.gameRect;
+        OffsetRect(&game, -windowX, -windowY);
+        POINT beside;
+        if (!GameUi::BesideSwitcher(game, view.panel, beside)) {
+            pickerCursor(false);
+            return;
+        }
+
+        // the buttons from the top: above ground, then the area's floors
+        int count = 1 + (int)view.pickerFloors.size();
+        int lit = -1;
+        if (view.result.groupId == 0) lit = 0;
+        else if (view.result.groupId == view.pickerGroup) {
+            for (int i = 0; i < (int)view.pickerFloors.size(); i++) {
+                if (view.pickerFloors[i] == view.result.floorId) lit = i + 1;
+            }
+        }
+        bool picked = view.layerFrom == LayerChoice::From::Picked;
+
+        // Just left of the game's buttons, the chip half way down them. The
+        // list opens downwards from it.
+        float font = ImGui::GetFontSize();
+        float chipTop = beside.y - font * 0.6f - ImGui::GetStyle().WindowPadding.y;
+        ImGui::SetNextWindowPos(ImVec2((float)beside.x, chipTop), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.75f);
+        ImGui::Begin("##floorPicker", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
+            | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+
+        // the chip: a small row of boxes, who chose the floor, an arrow
+        float small = font * 0.5f, smallGap = font * 0.2f;
+        std::string why = std::string(" \xC2\xB7 ") + LayerChoice::Name(view.layerFrom);
+        ImVec2 whySize = ImGui::CalcTextSize(why.c_str());
+        float rowWidth = count * small + (count - 1) * smallGap;
+        ImVec2 chipSize(rowWidth + whySize.x + font * 1.2f, font * 1.2f);
+        if (ImGui::InvisibleButton("##chip", chipSize)) pickerOpen = !pickerOpen;
+        ImVec2 chip = ImGui::GetItemRectMin();
+        if (ImGui::IsItemHovered()) draw->AddRectFilled(chip, ImGui::GetItemRectMax(), IM_COL32(255, 255, 255, 25), font * 0.2f);
+        float middleY = chip.y + chipSize.y / 2;
+        for (int i = 0; i < count; i++) {
+            pickerButton(draw, ImVec2(chip.x + i * (small + smallGap), middleY - small / 2), small, i == lit, false);
+        }
+        ImU32 text = ImGui::GetColorU32(picked ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        draw->AddText(ImVec2(chip.x + rowWidth, middleY - whySize.y / 2), text, why.c_str());
+        pickerArrow(draw, chip.x + rowWidth + whySize.x + font * 0.6f, middleY, font * 0.25f, pickerOpen, text);
+
+        if (pickerOpen) {
+            ImGui::Separator();
+            // Auto: back to what the game's buttons say
+            if (ImGui::RadioButton("Auto", !picked)) {
+                MapTracking::PickAuto(view.opening);
+                pickerOpen = false;
+            }
+            // the buttons as the game lays them out, the one shown lit when
+            // picked, a dot in it when not
+            float box = font * 1.1f, gap = font * 0.35f;
+            for (int i = 0; i < count && pickerOpen; i++) {
+                ImGui::PushID(i);
+                bool clicked = ImGui::InvisibleButton("##floor", ImVec2(box, box));
+                ImVec2 min = ImGui::GetItemRectMin();
+                pickerButton(draw, min, box, picked && i == lit, ImGui::IsItemHovered());
+                if (i == lit && !picked) draw->AddCircleFilled(ImVec2(min.x + box / 2, min.y + box / 2), box * 0.18f, PICKER_CYAN);
+                if (clicked) {
+                    LayerChoice::Layer layer = { view.result.mapId, 0, 0 };
+                    if (i > 0) layer = { view.result.mapId, view.pickerGroup, view.pickerFloors[i - 1] };
+                    MapTracking::PickLayer(view.opening, layer);
+                    pickerOpen = false;
+                }
+                ImGui::PopID();
+                if (i + 1 < count) ImGui::Dummy(ImVec2(0, (std::max)(0.0f, gap - ImGui::GetStyle().ItemSpacing.y)));
+            }
+        }
+        pickerCursor(ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+
+        ImVec2 min = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+        pickerBox = { (LONG)min.x, (LONG)min.y, (LONG)(min.x + size.x), (LONG)(min.y + size.y) };
+        ImGui::End();
     }
 
     // a short note at the top of the screen after starting, so you know it's running
@@ -486,6 +624,7 @@ namespace Overlay {
             // an extension that follows the player has things to draw with the map closed too
             bool forPlayer = !showing && MiniMap::Wanted();
             if (!showing && !forPlayer) {
+                pickerBox = {};
                 updateClickThrough();
                 if (drewLastFrame) {
                     // an empty frame so the last one doesn't stay on screen
@@ -506,6 +645,9 @@ namespace Overlay {
             ImGui_ImplGlfw_NewFrame();
             feedMousePosition();
             ImGui::NewFrame();
+            // the picker first: extensions keep off this frame's box, and the
+            // click-through goes by where it is now
+            DrawFloorPicker(MapTracking::GetView());
             updateClickThrough();
 
             Extensions::frameUpdateExtensions();

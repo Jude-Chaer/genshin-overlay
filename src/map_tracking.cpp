@@ -44,6 +44,8 @@ namespace MapTracking {
     // Finding the map needs this many matching points. Following it takes
     // any match SIFT calls found.
     static constexpr int FIRST_FIX_INLIERS = 15;
+    // how often the game's layer buttons are read
+    static constexpr auto SWITCHER_EVERY = std::chrono::milliseconds(250);
 
     static std::atomic<Status> status{ Status::NoData };
     static std::atomic<bool> stopping{ false };
@@ -71,6 +73,15 @@ namespace MapTracking {
     // goes up with every publish, WaitForDraw waits for the next one
     static uint64_t answers = 0;
     static std::condition_variable answered;
+    // HoYoLAB's floors, once the map data is loaded
+    static std::vector<MapData::Floor> loadedFloors;
+    // a click on the overlay's floor picker, for the follow thread
+    struct PickerClick {
+        bool waiting = false, toAuto = false;
+        int opening = 0;
+        LayerChoice::Layer layer;
+    };
+    static PickerClick pickerClick;
 
     // follow thread only
     static MapFollow::Follower follower;
@@ -79,6 +90,10 @@ namespace MapTracking {
     // the last frame handed to the follower, and its id there
     static Capture::Frame lastGameFrame;
     static int frameId = 0;
+    // what the game shows besides the map, read off the follower's frames
+    static LayerChoice layers;
+    static GameUi::Panel panel;
+    static std::chrono::steady_clock::time_point switcherReadAt;
     // The frame SIFT was given. Session goes up with every reset, a result
     // from before the reset is dropped.
     static int sentId = 0;
@@ -136,6 +151,11 @@ namespace MapTracking {
         std::filesystem::path manifestPath = dataFolder / "manifest.tsv";
         bool loaded = index.Load(manifestPath, &stopping);
         if (stopping) return;
+        if (loaded) {
+            std::vector<MapData::Floor> floors = MapData::readManifest(dataFolder).floors;
+            std::lock_guard<std::mutex> lock(mutex);
+            loadedFloors = std::move(floors);
+        }
         status = loaded ? Status::Ready : Status::Failed;
         if (!loaded) {
             std::cerr << "Could not load map data from " << manifestPath << std::endl;
@@ -182,9 +202,39 @@ namespace MapTracking {
         view.visible = follower.Visible();
         view.result = follower.View();
         view.gameRect = rect;
+        view.panel = panel;
+        view.layerFrom = layers.Why();
+        view.pickerGroup = view.visible ? layers.Area(view.result.lng, view.result.lat) : 0;
+        view.opening = session;
+        view.pickerFloors = view.pickerGroup ? MapData::groupFloors(loadedFloors, view.result.mapId, view.pickerGroup) : std::vector<int>{};
         lastUpdate = now;
         answers++;
         answered.notify_all();
+    }
+
+    // Puts the follower on the layer LayerChoice says, it starts out on SIFT's.
+    static void useLayer() {
+        if (!follower.Visible()) return;
+        LayerChoice::Layer layer = layers.Now();
+        const MapLocator::Result& at = follower.View();
+        if (layer.mapId == at.mapId && (layer.groupId != at.groupId || layer.floorId != at.floorId)) {
+            follower.SetLayer(layer.groupId, layer.floorId);
+        }
+    }
+
+    // The parts of the game's frame the panel and, when it's time, the
+    // switcher are read from. In the frame's pixels and on screen.
+    static std::vector<cv::Rect> uiParts(const RECT& rect, bool withSwitcher, std::vector<RECT>& onScreen) {
+        cv::Size size(rect.right - rect.left, rect.bottom - rect.top);
+        std::vector<cv::Rect> parts = GameUi::PanelParts(size);
+        if (withSwitcher) {
+            for (const cv::Rect& part : GameUi::SwitcherParts(size)) parts.push_back(part);
+        }
+        onScreen.clear();
+        for (const cv::Rect& part : parts) {
+            onScreen.push_back({ rect.left + part.x, rect.top + part.y, rect.left + part.x + part.width, rect.top + part.y + part.height });
+        }
+        return parts;
     }
 
     // One step of following: takes back SIFT's and the tile check's answers,
@@ -197,15 +247,36 @@ namespace MapTracking {
             session++;
             follower.Reset();
             lastGameFrame = {};
+            // a floor picked by hand holds until the map closes
+            layers.Reset();
+            panel = {};
+            switcherReadAt = {};
+            // Loaded before the first step, which always resets: the game
+            // window is new to it.
+            if (!layers.HasFloors()) layers.SetFloors(loadedFloors);
         }
+        PickerClick click = pickerClick;
+        pickerClick = {};
         bool canSend = !busy && !frameWaiting;
         bool gotMatch = matchDone;
         MapLocator::Result match = matched;
         matchDone = false;
         lock.unlock();
 
+        if (click.waiting && click.opening == session) {
+            if (click.toAuto) layers.Auto();
+            else layers.Pick(click.layer);
+            useLayer();
+        }
+
         double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
+            layers.Guess({ match.mapId, match.groupId, match.floorId });
+            LayerChoice::Layer layer = layers.Now();
+            if (layer.mapId == match.mapId) {
+                match.groupId = layer.groupId;
+                match.floorId = layer.floorId;
+            }
             follower.Matched(sentId, match, seconds);
         }
         int checkedId = 0;
@@ -228,22 +299,42 @@ namespace MapTracking {
         Capture::Frame gameFrame = lastGameFrame;
         MapFollow::Patches patches;
         cv::Mat screenshot, wide;
+        // the switcher's floors are of the area SIFT found the map on
+        bool readSwitcher = follower.Visible() && now - switcherReadAt >= SWITCHER_EVERY;
+        GameUi::Picture picture;
         if (settle || look) {
             if (!Capture::grabGame(game, rect, screenshot, &gameFrame)) return;
             if (gameFrame.number != lastGameFrame.number) {
                 patches = MapFollow::cut(screenshot, rect);
                 wide = MapFollow::cutWide(screenshot);
+                picture = GameUi::Whole(screenshot);
             }
         }
-        else if (!MapFollow::grab(game, rect, patches, wide, gameFrame)) {
+        else {
+            std::vector<RECT> onScreen;
+            std::vector<cv::Rect> parts = uiParts(rect, readSwitcher, onScreen);
             // the game didn't draw a new frame yet
-            return;
+            if (!MapFollow::grab(game, rect, patches, wide, gameFrame, &onScreen, &picture.parts)) return;
+            picture.size = cv::Size(rect.right - rect.left, rect.bottom - rect.top);
+            for (const cv::Rect& part : parts) picture.at.push_back(part.tl());
+            if (picture.parts.size() != picture.at.size()) picture = {};
         }
         follower.Grabbed(seconds);
         if (!patches.empty()) {
             int frames = lastGameFrame.number ? (int)std::min<uint64_t>(gameFrame.number - lastGameFrame.number, 100) : 1;
             lastGameFrame = gameFrame;
             follower.Frame(++frameId, patches, wide, rect, gameFrame.seconds, frames);
+            if (!picture.parts.empty()) {
+                // every frame, so drawing leaves a panel the moment it opens
+                panel = GameUi::ReadPanel(picture);
+                if (readSwitcher && follower.Visible()) {
+                    switcherReadAt = now;
+                    const MapLocator::Result& at = follower.View();
+                    GameUi::Switcher read = GameUi::ReadSwitcher(picture, panel);
+                    layers.Read(read, at.mapId);
+                    useLayer();
+                }
+            }
             // loosely it's hidden while it moves, nothing to line up
             if (followExact && follower.Visible() && Settings::lineUpWithMap) {
                 MapCheck::Check(frameId, patches, rect, follower.View());
@@ -487,6 +578,16 @@ namespace MapTracking {
         }
         viewGiven = copy.visible;
         return copy;
+    }
+
+    void PickLayer(int opening, const LayerChoice::Layer& layer) {
+        std::lock_guard<std::mutex> lock(mutex);
+        pickerClick = { true, false, opening, layer };
+    }
+
+    void PickAuto(int opening) {
+        std::lock_guard<std::mutex> lock(mutex);
+        pickerClick = { true, true, opening, {} };
     }
 
     MapView LastView() {

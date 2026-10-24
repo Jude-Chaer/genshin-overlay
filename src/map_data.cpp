@@ -3,6 +3,7 @@
 #include "locator/map_locator.hpp"
 #include <windows.h>
 #include <bcrypt.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <ctime>
@@ -72,6 +73,41 @@ namespace MapData {
 		if (!ec) return true;
 		fs::remove(tmp, ec);
 		return false;
+	}
+
+	Box bounds(const Floor& floor) {
+		return { (std::min)(floor.left, floor.right), (std::min)(floor.top, floor.bottom),
+			(std::max)(floor.left, floor.right), (std::max)(floor.top, floor.bottom) };
+	}
+
+	std::vector<int> groupFloors(const std::vector<Floor>& floors, int mapId, int groupId) {
+		std::vector<int> out;
+		for (const Floor& floor : floors) {
+			if (floor.mapId == mapId && floor.groupId == groupId) out.push_back(floor.floorId);
+		}
+		return out;
+	}
+
+	bool groupBox(const std::vector<Floor>& floors, int mapId, int groupId, Box& out) {
+		bool any = false;
+		for (const Floor& floor : floors) {
+			if (floor.mapId != mapId || floor.groupId != groupId) continue;
+			Box box = bounds(floor);
+			if (any) {
+				box = { (std::min)(out.left, box.left), (std::min)(out.top, box.top),
+					(std::max)(out.right, box.right), (std::max)(out.bottom, box.bottom) };
+			}
+			out = box;
+			any = true;
+		}
+		return any;
+	}
+
+	bool groupInside(const std::vector<Floor>& floors, int mapId, int inner, int outer) {
+		Box in, out;
+		if (!groupBox(floors, mapId, inner, in) || !groupBox(floors, mapId, outer, out)) return false;
+		double x = (in.left + in.right) / 2, y = (in.top + in.bottom) / 2;
+		return x >= out.left && x <= out.right && y >= out.top && y <= out.bottom;
 	}
 
 	Manifest readManifest(const fs::path& folder) {
