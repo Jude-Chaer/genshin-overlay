@@ -26,6 +26,18 @@ namespace Capture {
         if (!window) {
             window = FindWindowW(L"UnityWndClass", L"原神");
         }
+
+        if (!window) return nullptr;
+
+        if (!IsWindowVisible(window) || IsIconic(window)) {
+            return nullptr;
+        }
+
+        RECT clientRect;
+        if (!GetClientRect(window, &clientRect) || (clientRect.right - clientRect.left) <= 0 || (clientRect.bottom - clientRect.top) <= 0) {
+            return nullptr;
+        }
+
         return window;
     }
 
