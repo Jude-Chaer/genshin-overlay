@@ -64,12 +64,13 @@ namespace MapFollow {
         return out;
     }
 
-    bool grab(HWND window, const RECT& game, Patches& out, cv::Mat& wide, Capture::Frame& frame) {
+    bool grab(HWND window, const RECT& game, Patches& out, cv::Mat& wide, Capture::Frame& frame,
+        const std::vector<RECT>* colour, std::vector<cv::Mat>* colourOut) {
         std::vector<cv::Mat> gray;
         std::vector<RECT> rects = patchRects(game);
         // the patches get shrunk to SIZE anyway, most of the way on the GPU
         int shrunk = Settings::shrinkOnGpu ? (int)rects.size() : 0;
-        if (!Capture::grabGameGray(window, rects, gray, frame, game, WIDE_WIDTH, wide, shrunk, SIZE)) return false;
+        if (!Capture::grabGameGray(window, rects, gray, frame, game, WIDE_WIDTH, wide, shrunk, SIZE, colour, colourOut)) return false;
         out = shrink(gray);
         return true;
     }
@@ -541,6 +542,17 @@ namespace MapFollow {
         fix(m_keyView);
         fix(m_rest);
         return true;
+    }
+
+    void Follower::SetLayer(int groupId, int floorId) {
+        auto set = [&](MapLocator::Result& view) {
+            view.groupId = groupId;
+            view.floorId = floorId;
+        };
+        for (Past& past : m_past) set(past.view);
+        set(m_view);
+        set(m_keyView);
+        set(m_rest);
     }
 
     void Follower::Checked(int id, const MapLocator::Result& result) {

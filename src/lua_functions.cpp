@@ -324,23 +324,42 @@ namespace LuaFunctions {
 	// Where the in-game map is looking, or nil when it isn't open. Positions are
 	// in overlay pixels, the same ones DrawImage uses. lat/lng is the map
 	// position at centerX, centerY. moving is true while the map moves, and
-	// after it stops until it's lined up exactly.
+	// after it stops until it's lined up exactly. groupId and floorId are the
+	// layer shown, layerFrom says who chose it: "game" (its layer buttons),
+	// "picked" (the overlay's floor picker) or "guess" (from the map's picture). ui is the game's
+	// own UI as boxes to keep off, and the overlay's floor picker while it's
+	// there. panelLeft is where a panel on the right starts, only while one is open.
 	sol::object GetMapView(sol::this_state state) {
 		MapTracking::MapView view = MapTracking::GetView();
 		if (!view.visible) return sol::lua_nil;
 
 		int windowX = 0, windowY = 0;
 		glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
-		float left = (float)(view.gameRect.left - windowX);
-		float top = (float)(view.gameRect.top - windowY);
-		float right = (float)(view.gameRect.right - windowX);
-		float bottom = (float)(view.gameRect.bottom - windowY);
+		// the game in overlay pixels, everything below is placed from it
+		RECT game = view.gameRect;
+		OffsetRect(&game, -windowX, -windowY);
+		float left = (float)game.left;
+		float top = (float)game.top;
+		float right = (float)game.right;
+		float bottom = (float)game.bottom;
 
 		sol::state_view lua(state);
-		return sol::make_object(state, lua.create_table_with(
+		sol::table ui = lua.create_table();
+		auto addBox = [&](const RECT& box) {
+			ui.add(lua.create_table_with(
+				"left", (float)box.left,
+				"top", (float)box.top,
+				"right", (float)box.right,
+				"bottom", (float)box.bottom));
+		};
+		for (const RECT& box : GameUi::Boxes(game, view.panel)) addBox(box);
+		RECT picker;
+		if (Overlay::PickerBox(picker)) addBox(picker);
+		sol::table result = lua.create_table_with(
 			"mapId", view.result.mapId,
 			"groupId", view.result.groupId,
 			"floorId", view.result.floorId,
+			"layerFrom", LayerChoice::Name(view.layerFrom),
 			"lat", view.result.lat,
 			"lng", view.result.lng,
 			"unitsPerPixel", view.result.unitsPerPixel,
@@ -350,8 +369,11 @@ namespace LuaFunctions {
 			"top", top,
 			"right", right,
 			"bottom", bottom,
-			"moving", view.moving
-		));
+			"moving", view.moving,
+			"ui", ui
+		);
+		if (view.panel.seen == GameUi::Seen::Read && view.panel.left >= 0) result["panelLeft"] = left + view.panel.left;
+		return sol::make_object(state, result);
 	}
 
 	// Call every Update if you draw while the map moves. Otherwise GetMapView

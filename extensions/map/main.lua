@@ -54,7 +54,8 @@ function Update()
         surfaceOpacity = opacity * 0.35
     end
 
-    PushClipRect(view.left, view.top, view.right, view.bottom)
+    -- stop where a panel on the right starts, it isn't map
+    PushClipRect(view.left, view.top, view.panelLeft or view.right, view.bottom)
     for y = firstY, lastY do
         for x = firstX, lastX do
             local texture = GetMapTile(view.mapId, x, y, size)
