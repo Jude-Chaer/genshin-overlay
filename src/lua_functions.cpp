@@ -185,18 +185,19 @@ namespace LuaFunctions {
 	}
 
 	// RegisterKeybind(key, function, flags, modifiers), modifiers is optional, like KeybindModifiers.Alt
-	void RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers) {
+	std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers) {
 		// remember which extension made it, so GetSetting works inside the callback
 		Extensions::Extension* owner = Extensions::currentExtension;
-		Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
+		return Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
 			Extensions::runForExtension(owner, [&callbackFunction]() {
 				callLua(callbackFunction);
 				});
 			}, flags, modifiers.value_or(Keybindings::KeybindModifiers_None));
 	}
 
-	void DeleteKeybind(int glfwKey) {
-		Keybindings::DeleteKeybind(glfwKey);
+	bool DeleteKeybind(const std::string& uuid) {
+
+		return Keybindings::DeleteKeybind(uuid);
 	}
 
 	void DefineExtensionSetting(const std::string& id,

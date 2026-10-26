@@ -134,12 +134,15 @@ namespace Keybindings {
         RefreshRegistrations();
     }
 
-    void CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers) {
-        if (DoesKeybindExist(glfwKey) != nullptr) {
-            return;
-        }
-        keybinds.push_back(std::make_unique<Keybind>(nextHotkeyId++, glfwKey, modifiers, callbackFunction, flags));
+    std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers) {
+        auto keybind = std::make_unique<Keybind>(nextHotkeyId++, glfwKey, modifiers, callbackFunction, flags);
+
+        std::string uuid = keybind->GetUUID();
+
+        keybinds.push_back(std::move(keybind));
         RefreshRegistrations();
+
+        return uuid;
     }
 
     // runs the callbacks for keys pressed since the last frame
@@ -171,16 +174,23 @@ namespace Keybindings {
         }
     }
 
-    void DeleteKeybind(int glfwKey) {
-        Keybind* keybind = DoesKeybindExist(glfwKey);
-        if (keybind && keybind->IsRegistered()) {
-            UnregisterHotKey(hotkeyWindow, keybind->GetId());
-        }
+    bool DeleteKeybind(const std::string& uuid) {
+        auto it = std::find_if(keybinds.begin(), keybinds.end(),
+            [&uuid](const std::unique_ptr<Keybind>& keybind) {
+                return keybind->GetUUID() == uuid;
+            });
 
-        keybinds.erase(std::remove_if(keybinds.begin(), keybinds.end(),
-            [glfwKey](const std::unique_ptr<Keybind>& keybind) {
-                return keybind->GetKey() == glfwKey;
-            }), keybinds.end());
+        if (it != keybinds.end()) {
+            if ((*it)->IsRegistered()) {
+                UnregisterHotKey(hotkeyWindow, (*it)->GetId());
+            }
+
+            keybinds.erase(it);
+
+            RefreshRegistrations();
+            return true;
+        }
+        return false;
     }
 
     Keybind* DoesKeybindExist(int glfwKey) {

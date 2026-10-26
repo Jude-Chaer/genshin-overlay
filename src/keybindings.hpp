@@ -3,6 +3,7 @@
 #include <functional>
 #include <vector>
 #include <memory>
+#include "helpers.hpp"
 
 namespace Keybindings {
 
@@ -24,11 +25,12 @@ namespace Keybindings {
     class Keybind {
     public:
         Keybind(int id, int glfwKey, KeybindModifiers modifiers, std::function<void()> callback, KeybindFlags flags = KeybindFlags_None)
-            : m_id(id), m_glfwKey(glfwKey), m_modifiers(modifiers), m_callback(callback), m_flags(flags) {
+            : m_id(id), m_glfwKey(glfwKey), m_modifiers(modifiers), m_callback(callback), m_flags(flags), m_uuid(Helpers::GenerateUUID()) {
         }
 
         int GetId() const { return m_id; }
         int GetKey() const { return m_glfwKey; }
+        std::string GetUUID() const { return m_uuid; }
         KeybindModifiers GetModifiers() const { return m_modifiers; }
         KeybindFlags GetFlags() const { return m_flags; }
         std::function<void()> GetCallback() const { return m_callback; }
@@ -48,6 +50,7 @@ namespace Keybindings {
     private:
         int m_id;
         int m_glfwKey;
+        std::string m_uuid;
         KeybindModifiers m_modifiers;
         std::function<void()> m_callback;
         KeybindFlags m_flags;
@@ -58,7 +61,7 @@ namespace Keybindings {
     extern std::vector<std::unique_ptr<Keybind>> keybinds;
     extern void Init(GLFWwindow* window);
     extern void Shutdown();
-    extern void CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers = KeybindModifiers_None);
+    extern std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers = KeybindModifiers_None);
     extern void ProcessKeybindings();
     extern void RefreshRegistrations();
     // lets go of every key, or takes them back
@@ -66,6 +69,6 @@ namespace Keybindings {
     // the Windows key for a GLFW one, 0 for a key that can't be bound
     extern unsigned int GlfwKeyToVirtualKey(int key);
     extern Keybind* DoesKeybindExist(int glfwKey);
-    extern void DeleteKeybind(int glfwKey);
+    extern bool DeleteKeybind(const std::string& uuid);
 
 }
