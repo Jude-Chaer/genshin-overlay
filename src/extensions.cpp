@@ -55,6 +55,7 @@ namespace Extensions {
 	}
 
 	void frameUpdateExtensions() {
+		LuaFunctions::Items::beginFrame();
 		LuaFunctions::UpdateIntervals();
 		for (auto& ext : registeredExtensions) {
 			runForExtension(ext.get(), ext->updateFunction);

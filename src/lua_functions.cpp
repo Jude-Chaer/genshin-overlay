@@ -7,6 +7,9 @@
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
+#include "item_icons.hpp"
+#include "item_catalog.hpp"
+#include "item_files.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -51,8 +54,12 @@ namespace LuaFunctions {
 		luaState.set_function("DefineExtensionSetting", DefineExtensionSetting);
 		luaState.set_function("GetSetting", GetExtensionSetting);
 		luaState.set_function("LoadTexture", LoadTextureFromFileLua);
+		luaState.set_function("GetItemsVersion", GetItemsVersion);
+		luaState.set_function("GetItemsState", GetItemsState);
+		luaState.set_function("GetItemTypes", GetItemTypes);
+		luaState.set_function("GetItemPositions", GetItemPositions);
+		luaState.set_function("GetItemRegions", GetItemRegions);
 		luaState.set_function("GetItemIcon", GetItemIcon);
-		luaState.set_function("GetItemIconById", GetItemPositions);
 		luaState.set_function("CompareImages", CompareImages);
 		luaState.set_function("GetMapView", GetMapView);
 		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
@@ -999,23 +1006,141 @@ namespace LuaFunctions {
 			text.c_str()
 		);
 	}
-	GLuint GetItemIcon(int itemId)
-	{
-		int width = 0, height = 0;
-		return Helpers::loadTextureFromFile(Helpers::exeDirectory().string() + "/items/icons/" + std::to_string(itemId) + ".png", width, height);
+	// The map items, all read only from the catalog in memory. Unknown ids give
+	// nil. Take what you keep again when GetItemsVersion changes: a type or a
+	// point can be gone from the new list, and icons from the old one are freed.
+	// One catalog for the whole frame, so every extension sees the same one.
+	namespace Items {
+		static std::shared_ptr<const ItemCatalog::Catalog> frameCatalog;
+
+		void beginFrame() {
+			frameCatalog = ItemCatalog::current();
+			ItemIcons::keepFor(frameCatalog.get());
+		}
+
+		static const char* stateName(ItemFiles::State state) {
+			switch (state) {
+			case ItemFiles::State::Downloading: return "downloading";
+			case ItemFiles::State::Ready: return "ready";
+			case ItemFiles::State::Old: return "old";
+			default: return "none";
+			}
+		}
+
+		static const char* reasonName(ItemFiles::Reason reason) {
+			switch (reason) {
+			case ItemFiles::Reason::NoNetwork: return "no_network";
+			case ItemFiles::Reason::NewerFormat: return "newer_format";
+			case ItemFiles::Reason::BrokenPack: return "broken";
+			case ItemFiles::Reason::CantSave: return "cant_save";
+			case ItemFiles::Reason::DownloadOff: return "download_off";
+			default: return "none";
+			}
+		}
+
+		static bool knowsType(const ItemCatalog::Catalog& catalog, int type) {
+			for (const auto& group : catalog.groups) {
+				for (const auto& t : group.types) if (t.id == type) return true;
+			}
+			return false;
+		}
+
+		sol::table state(const ItemFiles::Status& status, sol::state_view lua) {
+			return lua.create_table_with(
+				"state", stateName(status.state),
+				"reason", reasonName(status.reason),
+				"percent", status.percent,
+				"built", status.built,
+				"checking", status.checking || !status.started
+			);
+		}
+
+		sol::table types(const ItemCatalog::Catalog* catalog, sol::state_view lua) {
+			sol::table groups = lua.create_table();
+			if (!catalog) return groups;
+			int g = 1;
+			for (const auto& group : catalog->groups) {
+				sol::table types = lua.create_table((int)group.types.size(), 0);
+				int t = 1;
+				for (const auto& type : group.types) {
+					sol::table counts = lua.create_table();
+					for (const auto& [map, n] : type.counts) counts[map] = n;
+					types[t++] = lua.create_table_with("id", type.id, "name", type.name, "counts", counts);
+				}
+				groups[g++] = lua.create_table_with("id", group.id, "name", group.name, "types", types);
+			}
+			return groups;
+		}
+
+		sol::object positions(const ItemCatalog::Catalog* catalog, int type, sol::state_view lua) {
+			if (!catalog) return sol::lua_nil;
+			ItemCatalog::Points points = catalog->points(type);
+			if (points.empty() && !knowsType(*catalog, type)) return sol::lua_nil;
+
+			sol::table result = lua.create_table((int)points.size(), 0);
+			int i = 1;
+			for (const auto& point : points) {
+				result[i++] = lua.create_table_with(
+					"id", point.id,
+					"map", point.map,
+					"x", point.x,
+					"y", point.y,
+					"area", point.area,
+					"group", point.group,
+					"floor", point.floor
+				);
+			}
+			return result;
+		}
+
+		sol::table regions(const ItemCatalog::Catalog* catalog, sol::state_view lua) {
+			sol::table result = lua.create_table();
+			if (!catalog) return result;
+			int i = 1;
+			for (const auto& region : catalog->regions) {
+				result[i++] = lua.create_table_with(
+					"id", region.id,
+					"name", region.name,
+					"map", region.map,
+					"box", lua.create_table_with(
+						"left", region.left,
+						"top", region.top,
+						"right", region.right,
+						"bottom", region.bottom
+					)
+				);
+			}
+			return result;
+		}
 	}
-	sol::object GetItemPositions(int itemId, sol::this_state state)
-	{
-		std::filesystem::path path = Helpers::exeDirectory() / "items" / "positions" / (std::to_string(itemId) + ".json");
 
-		std::ifstream file(path, std::ios::binary);
-		if (!file)
-			return sol::lua_nil;
+	// 0 while there are none, goes up by one with each new list
+	uint64_t GetItemsVersion() {
+		return Items::frameCatalog ? Items::frameCatalog->version : 0;
+	}
 
-		nlohmann::json data = nlohmann::json::parse(file, nullptr, false);
-		if (data.is_discarded())
-			return sol::lua_nil;
+	// { state, reason, percent, built, checking }, for an extension's own "waiting" text
+	sol::object GetItemsState(sol::this_state state) {
+		return Items::state(ItemFiles::GetStatus(), state);
+	}
 
-		return JsonToLua(data, sol::state_view(state));
+	sol::object GetItemTypes(sol::this_state state) {
+		return Items::types(Items::frameCatalog.get(), state);
+	}
+
+	// x and y are HoYoLAB map units, the same as GetMapView's lat and lng
+	sol::object GetItemPositions(int type, sol::this_state state) {
+		return Items::positions(Items::frameCatalog.get(), type, state);
+	}
+
+	sol::object GetItemRegions(sol::this_state state) {
+		return Items::regions(Items::frameCatalog.get(), state);
+	}
+
+	// made once per type and kept, valid until GetItemsVersion changes
+	sol::object GetItemIcon(int type, sol::this_state state) {
+		GLuint texture = ItemIcons::get(Items::frameCatalog.get(), type);
+		if (texture == 0) return sol::lua_nil;
+		return sol::make_object(state, texture);
 	}
 }
