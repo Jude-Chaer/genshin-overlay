@@ -1,16 +1,27 @@
 # Builds the map index from HoYoLAB's current map and publishes it on the
 # "map-index" release. The app downloads it instead of ~120 MB of map images.
-# If the published index is already current, nothing is uploaded.
+# The item files (HoYoLAB's map items as one pack) go on the same release.
+# What is already current isn't uploaded again.
 
 name: Map index
 
 on:
   workflow_dispatch:
+    inputs:
+      allow_drop:
+        description: "Publish the item files even when a map lost many points, types or pairs (when the drop is meant)"
+        type: boolean
+        default: false
   schedule:
     - cron: "0 6 * * 1"
 
 permissions:
   contents: write
+
+# a manual run while the weekly one is going waits for it, so two never upload at once
+concurrency:
+  group: map-index
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -29,12 +40,23 @@ jobs:
       - uses: microsoft/setup-msbuild@v2
 
       - name: Build
+        id: build
         shell: pwsh
         run: |
           # the runner's vcpkg can be older than the baseline in vcpkg.json
           git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --quiet origin master
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
           msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+
+      - name: Make sure the release is there
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view map-index 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create map-index --prerelease --latest=false --title "Map index" --notes "Map data for the overlay, downloaded by the app. Not an app release."
+          }
 
       - name: Make the index
         id: index
@@ -51,11 +73,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view map-index 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create map-index --prerelease --latest=false --title "Map index" --notes "Map data for the overlay, downloaded by the app. Not an app release."
-          }
           # the index and the small whole maps first, then the file that points to them
           gh release upload map-index map_index\out\map-index.bin.gz --clobber
           gh release upload map-index (Get-ChildItem map_index\out\whole_*.png).FullName --clobber
           gh release upload map-index map_index\out\map-index.json --clobber
+
+      # the index and the items go up on their own: either one failing leaves the other
+      # going (the run is still red)
+      - name: Make the item files
+        id: items
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          if ("${{ inputs.allow_drop }}" -eq "true") { & build\Release\genshin-overlay.exe --make-items item_files --allow-drop }
+          else { & build\Release\genshin-overlay.exe --make-items item_files }
+          if ($LASTEXITCODE -eq 3) { "changed=false" >> $env:GITHUB_OUTPUT; exit 0 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "changed=true" >> $env:GITHUB_OUTPUT
+
+      - name: Upload the item files
+        if: ${{ !cancelled() && steps.items.outputs.changed == 'true' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # the pack first, then the file that points to it
+          gh release upload map-index item_files\out\items.pack.gz --clobber
+          gh release upload map-index item_files\out\items.json --clobber
