@@ -1,4 +1,5 @@
 #include "minimap.hpp"
+#include "files.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -1475,7 +1476,7 @@ namespace MiniMap {
             if (spot.found && seconds >= placesAt) {
                 placesAt = seconds + PLACES_EVERY;
                 std::string text = placesText(watcher.Places());
-                if (text != written) MapData::writeFile(folder / "places.tsv", text);
+                if (text != written) Files::writeFile(folder / "places.tsv", text);
                 written = text;
             }
             spot.square = rect(client);

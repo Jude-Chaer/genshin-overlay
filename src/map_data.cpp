@@ -1,18 +1,14 @@
 #include "map_data.hpp"
+#include "files.hpp"
 #include "net.hpp"
 #include "locator/map_locator.hpp"
 #include <windows.h>
-#include <bcrypt.h>
 #include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <thread>
 #include <nlohmann/json.hpp>
-#include <zlib.h>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -20,59 +16,18 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace MapData {
-	static const std::string API = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc";
-	static const std::string STATIC_API = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc";
 	static const std::string TILES = "https://act-webstatic.hoyoverse.com/map_manage/map/";
-	static const std::string RELEASE = "https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
 	static const std::string INDEX_FILE = "map-index.bin.gz";
 	static const std::string META_FILE = "map-index.json";
 	// the small whole maps: whole_<map>_<version>.png on disk, whole_<map>.png on the release
 	static const std::string WHOLE = "whole_";
 	static constexpr int META_FORMAT = 1;
-	static constexpr int DOWNLOAD_THREADS = 16;
-
-	// Teyvat, Enkanomiya, The Chasm, and the separate maps from later versions.
-	// Ids without their own tiles get skipped.
-	static constexpr int MAP_IDS[] = { 2, 7, 9, 34, 36, 37, 40 };
-
-	static bool getJson(const std::string& path, json& data, bool isStatic = false) {
-		Net::Response response;
-		if (!Net::get((isStatic ? STATIC_API : API) + path, response, true) || response.status != 200) return false;
-
-		json body = json::parse(response.body, nullptr, false);
-		if (body.is_discarded() || body.value("retcode", -1) != 0 || !body.contains("data")) return false;
-		data = body["data"];
-		return true;
-	}
+	// index.bin is about 36 MB
+	static constexpr size_t MAX_INDEX_SIZE = 512u * 1024 * 1024;
 
 	// numbers go into the manifest exactly as HoYoLAB sends them
 	static std::string number(const json& value) {
 		return value.dump();
-	}
-
-	static std::string readText(const fs::path& path) {
-		std::ifstream file(path, std::ios::binary);
-		std::ostringstream text;
-		text << file.rdbuf();
-		return text.str();
-	}
-
-	bool writeFile(const fs::path& path, const std::string& data) {
-		std::error_code ec;
-		fs::create_directories(path.parent_path(), ec);
-		// two threads can be saving the same file
-		fs::path tmp = path;
-		tmp += "." + std::to_string(GetCurrentThreadId()) + ".part";
-		{
-			std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-			if (!file) return false;
-			file.write(data.data(), (std::streamsize)data.size());
-			if (!file) return false;
-		}
-		fs::rename(tmp, path, ec);
-		if (!ec) return true;
-		fs::remove(tmp, ec);
-		return false;
 	}
 
 	Box bounds(const Floor& floor) {
@@ -154,8 +109,8 @@ namespace MapData {
 		Net::Response response;
 		if (url.empty() || !Net::get(url, response, true)) return false;
 		// an empty file stops us asking again, tiles outside the drawn map don't exist
-		if (response.status == 404) return writeFile(path, "");
-		return response.status == 200 && writeFile(path, response.body);
+		if (response.status == 404) return Files::writeFile(path, "");
+		return response.status == 200 && Files::writeFile(path, response.body);
 	}
 
 	// HoYoLAB's address of a grid's tile
@@ -271,10 +226,10 @@ namespace MapData {
 		}
 		std::vector<uchar> bytes;
 		if (!cv::imencode(".png", whole, bytes)) return false;
-		return writeFile(wholeMapPath(folder, grid), std::string(bytes.begin(), bytes.end()));
+		return Files::writeFile(wholeMapPath(folder, grid), std::string(bytes.begin(), bytes.end()));
 	}
 
-	bool makePlan(Plan& plan) {
+	bool makePlan(Plan& plan, Net::Stopper* stop) {
 		std::vector<std::string> lines = { "# genshin-overlay map manifest v1" };
 		plan.files.clear();
 		plan.tileDirs.clear();
@@ -283,7 +238,7 @@ namespace MapData {
 			for (int id : MAP_IDS) {
 				std::string query = "map_id=" + std::to_string(id) + "&app_sn=ys_obc&lang=en-us";
 				json info;
-				if (!getJson("/v1/map/info?" + query, info)) return false;
+				if (!Files::getJson("/v1/map/info?" + query, info, false, stop)) return false;
 
 				const json& detail = info["info"]["detail_v2"];
 				if (!detail.is_object() || !detail.contains("total_size") || !detail.contains("origin")) continue;
@@ -312,7 +267,7 @@ namespace MapData {
 
 				// underground floors, each one is a single image placed over the map
 				json groups;
-				if (!getJson("/v2/map/point_group?" + query, groups)) return false;
+				if (!Files::getJson("/v2/map/point_group?" + query, groups, false, stop)) return false;
 				for (const json& group : groups.value("list", json::array())) {
 					for (const json& floor : group.value("floors", json::array())) {
 						if (!floor.contains("overlay") || !floor["overlay"].is_object()) continue;
@@ -352,35 +307,18 @@ namespace MapData {
 		}
 		if (missing.empty()) return true;
 
-		std::atomic<size_t> next{ 0 };
-		std::atomic<size_t> done{ 0 };
 		std::atomic<bool> failed{ false };
 		auto stop = [&]() { return failed || (cancel && cancel->load()); };
-
-		auto worker = [&]() {
-			while (!stop()) {
-				size_t i = next.fetch_add(1);
-				if (i >= missing.size()) return;
-
-				const File& file = *missing[i];
-				bool saved = false;
-				for (int attempt = 0; attempt < 3 && !saved; attempt++) {
-					saved = fetch(file.url, folder / fs::u8path(file.path));
-				}
-				if (!saved) failed = true;
-				done++;
+		Files::inParallel(missing.size(), [&](size_t i) {
+			const File& file = *missing[i];
+			bool saved = false;
+			for (int attempt = 0; attempt < 3 && !saved; attempt++) {
+				saved = fetch(file.url, folder / fs::u8path(file.path));
 			}
-			};
-
-		std::vector<std::thread> pool;
-		for (int t = 0; t < DOWNLOAD_THREADS; t++) {
-			pool.emplace_back(worker);
-		}
-		while (done < missing.size() && !stop()) {
+			if (!saved) failed = true;
+		}, stop, [&](size_t done) {
 			if (progress) progress("Downloading map images", (int)(done * 100 / missing.size()));
-			std::this_thread::sleep_for(std::chrono::milliseconds(200));
-		}
-		for (auto& thread : pool) thread.join();
+		});
 		return !stop();
 	}
 
@@ -396,76 +334,30 @@ namespace MapData {
 		}
 	}
 
-	static bool gunzip(const std::string& in, std::string& out, size_t expectedSize) {
-		z_stream stream = {};
-		if (inflateInit2(&stream, 16 + MAX_WBITS) != Z_OK) return false;
-		out.resize(expectedSize);
-		stream.next_in = (Bytef*)in.data();
-		stream.avail_in = (uInt)in.size();
-		stream.next_out = (Bytef*)out.data();
-		stream.avail_out = (uInt)out.size();
-		int result = inflate(&stream, Z_FINISH);
-		inflateEnd(&stream);
-		return result == Z_STREAM_END && stream.total_out == expectedSize;
+	static bool fetchPublishedMeta(json& meta, Net::Stopper* stop = nullptr) {
+		return Files::getMeta(META_FILE, META_FORMAT, meta, stop) == Files::Meta::Ok;
 	}
 
-	static bool gzip(const std::string& in, std::string& out) {
-		z_stream stream = {};
-		if (deflateInit2(&stream, 9, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY) != Z_OK) return false;
-		out.resize(deflateBound(&stream, (uLong)in.size()));
-		stream.next_in = (Bytef*)in.data();
-		stream.avail_in = (uInt)in.size();
-		stream.next_out = (Bytef*)out.data();
-		stream.avail_out = (uInt)out.size();
-		int result = deflate(&stream, Z_FINISH);
-		out.resize(stream.total_out);
-		deflateEnd(&stream);
-		return result == Z_STREAM_END;
-	}
-
-	static std::string sha256(const std::string& data) {
-		unsigned char hash[32] = {};
-		BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, (PUCHAR)data.data(), (ULONG)data.size(), hash, sizeof(hash));
-		static const char* hex = "0123456789abcdef";
-		std::string out;
-		for (unsigned char c : hash) {
-			out += hex[c >> 4];
-			out += hex[c & 15];
-		}
-		return out;
-	}
-
-	static bool fetchPublishedMeta(json& meta) {
-		Net::Response response;
-		if (!Net::get(RELEASE + META_FILE, response) || response.status != 200) return false;
-		meta = json::parse(response.body, nullptr, false);
-		return !meta.is_discarded() && meta.value("format", 0) == META_FORMAT;
-	}
-
-	bool downloadPrebuiltIndex(const fs::path& folder, const Plan& plan, const Progress& progress) {
+	bool downloadPrebuiltIndex(const fs::path& folder, const Plan& plan, const Progress& progress, Net::Stopper* stop) {
 		json meta;
-		if (!fetchPublishedMeta(meta) || meta.value("manifest", "") != plan.manifest) return false;
+		if (!fetchPublishedMeta(meta, stop) || Files::stringField(meta, "manifest", "") != plan.manifest) return false;
 
 		if (progress) progress("Downloading map index", 0);
-		Net::Response response;
-		if (!Net::get(RELEASE + meta.value("file", INDEX_FILE), response) || response.status != 200) return false;
-
-		std::string raw;
-		size_t rawSize = meta.value("rawSize", (size_t)0);
-		if (!gunzip(response.body, raw, rawSize) || sha256(raw) != meta.value("sha256", "")) {
-			std::cerr << "The downloaded map index is damaged" << std::endl;
+		std::string raw, problem;
+		if (!Files::getChecked(Files::stringField(meta, "file", INDEX_FILE), meta, MAX_INDEX_SIZE, raw, problem, stop)) {
+			std::cerr << "The downloaded map index is refused: " << problem << std::endl;
 			return false;
 		}
 
 		fs::path index = folder / "index.bin";
-		if (!writeFile(index, raw)) return false;
+		if (!Files::writeFile(index, raw)) return false;
 		return MapLocator::IndexMatchesManifest(index, plan.manifest);
 	}
 
 	// The small whole maps that aren't on disk, from the release if it has
 	// them for this map. What's still missing after, the app makes from the
 	// tiles when it needs it, see makeWholeMap.
-	static void downloadWholeMaps(const fs::path& folder, const Plan& plan) {
+	static void downloadWholeMaps(const fs::path& folder, const Plan& plan, Net::Stopper* stop) {
 		std::set<std::string> wanted;
 		for (const std::string& dir : plan.tileDirs) wanted.insert(WHOLE + dir + ".png");
 		// The ones of maps HoYoLAB has replaced. And they were called small_
@@ -486,30 +378,31 @@ namespace MapData {
 		if (missing.empty()) return;
 
 		json meta;
-		if (!fetchPublishedMeta(meta) || meta.value("manifest", "") != plan.manifest) return;
+		if (!fetchPublishedMeta(meta, stop) || Files::stringField(meta, "manifest", "") != plan.manifest) return;
 		if (!meta.contains("whole") || !meta["whole"].is_object()) return;
 		for (const std::string& dir : missing) {
 			std::string id = dir.substr(0, dir.find('_'));
 			json hash = meta["whole"].value(id, json());
 			Net::Response response;
-			if (!hash.is_string() || !Net::get(RELEASE + WHOLE + id + ".png", response) || response.status != 200) continue;
-			if (sha256(response.body) != hash.get<std::string>()) continue;
-			writeFile(folder / (WHOLE + dir + ".png"), response.body);
+			if (!hash.is_string() || !Net::get(Files::RELEASE + WHOLE + id + ".png", response, false, nullptr, stop) || response.status != 200) continue;
+			if (Files::sha256(response.body) != hash.get<std::string>()) continue;
+			Files::writeFile(folder / (WHOLE + dir + ".png"), response.body);
 		}
 	}
 
-	bool ensure(const fs::path& folder, const Progress& progress, const std::atomic<bool>* cancel) {
+	bool ensure(const fs::path& folder, const Progress& progress, Net::Stopper* stop) {
 		fs::path manifestPath = folder / "manifest.tsv";
 
 		if (progress) progress("Checking map data", 0);
 		Plan plan;
-		if (!makePlan(plan)) {
+		if (!makePlan(plan, stop)) {
+			if (stop && stop->stopped()) return false;
 			std::cerr << "Couldn't reach HoYoLAB, using the map data already on disk" << std::endl;
 			return fs::exists(manifestPath);
 		}
 
-		if (!fs::exists(manifestPath) || readText(manifestPath) != plan.manifest) {
-			if (!writeFile(manifestPath, plan.manifest)) return false;
+		if (!fs::exists(manifestPath) || Files::readText(manifestPath) != plan.manifest) {
+			if (!Files::writeFile(manifestPath, plan.manifest)) return false;
 		}
 
 		// where each underground floor image comes from, for drawing them later
@@ -519,15 +412,15 @@ namespace MapData {
 				overlayUrls += file.path + "\t" + file.url + "\n";
 			}
 		}
-		writeFile(folder / "overlay_urls.tsv", overlayUrls);
+		Files::writeFile(folder / "overlay_urls.tsv", overlayUrls);
 
-		bool ready = MapLocator::IndexMatchesManifest(folder / "index.bin", plan.manifest) || downloadPrebuiltIndex(folder, plan, progress);
+		bool ready = MapLocator::IndexMatchesManifest(folder / "index.bin", plan.manifest) || downloadPrebuiltIndex(folder, plan, progress, stop);
 		if (!ready) {
 			// no matching index published yet, get the images and build it here
 			removeOldTiles(folder, plan);
-			ready = downloadMissing(folder, plan.files, progress, cancel);
+			ready = downloadMissing(folder, plan.files, progress, stop ? stop->flag() : nullptr);
 		}
-		if (ready) downloadWholeMaps(folder, plan);
+		if (ready) downloadWholeMaps(folder, plan, stop);
 		return ready;
 	}
 
@@ -539,14 +432,9 @@ namespace MapData {
 			return 1;
 		}
 
-		if (!downloadItems()) {
-			std::cerr << "Downloading item data failed" << std::endl;
-			return 1;
-		}
-
 		json published;
 		// an index published before the small whole maps were gets made again with them
-		if (fetchPublishedMeta(published) && published.value("manifest", "") == plan.manifest && published.contains("whole")) {
+		if (fetchPublishedMeta(published) && Files::stringField(published, "manifest", "") == plan.manifest && published.contains("whole")) {
 			std::cout << "The published index is already current" << std::endl;
 			return 3;
 		}
@@ -565,7 +453,7 @@ namespace MapData {
 		}
 		removeOldTiles(folder, plan);
 		fs::path manifestPath = folder / "manifest.tsv";
-		if (!writeFile(manifestPath, plan.manifest)) return 1;
+		if (!Files::writeFile(manifestPath, plan.manifest)) return 1;
 
 		std::cout << "Building the index..." << std::endl;
 		MapLocator::Index index;
@@ -574,23 +462,17 @@ namespace MapData {
 			return 1;
 		}
 
-		std::string raw = readText(folder / "index.bin");
+		std::string raw = Files::readText(folder / "index.bin");
 		std::string packed;
-		if (raw.empty() || !gzip(raw, packed)) return 1;
-
-		char built[32];
-		std::time_t now = std::time(nullptr);
-		std::tm utc;
-		gmtime_s(&utc, &now);
-		std::strftime(built, sizeof(built), "%Y-%m-%dT%H:%M:%SZ", &utc);
+		if (raw.empty() || !Files::gzip(raw, packed)) return 1;
 
 		json meta = {
 			{ "format", META_FORMAT },
-			{ "built", built },
+			{ "built", Files::utcNow() },
 			{ "file", INDEX_FILE },
 			{ "size", packed.size() },
 			{ "rawSize", raw.size() },
-			{ "sha256", sha256(raw) },
+			{ "sha256", Files::sha256(raw) },
 			{ "manifest", plan.manifest },
 		};
 
@@ -599,158 +481,13 @@ namespace MapData {
 		meta["whole"] = json::object();
 		for (const auto& [id, grid] : readManifest(folder).grids) {
 			if (!makeWholeMap(folder, id, grid)) return 1;
-			std::string picture = readText(wholeMapPath(folder, grid));
-			if (picture.empty() || !writeFile(out / (WHOLE + std::to_string(id) + ".png"), picture)) return 1;
-			meta["whole"][std::to_string(id)] = sha256(picture);
+			std::string picture = Files::readText(wholeMapPath(folder, grid));
+			if (picture.empty() || !Files::writeFile(out / (WHOLE + std::to_string(id) + ".png"), picture)) return 1;
+			meta["whole"][std::to_string(id)] = Files::sha256(picture);
 		}
 
-		if (!writeFile(out / INDEX_FILE, packed) || !writeFile(out / META_FILE, meta.dump(1))) return 1;
+		if (!Files::writeFile(out / INDEX_FILE, packed) || !Files::writeFile(out / META_FILE, meta.dump(1))) return 1;
 		std::cout << "Wrote " << INDEX_FILE << " (" << packed.size() / 1000000.0 << " MB), " << META_FILE << " and the small whole maps" << std::endl;
 		return 0;
-	}
-
-	extern bool downloadItems() {
-		for (int map_id : MAP_IDS) {
-			if (!downloadItemIcons(map_id) || !downloadItemPositionData(map_id)) {
-				std::cerr << "[icons] failed to download icons for map " << map_id << std::endl;
-				return false;
-			}
-		}
-		return true;
-	}
-
-	// Need to implement for other maps (Not just map 2)
-	bool downloadItemIcons(int map_id) {
-		json data;
-		if (!getJson("/v2/map/label/tree?map_id=" + std::to_string(map_id) + "&app_sn=ys_obc&lang=en-us", data, true)
-			|| !data.is_object() || !data.contains("tree") || !data["tree"].is_array()) {
-			std::cerr << "[icons] label tree request failed or has an unexpected shape" << std::endl;
-			return false;
-		}
-
-		struct Icon { std::string url, path; };
-		std::map<int, Icon> icons;
-		fs::path folder = fs::path("items") / "icons";
-
-		std::vector<const json*> stack;
-		for (const json& node : data["tree"]) stack.push_back(&node);
-		while (!stack.empty()) {
-			const json& node = *stack.back();
-			stack.pop_back();
-			if (!node.is_object()) continue;
-
-			if (node.contains("id") && node["id"].is_number_integer()
-				&& node.contains("icon") && node["icon"].is_string()) {
-				int id = node["id"].get<int>();
-				std::string url = node["icon"].get<std::string>();
-				if (id > 0 && !url.empty()) {
-					std::string ext = ".png";
-					size_t dot = url.find_last_of('.'), slash = url.find_last_of('/');
-					if (dot != std::string::npos && slash != std::string::npos && dot > slash && url.size() - dot <= 5) {
-						ext = url.substr(dot);
-					}
-					icons.emplace(id, Icon{ url, (folder / (std::to_string(id) + ext)).string() });
-				}
-			}
-
-			if (node.contains("children") && node["children"].is_array()) {
-				for (const json& child : node["children"]) stack.push_back(&child);
-			}
-		}
-
-		if (icons.empty()) {
-			std::cerr << "[icons] the tree had no id/icon pairs" << std::endl;
-			return false;
-		}
-
-		std::error_code ec;
-		fs::create_directories(folder, ec);
-
-		std::vector<const Icon*> todo;
-		for (const auto& entry : icons) {
-			if (!fs::exists(fs::u8path(entry.second.path))) todo.push_back(&entry.second);
-		}
-
-		std::atomic<size_t> next{ 0 }, saved{ 0 }, failed{ 0 };
-		auto worker = [&]() {
-			for (;;) {
-				size_t i = next.fetch_add(1);
-				if (i >= todo.size()) return;
-
-				bool ok = false;
-				for (int attempt = 0; attempt < 3 && !ok; attempt++) {
-					Net::Response response;
-					if (Net::get(todo[i]->url, response, true) && response.status == 200 && !response.body.empty()) {
-						ok = writeFile(fs::u8path(todo[i]->path), response.body);
-					}
-				}
-				if (ok) saved++;
-				else {
-					failed++;
-					std::cerr << "[icons] failed: " << todo[i]->url << std::endl;
-				}
-			}
-			};
-
-		std::vector<std::thread> pool;
-		for (int t = 0; t < DOWNLOAD_THREADS; t++) pool.emplace_back(worker);
-		for (auto& thread : pool) thread.join();
-
-		std::cout << "[icons] " << icons.size() << " found, " << saved << " saved, "
-			<< (icons.size() - todo.size()) << " already there, " << failed << " failed" << std::endl;
-		return true;
-	}
-
-	extern bool downloadItemPositionData(int map_id)
-	{
-		json data;
-
-		std::string query =
-			"app_sn=ys_obc&lang=en-us&map_id=" + std::to_string(map_id);
-
-		if (!getJson("/v1/map/point/list?" + query, data))
-			return false;
-
-		if (!data.contains("point_list") || !data["point_list"].is_array())
-			return false;
-
-		fs::path folder = fs::path("items") / "positions";
-		fs::create_directories(folder);
-
-		std::unordered_map<int, json> positions;
-
-		for (const auto& point : data["point_list"])
-		{
-			if (!point.is_object() ||
-				!point.contains("label_id") ||
-				!point["label_id"].is_number_integer())
-			{
-				continue;
-			}
-
-			int labelId = point["label_id"].get<int>();
-
-			if (labelId <= 0)
-				continue;
-
-			// Cull the author_name and ctime, saves roughly 20% of the size of positions directory.
-			json cleanedPoint = point;
-			cleanedPoint.erase("author_name");
-			cleanedPoint.erase("ctime");
-
-			positions[labelId].push_back(std::move(cleanedPoint));
-		}
-
-		for (const auto& [labelId, points] : positions)
-		{
-			if (!writeFile(
-				folder / (std::to_string(labelId) + ".json"),
-				points.dump(2)))
-			{
-				return false;
-			}
-		}
-
-		return true;
 	}
 }
