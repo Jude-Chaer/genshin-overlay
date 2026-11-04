@@ -91,6 +91,8 @@
     <ClCompile Include="src\files.cpp" />
     <ClCompile Include="src\game_ui.cpp" />
     <ClCompile Include="src\helpers.cpp" />
+    <ClCompile Include="src\item_catalog.cpp" />
+    <ClCompile Include="src\item_files.cpp" />
     <ClCompile Include="src\keybindings.cpp" />
     <ClCompile Include="src\layer_choice.cpp" />
     <ClCompile Include="src\locator\map_locator.cpp" />
@@ -108,6 +110,8 @@
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
+    <ClCompile Include="tests\item_catalog_tests.cpp" />
+    <ClCompile Include="tests\item_files_tests.cpp" />
     <ClCompile Include="tests\net_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\layer_choice_tests.cpp" />
@@ -126,6 +130,8 @@
     <ClInclude Include="src\game_ui.hpp" />
     <ClInclude Include="src\helpers.hpp" />
     <ClInclude Include="src\files.hpp" />
+    <ClInclude Include="src\item_catalog.hpp" />
+    <ClInclude Include="src\item_files.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
     <ClInclude Include="src\locator\map_locator.hpp" />
