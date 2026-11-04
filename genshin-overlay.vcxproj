@@ -89,6 +89,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\appsample.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
@@ -111,6 +112,7 @@
     <ClCompile Include="src\stats.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\appsample.hpp" />
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\game_ui.hpp" />
