@@ -4,6 +4,7 @@
 #include "keybindings.hpp"
 #include "extensions.hpp"
 #include "helpers.hpp"
+#include "item_files.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
 #include "game_ui.hpp"
@@ -227,6 +228,58 @@ namespace Overlay {
         ImGui::Text("Center: %.0f, %.0f", r.lng, r.lat);
         ImGui::Text("Zoom: %.2f units/px  (%d inliers)", r.unitsPerPixel, r.inliers);
         ImGui::TextDisabled("updated %.1f s ago", view.secondsSinceUpdate);
+    }
+
+    // the map items' line when something's off, and the player's controls under it
+    static void DrawItemsStatus() {
+        static_assert(ItemFiles::RETRY == std::chrono::seconds(60), "the line says every minute");
+        ItemFiles::Status items = ItemFiles::GetStatus();
+        // the first check of the release takes a moment, the line waits for it
+        if (items.started) {
+            using ItemFiles::Reason;
+            using ItemFiles::State;
+            bool tryAgain = false;
+            std::string line;
+            if (items.state == State::Downloading) {
+                ImGui::Text("Map items: downloading %d%%", items.percent);
+                ImGui::ProgressBar(items.percent / 100.0f);
+            }
+            else if (items.reason == Reason::NoNetwork) {
+                line = items.state == State::Old ? "Map items: couldn't update, using the list from " + items.built
+                    : "Map items: not downloaded yet, trying again every minute (no internet?)";
+            }
+            else if (items.reason == Reason::NewerFormat) {
+                line = "Map items: update the overlay to get the new list";
+                if (items.state == State::Old) line += ", using the list from " + items.built;
+            }
+            else if (items.reason == Reason::BrokenPack) {
+                line = "Map items: the download was broken";
+                if (items.state == State::Old) line += ", using the list from " + items.built;
+                tryAgain = true;
+            }
+            else if (items.reason == Reason::CantSave) {
+                line = "Map items: can't save to the overlay folder, check it isn't read-only";
+                tryAgain = true;
+            }
+            else if (items.reason == Reason::DownloadOff && items.state == State::None) {
+                line = "Map items: none, the download is off";
+            }
+            if (!line.empty()) ImGui::TextWrapped("%s", line.c_str());
+            if (tryAgain) {
+                ImGui::BeginDisabled(items.checking);
+                if (ImGui::Button("Try again")) ItemFiles::CheckNow();
+                ImGui::EndDisabled();
+            }
+        }
+
+        if (ImGui::Checkbox("Download map items", &Settings::downloadItems)) {
+            Settings::Save();
+            ItemFiles::SetDownload(Settings::downloadItems);
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(items.checking || !Settings::downloadItems);
+        if (ImGui::Button(items.checking ? "Checking..." : "Check for new map items")) ItemFiles::CheckNow();
+        ImGui::EndDisabled();
     }
 
     // The overlay's own floor picker, for when the floor read off the game's
@@ -510,6 +563,7 @@ namespace Overlay {
                 ImGuiTreeNodeFlags_DefaultOpen
             )) {
                 DrawMapStatus();
+                DrawItemsStatus();
 
                 if (ImGui::Checkbox("Hide on map close", &Settings::hideOnMapClose)) {
                     Settings::Save();
