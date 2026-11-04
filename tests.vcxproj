@@ -105,6 +105,7 @@
     <ClCompile Include="src\stats.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
+    <ClCompile Include="tests\net_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\layer_choice_tests.cpp" />
     <ClCompile Include="tests\locator_tests.cpp" />
@@ -133,6 +134,7 @@
     <ClInclude Include="src\minimap_corner.hpp" />
     <ClInclude Include="src\minimap_door.hpp" />
     <ClInclude Include="src\net.hpp" />
+    <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />

@@ -7,6 +7,8 @@
 #include <deque>
 #include <atomic>
 #include <vector>
+#include <functional>
+#include "net_stop.hpp"
 
 namespace Net {
     struct Response {
@@ -15,8 +17,10 @@ namespace Net {
     };
 
     // Blocking GET over WinHTTP, follows redirects. hoyolab adds the Origin and
-    // Referer headers HoYoLAB's API and CDN want. False if it couldn't connect.
-    extern bool get(const std::string& url, Response& out, bool hoyolab = false);
+    // Referer headers HoYoLAB's API and CDN want. True only with the whole body:
+    // false if it couldn't connect, the body was cut short, or progress or
+    // stopper stopped it.
+    extern bool get(const std::string& url, Response& out, bool hoyolab = false, const Progress& progress = nullptr, Stopper* stopper = nullptr);
     extern bool post(const std::string& url, const std::string& body, Response& out, bool hoyolab = false);
     class WebSocket {
     public:

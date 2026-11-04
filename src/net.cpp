@@ -21,14 +21,85 @@ namespace Net {
 		return std::wstring(s.begin(), s.end());
 	}
 
-	bool get(const std::string& url, Response& out, bool hoyolab) {
-		std::call_once(sessionOnce, []() {
-			session = WinHttpOpen(L"genshin-overlay", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-			if (session) {
-				WinHttpSetTimeouts(session, 10000, 10000, 30000, 30000);
+	// get runs async on its own session, post and the web socket stay on the blocking one
+	static HINTERNET asyncSession = nullptr;
+	static std::once_flag asyncOnce;
+
+	Stopper::Stopper() : event(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+
+	Stopper::~Stopper() {
+		if (event) CloseHandle((HANDLE)event);
+	}
+
+	void Stopper::stop() {
+		done = true;
+		if (event) SetEvent((HANDLE)event);
+	}
+
+	// One get's request. WinHTTP runs each step on its own threads and tells
+	// onStatus when it's done; get waits for that or for its stopper. Closing an
+	// async request is how WinHTTP cancels it from any thread (a blocking one
+	// can't be closed while a call on it runs), and the Call lives until WinHTTP
+	// says the handle is closed, so nothing writes into it after that.
+	struct Call {
+		HANDLE stepDone = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+		HANDLE closed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+		DWORD available = 0;
+		DWORD read = 0;
+		bool failed = false;
+		std::vector<char> piece;
+
+		~Call() {
+			CloseHandle(stepDone);
+			CloseHandle(closed);
+		}
+
+		static HANDLE stopEvent(const Stopper* stopper) {
+			return stopper ? (HANDLE)stopper->event : nullptr;
+		}
+	};
+
+	static void CALLBACK onStatus(HINTERNET, DWORD_PTR context, DWORD status, LPVOID info, DWORD length) {
+		Call* call = (Call*)context;
+		if (!call) return;
+		switch (status) {
+		case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
+		case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
+			SetEvent(call->stepDone);
+			break;
+		case WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE:
+			call->available = *(DWORD*)info;
+			SetEvent(call->stepDone);
+			break;
+		case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
+			call->read = length;
+			SetEvent(call->stepDone);
+			break;
+		case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
+			call->failed = true;
+			SetEvent(call->stepDone);
+			break;
+		case WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING:
+			SetEvent(call->closed);
+			break;
+		}
+	}
+
+	// waits for the step WinHTTP is on, false when it failed or stop came first
+	static bool waitStep(Call& call, const Stopper* stopper) {
+		HANDLE events[2] = { call.stepDone, Call::stopEvent(stopper) };
+		DWORD which = WaitForMultipleObjects(events[1] ? 2 : 1, events, FALSE, INFINITE);
+		return which == WAIT_OBJECT_0 && !call.failed;
+	}
+
+	bool get(const std::string& url, Response& out, bool hoyolab, const Progress& progress, Stopper* stopper) {
+		std::call_once(asyncOnce, []() {
+			asyncSession = WinHttpOpen(L"genshin-overlay", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+			if (asyncSession) {
+				WinHttpSetTimeouts(asyncSession, 10000, 10000, 30000, 30000);
 			}
 			});
-		if (!session) return false;
+		if (!asyncSession || (stopper && stopper->stopped())) return false;
 
 		std::wstring wideUrl = widen(url);
 		URL_COMPONENTS parts = {};
@@ -45,37 +116,53 @@ namespace Net {
 		if (!WinHttpCrackUrl(wideUrl.c_str(), 0, 0, &parts)) return false;
 
 		std::wstring target = std::wstring(path) + extra;
+		HINTERNET connection = WinHttpConnect(asyncSession, host, parts.nPort, 0);
+		if (!connection) return false;
+		HINTERNET request = WinHttpOpenRequest(connection, L"GET", target.c_str(), nullptr, WINHTTP_NO_REFERER,
+			WINHTTP_DEFAULT_ACCEPT_TYPES, parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
+		if (!request) {
+			WinHttpCloseHandle(connection);
+			return false;
+		}
+
+		Call* call = new Call();
+		DWORD_PTR context = (DWORD_PTR)call;
+		WinHttpSetOption(request, WINHTTP_OPTION_CONTEXT_VALUE, &context, sizeof(context));
+		WinHttpSetStatusCallback(request, onStatus, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES, 0);
+
 		bool ok = false;
-		HINTERNET connection = WinHttpConnect(session, host, parts.nPort, 0);
-		HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", target.c_str(), nullptr, WINHTTP_NO_REFERER,
-			WINHTTP_DEFAULT_ACCEPT_TYPES, parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) : nullptr;
+		const wchar_t* headers = hoyolab ? L"Origin: https://act.hoyolab.com\r\nReferer: https://act.hoyolab.com/\r\n" : WINHTTP_NO_ADDITIONAL_HEADERS;
+		if (WinHttpSendRequest(request, headers, hoyolab ? (DWORD)-1L : 0, WINHTTP_NO_REQUEST_DATA, 0, 0, context) && waitStep(*call, stopper)
+			&& WinHttpReceiveResponse(request, nullptr) && waitStep(*call, stopper)) {
+			DWORD status = 0, size = sizeof(status);
+			WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
+			out.status = (int)status;
+			out.body.clear();
+			// when the server says how long the body is, a shorter one is cut short
+			uint64_t expected = 0;
+			DWORD expectedSize = sizeof(expected);
+			bool sized = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER64, WINHTTP_HEADER_NAME_BY_INDEX,
+				&expected, &expectedSize, WINHTTP_NO_HEADER_INDEX);
 
-		if (request) {
-			const wchar_t* headers = hoyolab ? L"Origin: https://act.hoyolab.com\r\nReferer: https://act.hoyolab.com/\r\n" : WINHTTP_NO_ADDITIONAL_HEADERS;
-			if (WinHttpSendRequest(request, headers, hoyolab ? (DWORD)-1L : 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
-				&& WinHttpReceiveResponse(request, nullptr)) {
-				DWORD status = 0, size = sizeof(status);
-				WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
-				out.status = (int)status;
-				out.body.clear();
-
-				ok = true;
-				DWORD available = 0;
-				while (WinHttpQueryDataAvailable(request, &available) && available > 0) {
-					size_t offset = out.body.size();
-					out.body.resize(offset + available);
-					DWORD read = 0;
-					if (!WinHttpReadData(request, &out.body[offset], available, &read)) {
-						ok = false;
-						break;
-					}
-					out.body.resize(offset + read);
+			// in async mode the sizes come in the callback, the pointers stay null
+			while (WinHttpQueryDataAvailable(request, nullptr) && waitStep(*call, stopper)) {
+				if (call->available == 0) {
+					ok = !sized || out.body.size() == expected;
+					break;
 				}
+				call->piece.resize(call->available);
+				if (!WinHttpReadData(request, call->piece.data(), call->available, nullptr) || !waitStep(*call, stopper)) break;
+				out.body.append(call->piece.data(), call->read);
+				if (progress && !progress(out.body.size())) break;
 			}
 		}
 
-		if (request) WinHttpCloseHandle(request);
-		if (connection) WinHttpCloseHandle(connection);
+		// whatever step it was on is cancelled; the Call goes once WinHTTP is done with it
+		WinHttpCloseHandle(request);
+		if (WaitForSingleObject(call->closed, 5000) == WAIT_OBJECT_0) delete call;
+		else std::cerr << "WinHTTP didn't close a request in 5 s, its buffer is left to it" << std::endl;
+		WinHttpCloseHandle(connection);
+		if (stopper && stopper->stopped()) ok = false;
 		return ok;
 	}
 	bool Net::post(const std::string& url, const std::string& body, Response& out, bool hoyolab)
