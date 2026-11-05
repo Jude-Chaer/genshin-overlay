@@ -436,8 +436,8 @@ TEST_CASE("with no internet, the item files there are used and said to be old, w
     CHECK(run.status.state == State::Old);
     CHECK(run.status.reason == Reason::NoNetwork);
     CHECK(run.status.built == "2026-10-17");
-    // with a list there, it doesn't keep trying (B3-S1)
-    CHECK_FALSE(ItemFiles::waitsForNetwork(run.status));
+    // with a list there, it keeps trying too, so the line goes once the internet is back
+    CHECK(ItemFiles::waitsForNetwork(run.status));
     inUse(run);
 }
 

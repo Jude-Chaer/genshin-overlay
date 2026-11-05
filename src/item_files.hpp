@@ -117,12 +117,13 @@ namespace ItemFiles {
 
     // how long it waits before checking again with no network (the menu line says "every minute")
     inline constexpr std::chrono::seconds RETRY{ 60 };
-    // true when update said none for want of a network, the one case that checks again on its own
-    // after RETRY; the rest waits for the player (the menu's buttons) or the next start
+    // true when update couldn't reach the release, the one case that checks again on its own
+    // after RETRY, with or without a list there; the rest waits for the player (the menu's
+    // buttons) or the next start
     extern bool waitsForNetwork(const Status& status);
 
-    // update on a thread of its own: at start, again every minute while there
-    // are none for want of a network, and whenever CheckNow or SetDownload asks.
+    // update on a thread of its own: at start, again every minute while the
+    // release can't be reached, and whenever CheckNow or SetDownload asks.
     // Started and stopped in main; AskToStop lets every module start closing
     // before main waits for each.
     extern void Start(const std::filesystem::path& folder, bool download);

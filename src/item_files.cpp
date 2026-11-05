@@ -459,7 +459,7 @@ namespace ItemFiles {
 	}
 
 	bool waitsForNetwork(const Status& status) {
-		return status.state == State::None && status.reason == Reason::NoNetwork;
+		return status.reason == Reason::NoNetwork;
 	}
 
 	static std::thread worker;

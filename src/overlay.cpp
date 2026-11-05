@@ -245,7 +245,7 @@ namespace Overlay {
                 ImGui::ProgressBar(items.percent / 100.0f);
             }
             else if (items.reason == Reason::NoNetwork) {
-                line = items.state == State::Old ? "Map items: couldn't update, using the list from " + items.built
+                line = items.state == State::Old ? "Map items: couldn't update, using the list from " + items.built + ", trying again every minute"
                     : "Map items: not downloaded yet, trying again every minute (no internet?)";
             }
             else if (items.reason == Reason::NewerFormat) {
