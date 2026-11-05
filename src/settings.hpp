@@ -27,6 +27,9 @@ namespace Settings {
     // SIFT tries the game 480 wide first, and 960 only if that isn't a strong match
     extern bool findSmallFirst;
 
+    // the map items are downloaded from the release when there's a newer pack (the menu's "Download map items")
+    extern bool downloadItems;
+
     // The file the settings are in. Empty means settings.json next to the exe,
     // the tests point it somewhere else.
     extern std::filesystem::path file;

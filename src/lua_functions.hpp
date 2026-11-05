@@ -7,6 +7,9 @@
 #include "net.hpp"
 #include "extensions.hpp"
 
+namespace ItemCatalog { class Catalog; }
+namespace ItemFiles { struct Status; }
+
 namespace LuaFunctions {
     void registerLuaFunctions(sol::state& luaState);
 
@@ -67,8 +70,12 @@ namespace LuaFunctions {
     sol::object GetPlayerPosition(sol::this_state state);
     sol::object GetMapGrid(int mapId, sol::this_state state);
     GLuint GetMapTile(int mapId, int x, int y, int size);
-    GLuint GetItemIcon(int itemId);
-    sol::object GetItemPositions(int itemId, sol::this_state state);
+    uint64_t GetItemsVersion();
+    sol::object GetItemsState(sol::this_state state);
+    sol::object GetItemTypes(sol::this_state state);
+    sol::object GetItemPositions(int type, sol::this_state state);
+    sol::object GetItemRegions(sol::this_state state);
+    sol::object GetItemIcon(int type, sol::this_state state);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color); // The "G" is only there because DrawText is already used by the Windows API
@@ -95,5 +102,16 @@ namespace LuaFunctions {
     void ClearInterval(int id);
     void UpdateIntervals();
     std::tuple<int, int> GetMousePosition();
+
+    // what the GetItem functions give, from the catalog passed in (nullptr for none)
+    namespace Items {
+        // takes the catalog the GetItem functions read until the next frame, and frees
+        // the icons of an older one; call before the extensions update
+        void beginFrame();
+        sol::table state(const ItemFiles::Status& status, sol::state_view lua);
+        sol::table types(const ItemCatalog::Catalog* catalog, sol::state_view lua);
+        sol::object positions(const ItemCatalog::Catalog* catalog, int type, sol::state_view lua);
+        sol::table regions(const ItemCatalog::Catalog* catalog, sol::state_view lua);
+    }
 
 }
