@@ -61,6 +61,7 @@ namespace Keybindings {
     extern std::vector<std::unique_ptr<Keybind>> keybinds;
     extern void Init(GLFWwindow* window);
     extern void Shutdown();
+    // the keybind's id for DeleteKeybind, empty when the key is taken
     extern std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers = KeybindModifiers_None);
     extern void ProcessKeybindings();
     extern void RefreshRegistrations();
