@@ -309,6 +309,8 @@ namespace {
         std::vector<std::string> asked;
         // stopped by the fake download partway, like closing the overlay
         Net::Stopper* stopAt = nullptr;
+        // unticked by the fake download partway, like the menu's checkbox
+        std::atomic<bool>* untickAt = nullptr;
 
         ItemFiles::Fetch fetch() {
             return [this](const std::string& name, std::string& body, const Net::Progress& progress) {
@@ -318,6 +320,7 @@ namespace {
                 // comes in pieces, so there's a percent to show
                 for (size_t got = 4096; progress && got < file->second.size(); got += 4096) {
                     if (stopAt && got >= 8192) stopAt->stop();
+                    if (untickAt && got >= 8192) *untickAt = false;
                     if (!progress(got)) return false;
                 }
                 if (progress && !progress(file->second.size())) return false;
@@ -344,9 +347,10 @@ namespace {
     Run update(const fs::path& items, Release& release, bool download = true, Net::Stopper* stop = nullptr,
         std::shared_ptr<const ItemCatalog::Catalog> inUse = nullptr) {
         Net::Stopper never;
+        std::atomic<bool> on{ download };
         Run run;
         uint64_t before = ItemCatalog::version();
-        run.status = ItemFiles::update(items, release.fetch(), download, stop ? *stop : never,
+        run.status = ItemFiles::update(items, release.fetch(), release.untickAt ? *release.untickAt : on, stop ? *stop : never,
             [&](const ItemFiles::Status& status) { run.shown.push_back(status); }, inUse);
         run.published = ItemCatalog::version() - before;
         return run;
@@ -666,6 +670,21 @@ TEST_CASE("closing the overlay stops a download partway and changes nothing") {
     CHECK_FALSE(fs::exists(items));
     CHECK(run.shown.back().state == State::Downloading);
     CHECK(run.shown.back().percent < 100);
+}
+
+TEST_CASE("unticking the download partway stops it and says the download is off, not no internet") {
+    fs::path items = noItems();
+    Release release = released();
+    std::atomic<bool> on{ true };
+    release.untickAt = &on;
+    Run run = update(items, release);
+    CHECK(run.status.state == State::None);
+    CHECK(run.status.reason == Reason::DownloadOff);
+    CHECK_FALSE(ItemFiles::waitsForNetwork(run.status));
+    CHECK(run.published == 0);
+    CHECK_FALSE(fs::exists(items));
+    // nothing on the way says no internet
+    for (const ItemFiles::Status& shown : run.shown) CHECK(shown.reason != Reason::NoNetwork);
 }
 
 TEST_CASE("a pack bigger than its items.json says, or with no size, is stopped as broken") {

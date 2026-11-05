@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -109,7 +110,8 @@ namespace ItemFiles {
     // stop makes it give up at the next piece of a download or a load.
     // inUse is the catalog published now: a check never replaces it with the
     // same pack or with the one on disk, it only says how it went.
-    extern Status update(const std::filesystem::path& folder, const Fetch& fetch, bool download,
+    // download is read as it goes: unticked partway, the download stops and says so.
+    extern Status update(const std::filesystem::path& folder, const Fetch& fetch, const std::atomic<bool>& download,
         const Net::Stopper& stop, const std::function<void(const Status&)>& onChange,
         std::shared_ptr<const ItemCatalog::Catalog> inUse = nullptr);
 

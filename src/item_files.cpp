@@ -341,7 +341,7 @@ namespace ItemFiles {
 		}
 	}
 
-	Status update(const fs::path& folder, const Fetch& fetch, bool download, const Net::Stopper& stop, const std::function<void(const Status&)>& onChange,
+	Status update(const fs::path& folder, const Fetch& fetch, const std::atomic<bool>& download, const Net::Stopper& stop, const std::function<void(const Status&)>& onChange,
 		std::shared_ptr<const ItemCatalog::Catalog> inUse) {
 		forgetUnpacked(folder);
 		json installedMeta;
@@ -386,7 +386,7 @@ namespace ItemFiles {
 		json published;
 		if (download) {
 			std::string body;
-			if (!fetch(META_FILE, body, nullptr)) reason = Reason::NoNetwork;
+			if (!fetch(META_FILE, body, nullptr)) reason = download ? Reason::NoNetwork : Reason::DownloadOff;
 			else {
 				reason = readMeta(body, published);
 				if (reason != Reason::None) published = nullptr;
@@ -417,12 +417,13 @@ namespace ItemFiles {
 					onChange(progress);
 				}
 				tooBig = tooBig || bytes > size;
-				return !stop.stopped() && !tooBig;
+				return !stop.stopped() && !tooBig && download;
 			});
 			if (stop.stopped()) return Status();
 			start = std::chrono::steady_clock::now();
 			if (!got) {
-				reason = size == 0 || size > MAX_RAW_SIZE || tooBig ? Reason::BrokenPack : Reason::NoNetwork;
+				// unticked partway: the player cut it, the network didn't
+				reason = size == 0 || size > MAX_RAW_SIZE || tooBig ? Reason::BrokenPack : download ? Reason::NoNetwork : Reason::DownloadOff;
 				if (reason == Reason::BrokenPack) std::cerr << "[items] the release's pack isn't the size its items.json says" << std::endl;
 			}
 			else if (!inUseHash.empty() && releasedHash == inUseHash) {
