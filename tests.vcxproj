@@ -166,6 +166,7 @@
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\packets\frames.cpp" />
     <ClCompile Include="src\screen_pictures.cpp" />
     <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -196,6 +197,7 @@
     <ClCompile Include="tests\map_follow_tests.cpp" />
     <ClCompile Include="tests\minimap_tests.cpp" />
     <ClCompile Include="tests\overlay_tests.cpp" />
+    <ClCompile Include="tests\packets_tests.cpp" />
     <ClCompile Include="tests\triggers_tests.cpp" />
     <ClCompile Include="tests\typing_tests.cpp" />
     <ClCompile Include="tests\screen_pictures_tests.cpp" />
@@ -235,6 +237,7 @@
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\packets\frames.hpp" />
     <ClInclude Include="src\screen_pictures.hpp" />
     <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
