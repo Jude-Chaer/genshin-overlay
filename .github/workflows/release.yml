@@ -54,6 +54,8 @@ jobs:
           # the example is for extension authors, it uses the internet at every start
           New-Item -ItemType Directory "$folder\extensions" | Out-Null
           Get-ChildItem extensions -Directory | Where-Object Name -ne "example" | Copy-Item -Recurse -Destination "$folder\extensions"
+          # the game traffic's keys, the ones the overlay falls back on
+          Copy-Item -Recurse packets $folder
           Copy-Item README.md $folder
           # the zoom bar detector looks for it next to the exe
           Copy-Item zoombar_template.png $folder
