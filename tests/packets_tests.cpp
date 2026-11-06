@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "packets/frames.hpp"
 #include "packets/kcp.hpp"
+#include "packets/messages.hpp"
 
 // tests/data/traffic is a cut of a real 7.2 session, see its answers.md. The
 // whole recordings with their logins are only on the PC they were made on, the
@@ -55,6 +56,25 @@ namespace {
         return out;
     }
 
+}
+
+TEST_CASE("NextField reads protobuf without knowing the message") {
+    // a known format, written by hand: 1: 150, 2: "hi", 3: fixed32 1
+    std::string data("\x08\x96\x01\x12\x02hi\x1d\x01\x00\x00\x00", 12);
+    std::string_view rest = data;
+    Messages::Field field;
+    REQUIRE(Messages::NextField(rest, field));
+    CHECK((field.number == 1 && field.wire == 0 && field.value == 150));
+    REQUIRE(Messages::NextField(rest, field));
+    CHECK((field.number == 2 && field.bytes == "hi"));
+    REQUIRE(Messages::NextField(rest, field));
+    CHECK((field.number == 3 && field.wire == 5 && field.value == 1));
+    CHECK_FALSE(Messages::NextField(rest, field));
+
+    // a length past the end
+    std::string broken = "\x12\x09hi";
+    rest = broken;
+    CHECK_FALSE(Messages::NextField(rest, field));
 }
 
 TEST_CASE("Every test data frame is the game server's udp") {
