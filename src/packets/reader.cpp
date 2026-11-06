@@ -23,6 +23,9 @@ namespace Packets {
     // server came 9 s or more after the old one went quiet. One this quiet
     // can be taken over by another, for a handshake that was missed.
     static constexpr uint64_t SERVER_QUIET_MS = 5000;
+    // Inside a session the recordings are quiet 19 s at most, the long gaps
+    // all come after the server's disconnect
+    static constexpr uint64_t QUIET_MS = 60000;
     // a pass has to run this long before it says how long it has left
     static constexpr int64_t ESTIMATE_AFTER_MS = 2000;
 
@@ -118,6 +121,7 @@ namespace Packets {
             m_hasServer = true;
             m_server = packet.server;
         }
+        m_lastFrame = ms;
         m_serverSeen = ms;
         switch (packet.kind) {
         case Frames::Kind::None:
@@ -134,13 +138,7 @@ namespace Packets {
             // the old connection's disconnect, copied from another adapter
             if (m_lastHandshake && ms < m_lastHandshake + HANDSHAKE_COPY_MS)
                 return;
-            m_hasServer = false;
-            m_search.reset();
-            m_waiting.clear();
-            m_phase = Phase::Idle;
-            m_state = State::WaitingForLogin;
-            m_reason = Reason::None;
-            m_idleSince = 0;
+            waitForLogin();
             return;
         case Frames::Kind::Data:
             break;
@@ -183,6 +181,28 @@ namespace Packets {
         m_key.clear();
         m_serverSeeds.clear();
         m_sentMs = 0;
+    }
+
+    void Reader::waitForLogin() {
+        m_hasServer = false;
+        m_search.reset();
+        m_waiting.clear();
+        m_phase = Phase::Idle;
+        m_state = State::WaitingForLogin;
+        m_reason = Reason::None;
+        m_idleSince = 0;
+    }
+
+    void Reader::Missed() {
+        if (m_phase != Phase::Idle && m_phase != Phase::Stopped)
+            stop(State::NeedsRelog, Reason::MissedPackets);
+    }
+
+    void Reader::Tick(uint64_t nowMs) {
+        if (!m_lastFrame || nowMs < m_lastFrame + QUIET_MS)
+            return;
+        m_lastFrame = 0;
+        waitForLogin();
     }
 
     void Reader::stop(State state, Reason reason) {

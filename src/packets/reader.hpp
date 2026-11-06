@@ -41,6 +41,12 @@ namespace Packets {
         void Update(std::vector<Messages::Message>& out);
         // waits for a key search that runs, for replays. False when none ran
         bool Finish(std::vector<Messages::Message>& out);
+        // The capture threw frames away. Past a login the stream can't be
+        // read any more, waiting for one nothing was lost.
+        void Missed();
+        // Called with no frames too, nowMs unix. Nothing from the game for a
+        // minute means it closed: back to waiting for a login.
+        void Tick(uint64_t nowMs);
 
         State GetState() const;
         Reason GetReason() const { return m_reason; }
@@ -61,6 +67,7 @@ namespace Packets {
         struct Search;
 
         void login(uint64_t ms, bool handshake);
+        void waitForLogin();
         void stop(State state, Reason reason);
         void handle(Kcp::Message& message, uint64_t ms, std::vector<Messages::Message>& out);
         void loginMessage(Kcp::Message& message, uint64_t ms, std::vector<Messages::Message>& out);
@@ -82,6 +89,7 @@ namespace Packets {
         State m_state = State::WaitingForLogin;
         Reason m_reason = Reason::None;
         uint64_t m_lastHandshake = 0;
+        uint64_t m_lastFrame = 0;
         // data with no login since, to say it started late
         uint64_t m_idleSince = 0;
 
