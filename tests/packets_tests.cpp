@@ -7,6 +7,7 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include "packets/frames.hpp"
+#include "packets/kcp.hpp"
 
 // tests/data/traffic is a cut of a real 7.2 session, see its answers.md. The
 // whole recordings with their logins are only on the PC they were made on, the
@@ -39,6 +40,21 @@ namespace {
         return frames;
     }
 
+    std::vector<Kcp::Message> kcpMessages(const std::vector<Frame>& frames, bool handshakeFirst = false, bool* broken = nullptr) {
+        Kcp::Reader kcp;
+        if (handshakeFirst)
+            kcp.Reset();
+        std::vector<Kcp::Message> out;
+        for (const Frame& frame : frames) {
+            Frames::Packet packet = Frames::Read(frame.data.data(), frame.data.size(), Frames::Start::Ethernet);
+            if (packet.kind == Frames::Kind::Data)
+                kcp.Feed(packet.direction, packet.data, packet.size, frame.ms, out);
+        }
+        if (broken)
+            *broken = kcp.Broken();
+        return out;
+    }
+
 }
 
 TEST_CASE("Every test data frame is the game server's udp") {
@@ -56,4 +72,20 @@ TEST_CASE("Every test data frame is the game server's udp") {
     CHECK(ip.kind == Frames::Kind::Data);
     CHECK(ip.size == ethernet.size);
     CHECK(ip.data == ethernet.data);
+}
+
+TEST_CASE("KCP starts at the first sn it sees when there was no handshake") {
+    std::vector<Frame> frames = readFrames(DATA / "frames.bin");
+    CHECK(kcpMessages(frames).size() == 685);
+    // after a handshake it waits for sn 0, which this data starts long after
+    CHECK(kcpMessages(frames, true).empty());
+}
+
+TEST_CASE("A frame missed in the middle stops KCP for good") {
+    std::vector<Frame> frames = readFrames(DATA / "frames.bin");
+    frames.erase(frames.begin() + 100);
+    bool broken = false;
+    std::vector<Kcp::Message> messages = kcpMessages(frames, false, &broken);
+    CHECK(broken);
+    CHECK(messages.size() < 685);
 }
