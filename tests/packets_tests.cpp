@@ -9,6 +9,7 @@
 #include "packets/frames.hpp"
 #include "packets/kcp.hpp"
 #include "packets/messages.hpp"
+#include "packets/session_key.hpp"
 
 // tests/data/traffic is a cut of a real 7.2 session, see its answers.md. The
 // whole recordings with their logins are only on the PC they were made on, the
@@ -16,6 +17,7 @@
 
 namespace {
     const std::filesystem::path DATA = std::filesystem::path(__FILE__).parent_path() / "data" / "traffic";
+    const std::filesystem::path KEYS = std::filesystem::path(__FILE__).parent_path().parent_path() / "packets";
     struct Frame {
         uint64_t ms = 0;
         std::vector<uint8_t> data;
@@ -41,6 +43,21 @@ namespace {
         return frames;
     }
 
+    SessionKey::Keys keys() {
+        SessionKey::Keys out;
+        REQUIRE(SessionKey::LoadKeys(KEYS, out));
+        return out;
+    }
+
+    // the answer in answers.md: the first number of time seed 1793968363276
+    const uint64_t TEST_TIME_SEED = 1793968363276, TEST_SERVER_SEED = 10378004310333966569ull;
+    const int32_t TEST_SAMPLE = 1385065457;
+
+    std::string testKey() {
+        SessionKey::CsRandom random{ int32_t(uint32_t(TEST_TIME_SEED)) };
+        return SessionKey::KeyFromSeed(random.NextSafeUInt64() ^ TEST_SERVER_SEED);
+    }
+
     std::vector<Kcp::Message> kcpMessages(const std::vector<Frame>& frames, bool handshakeFirst = false, bool* broken = nullptr) {
         Kcp::Reader kcp;
         if (handshakeFirst)
@@ -56,6 +73,30 @@ namespace {
         return out;
     }
 
+    std::vector<std::string> firstData(const std::vector<Kcp::Message>& messages, size_t count) {
+        std::vector<std::string> out;
+        for (size_t i = 0; i < messages.size() && i < count; i++)
+            out.push_back(messages[i].data);
+        return out;
+    }
+
+}
+
+TEST_CASE("CsRandom gives what .NET Framework's Random gives") {
+    struct Case { int32_t seed; double first, second; };
+    // from [System.Random]::new(seed).NextDouble() in Windows PowerShell
+    Case cases[] = {
+        { 0, 0.72624326996795985, 0.81732535959096875 },
+        { 12345, 0.066746934813795109, 0.070159508879370752 },
+        { -7, 0.38322046929189024, 0.87125568272138743 },
+        { 1792258392, 0.2749534120200916, 0.56214887674997971 },
+        { INT32_MIN, 0.72624326996795985, 0.81732535959096875 },
+    };
+    for (const Case& c : cases) {
+        SessionKey::CsRandom random(c.seed);
+        CHECK(random.NextDouble() == c.first);
+        CHECK(random.NextDouble() == c.second);
+    }
 }
 
 TEST_CASE("NextField reads protobuf without knowing the message") {
@@ -75,6 +116,12 @@ TEST_CASE("NextField reads protobuf without knowing the message") {
     std::string broken = "\x12\x09hi";
     rest = broken;
     CHECK_FALSE(Messages::NextField(rest, field));
+}
+
+TEST_CASE("The keys next to the overlay load") {
+    SessionKey::Keys loaded = keys();
+    CHECK(loaded.dispatch.size() >= 10);
+    CHECK(loaded.rsaPem.size() == 2);
 }
 
 TEST_CASE("Every test data frame is the game server's udp") {
@@ -101,6 +148,26 @@ TEST_CASE("KCP starts at the first sn it sees when there was no handshake") {
     CHECK(kcpMessages(frames, true).empty());
 }
 
+TEST_CASE("Every test data message opens with the session key and has its id") {
+    std::vector<Kcp::Message> messages = kcpMessages(readFrames(DATA / "frames.bin"));
+    std::ifstream file(DATA / "ids.txt");
+    std::vector<uint16_t> ids;
+    for (int id; file >> id;)
+        ids.push_back(uint16_t(id));
+    REQUIRE(ids.size() == 685);
+    REQUIRE(messages.size() == ids.size());
+
+    std::string key = testKey();
+    for (size_t i = 0; i < messages.size(); i++) {
+        Messages::Message opened;
+        INFO("message " << i);
+        REQUIRE(Messages::Open(key, messages[i].data, messages[i].direction, opened));
+        CHECK(opened.id == ids[i]);
+    }
+    Messages::Message opened;
+    CHECK_FALSE(Messages::Open(SessionKey::KeyFromSeed(1), messages[0].data, messages[0].direction, opened));
+}
+
 TEST_CASE("A frame missed in the middle stops KCP for good") {
     std::vector<Frame> frames = readFrames(DATA / "frames.bin");
     frames.erase(frames.begin() + 100);
@@ -108,4 +175,43 @@ TEST_CASE("A frame missed in the middle stops KCP for good") {
     std::vector<Kcp::Message> messages = kcpMessages(frames, false, &broken);
     CHECK(broken);
     CHECK(messages.size() < 685);
+}
+
+TEST_CASE("The first search pass finds the test data's key from the first message") {
+    std::vector<std::string> first = firstData(kcpMessages(readFrames(DATA / "frames.bin")), 1);
+    std::atomic<bool> cancel = false;
+    SessionKey::Found found;
+    REQUIRE(SessionKey::SearchBetween(TEST_TIME_SEED - 60000, TEST_TIME_SEED + 60000, 5, { 1, TEST_SERVER_SEED }, first, cancel, found));
+    CHECK(found.timeSeed == TEST_TIME_SEED);
+    CHECK(found.number == 1);
+    CHECK(found.serverSeed == TEST_SERVER_SEED);
+    CHECK(found.key == testKey());
+    CHECK_FALSE(SessionKey::SearchBetween(TEST_TIME_SEED - 60000, TEST_TIME_SEED + 60000, 5, { TEST_SERVER_SEED + 1 }, first,
+        cancel, found));
+    CHECK_FALSE(SessionKey::SearchBetween(TEST_TIME_SEED + 1, TEST_TIME_SEED + 60000, 5, { TEST_SERVER_SEED }, first, cancel, found));
+    cancel = true;
+    CHECK_FALSE(SessionKey::SearchBetween(TEST_TIME_SEED - 60000, TEST_TIME_SEED + 60000, 5, { TEST_SERVER_SEED }, first, cancel, found));
+}
+
+TEST_CASE("The quick search only tries the numbers it's given") {
+    std::vector<std::string> check = firstData(kcpMessages(readFrames(DATA / "frames.bin")), 4);
+    SessionKey::Found found;
+    REQUIRE(SessionKey::SearchNear(TEST_TIME_SEED + 40, 3000, 1, 5, { TEST_SERVER_SEED }, check, found));
+    CHECK(found.timeSeed == TEST_TIME_SEED);
+    CHECK(found.number == 1);
+    CHECK_FALSE(SessionKey::SearchNear(TEST_TIME_SEED + 40, 3000, 2, 5, { TEST_SERVER_SEED }, check, found));
+    CHECK_FALSE(SessionKey::SearchNear(TEST_TIME_SEED + 40, 40, 1, 5, { TEST_SERVER_SEED }, check, found));
+}
+
+TEST_CASE("The second search pass finds the test data's key with no time") {
+    std::vector<std::string> check = firstData(kcpMessages(readFrames(DATA / "frames.bin")), 4);
+    std::atomic<bool> cancel = false;
+    SessionKey::Found found;
+    REQUIRE(SessionKey::SearchSamples(TEST_SAMPLE - 2000000, TEST_SAMPLE + 2000000, { TEST_SERVER_SEED }, check, cancel, found));
+    CHECK(found.sample == TEST_SAMPLE);
+    CHECK(found.number == 0);
+    CHECK(found.key == testKey());
+    std::atomic<uint64_t> done = 0;
+    CHECK_FALSE(SessionKey::SearchSamples(TEST_SAMPLE + 1, TEST_SAMPLE + 2000000, { TEST_SERVER_SEED }, check, cancel, found, &done));
+    CHECK(done == 2000000);
 }
