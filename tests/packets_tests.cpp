@@ -6,6 +6,7 @@
 #include <thread>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
+#include "packets/packet_capture.hpp"
 #include "packets/frames.hpp"
 #include "packets/kcp.hpp"
 #include "packets/messages.hpp"
@@ -271,6 +272,76 @@ TEST_CASE("Every test data frame is the game server's udp") {
     CHECK(ip.kind == Frames::Kind::Data);
     CHECK(ip.size == ethernet.size);
     CHECK(ip.data == ethernet.data);
+}
+
+TEST_CASE("Raw sockets keep only the game's udp") {
+    std::vector<Frame> frames = readFrames(DATA / "frames.bin");
+    REQUIRE(!frames.empty());
+    std::vector<uint8_t> ip(frames[0].data.begin() + 14, frames[0].data.end());
+    CHECK(PacketCapture::GamePacket(ip.data(), ip.size()));
+    // the same packet from another port, the server's port is the source
+    size_t udp = size_t(ip[0] & 15) * 4;
+    ip[udp] = 0x01;
+    ip[udp + 1] = 0xbb;
+    CHECK_FALSE(PacketCapture::GamePacket(ip.data(), ip.size()));
+    CHECK_FALSE(PacketCapture::GamePacket(ip.data(), 10));
+}
+
+TEST_CASE("The capture's queue is capped by bytes and says what it threw away") {
+    PacketCapture::Queue queue(1000);
+    auto frame = [](size_t size) {
+        PacketCapture::Frame f;
+        f.data.resize(size);
+        return f;
+    };
+    queue.Push(frame(400));
+    queue.Push(frame(400));
+    queue.Push(frame(400));
+    CHECK(queue.Bytes() == 800);
+    CHECK(queue.Missed() == 1);
+    std::vector<PacketCapture::Frame> out;
+    queue.Take(out, 0);
+    CHECK(out.size() == 2);
+    CHECK(queue.Bytes() == 0);
+    // room again, the count stays
+    queue.Push(frame(400));
+    CHECK(queue.Bytes() == 400);
+    CHECK(queue.Missed() == 1);
+    queue.Take(out, 0);
+    queue.Take(out, 0);
+    CHECK(out.empty());
+}
+
+TEST_CASE("Why nothing listens") {
+    using PacketCapture::Npcap;
+    using PacketCapture::Problem;
+    using PacketCapture::PickProblem;
+    // installing Npcap is the fix that needs no admin, so it's said first
+    CHECK(PickProblem(Npcap::Missing, false, false) == Problem::NpcapMissing);
+    CHECK(PickProblem(Npcap::Missing, false, true) == Problem::NpcapMissing);
+    CHECK(PickProblem(Npcap::TooOld, false, false) == Problem::NpcapTooOld);
+    CHECK(PickProblem(Npcap::Loaded, true, false) == Problem::NpcapAdminOnly);
+    CHECK(PickProblem(Npcap::Loaded, true, true) == Problem::NoAdapter);
+    CHECK(PickProblem(Npcap::Loaded, false, false) == Problem::NoAdapter);
+    CHECK(std::string(PacketCapture::ProblemCode(Problem::NpcapAdminOnly)) == "npcap_admin_only");
+    CHECK(std::string(PacketCapture::ProblemCode(Problem::None)).empty());
+}
+
+// on a real PC: which way it listens, run by hand with [live]
+TEST_CASE("The capture opens this PC's adapters", "[.][live]") {
+    PacketCapture::Listener listener;
+    bool started = listener.Start();
+    INFO("problem " << PacketCapture::ProblemCode(listener.GetProblem()));
+    REQUIRE(started);
+    WARN("way " << int(listener.GetWay()) << ", " << listener.Live() << " adapters");
+    for (const std::string& name : listener.Adapters())
+        WARN(name);
+    std::vector<PacketCapture::Frame> frames;
+    listener.Take(frames, 2000);
+    listener.Refresh();
+    CHECK(listener.Live() > 0);
+    listener.Stop();
+    CHECK(listener.Live() == 0);
 }
 
 TEST_CASE("KCP starts at the first sn it sees when there was no handshake") {
