@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "packets/packet_capture.hpp"
 #include "packets/frames.hpp"
+#include "packets/game_traffic.hpp"
 #include "packets/kcp.hpp"
 #include "packets/messages.hpp"
 #include "packets/reader.hpp"
@@ -251,6 +252,19 @@ TEST_CASE("The state codes are the ones extensions get") {
     CHECK(std::string(Packets::ReasonCode(Reason::None)).empty());
 }
 
+TEST_CASE("The game traffic's codes are the reader's and the capture's") {
+    using GameTraffic::ReasonCode;
+    using GameTraffic::StateCode;
+    CHECK(std::string(StateCode(GameTraffic::State::Off)) == "off");
+    CHECK(std::string(StateCode(GameTraffic::State::CantListen)) == "cant_listen");
+    CHECK(std::string(StateCode(GameTraffic::State::WaitingForLogin)) == "waiting_for_login");
+    CHECK(std::string(StateCode(GameTraffic::State::NoKey)) == "no_key");
+    CHECK(std::string(ReasonCode(GameTraffic::Reason::NpcapMissing)) == "npcap_missing");
+    CHECK(std::string(ReasonCode(GameTraffic::Reason::KeysMissing)) == "keys_missing");
+    CHECK(std::string(ReasonCode(GameTraffic::Reason::MissedPackets)) == "missed_packets");
+    CHECK(std::string(ReasonCode(GameTraffic::Reason::NotFound)) == "not_found");
+}
+
 TEST_CASE("The keys next to the overlay load") {
     SessionKey::Keys loaded = keys();
     CHECK(loaded.dispatch.size() >= 10);
@@ -342,6 +356,24 @@ TEST_CASE("The capture opens this PC's adapters", "[.][live]") {
     CHECK(listener.Live() > 0);
     listener.Stop();
     CHECK(listener.Live() == 0);
+}
+
+// on a real PC: the menu's switch, off doesn't wait for the worker. Run by hand with [live]
+TEST_CASE("Turning game traffic off doesn't wait", "[.][live]") {
+    GameTraffic::Start();
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    auto before = std::chrono::steady_clock::now();
+    GameTraffic::Stop(false);
+    auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - before).count();
+    WARN("Stop(false) took " << took << " ms");
+    CHECK(took < 50);
+    CHECK(GameTraffic::GetStatus().state == GameTraffic::State::Off);
+    // on again at once, then off for good
+    GameTraffic::Start();
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    CHECK(GameTraffic::GetStatus().state != GameTraffic::State::Off);
+    GameTraffic::Stop();
+    CHECK(GameTraffic::GetStatus().state == GameTraffic::State::Off);
 }
 
 TEST_CASE("KCP starts at the first sn it sees when there was no handshake") {
@@ -670,6 +702,25 @@ TEST_CASE("Recordings: a minute with nothing from the game goes back to waiting"
     reader.Tick(last + 60000);
     CHECK(reader.GetState() == State::WaitingForLogin);
     CHECK(reader.GetReason() == Reason::None);
+}
+
+TEST_CASE("Recordings: the game traffic status follows the reader") {
+    if (!haveRecordings())
+        SKIP("the recordings aren't on this PC");
+    Packets::Reader reader(keys());
+    CHECK(GameTraffic::FromReader(reader).state == GameTraffic::State::WaitingForLogin);
+    reader.SetGameStart(1793966745000);
+    reader.SetSamples(1, 0);
+    replay(reader, recording("2026-11-06_7.2-raw"), Frames::Start::Ip, 14);
+    GameTraffic::Status status = GameTraffic::FromReader(reader);
+    CHECK(status.state == GameTraffic::State::Reading);
+    CHECK(status.reason == GameTraffic::Reason::None);
+    CHECK(status.searchPass == 0);
+    CHECK(status.secondsLeft == -1);
+    reader.Missed();
+    status = GameTraffic::FromReader(reader);
+    CHECK(status.state == GameTraffic::State::NeedsRelog);
+    CHECK(status.reason == GameTraffic::Reason::MissedPackets);
 }
 
 TEST_CASE("Recordings: frames the capture threw away need a relog, before a login they don't") {

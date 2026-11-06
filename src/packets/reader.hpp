@@ -49,6 +49,8 @@ namespace Packets {
         void Tick(uint64_t nowMs);
 
         State GetState() const;
+        // no login going on, restarting the capture now loses nothing
+        bool Idle() const { return m_phase == Phase::Idle; }
         Reason GetReason() const { return m_reason; }
         // 1 from the game's start, 2 every sample, 0 when not searching
         int SearchPass() const;

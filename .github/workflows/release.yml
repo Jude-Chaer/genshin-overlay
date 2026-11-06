@@ -52,6 +52,8 @@ jobs:
           New-Item -ItemType Directory $folder | Out-Null
           Copy-Item build\Release\genshin-overlay.exe $folder
           Copy-Item -Recurse extensions $folder
+          # the game traffic's keys, the ones the overlay falls back on
+          Copy-Item -Recurse packets $folder
           Copy-Item README.md $folder
           # the zoom bar detector looks for it next to the exe
           Copy-Item zoombar_template.png $folder
