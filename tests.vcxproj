@@ -104,6 +104,7 @@
     <ClCompile Include="src\packets\frames.cpp" />
     <ClCompile Include="src\packets\kcp.cpp" />
     <ClCompile Include="src\packets\messages.cpp" />
+    <ClCompile Include="src\packets\packet_capture.cpp" />
     <ClCompile Include="src\packets\reader.cpp" />
     <ClCompile Include="src\packets\session_key.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -143,6 +144,7 @@
     <ClInclude Include="src\packets\frames.hpp" />
     <ClInclude Include="src\packets\kcp.hpp" />
     <ClInclude Include="src\packets\messages.hpp" />
+    <ClInclude Include="src\packets\packet_capture.hpp" />
     <ClInclude Include="src\packets\reader.hpp" />
     <ClInclude Include="src\packets\session_key.hpp" />
     <ClInclude Include="src\settings.hpp" />
