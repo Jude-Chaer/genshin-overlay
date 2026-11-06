@@ -168,6 +168,7 @@
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\packets\frames.cpp" />
     <ClCompile Include="src\packets\kcp.cpp" />
+    <ClCompile Include="src\packets\messages.cpp" />
     <ClCompile Include="src\screen_pictures.cpp" />
     <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -240,6 +241,7 @@
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\packets\frames.hpp" />
     <ClInclude Include="src\packets\kcp.hpp" />
+    <ClInclude Include="src\packets\messages.hpp" />
     <ClInclude Include="src\screen_pictures.hpp" />
     <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
