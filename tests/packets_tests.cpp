@@ -655,6 +655,38 @@ TEST_CASE("Recordings: raw socket frames read from the ip header") {
         { { 2.4, SEARCH, NONE }, { 2.4, READ, NONE } }, { { 1793967083884, 2, 10272110719125014212ull } });
 }
 
+TEST_CASE("Recordings: a minute with nothing from the game goes back to waiting") {
+    if (!haveRecordings())
+        SKIP("the recordings aren't on this PC");
+    Packets::Reader reader(keys());
+    reader.SetGameStart(1793966745000);
+    reader.SetSamples(1, 0);
+    std::vector<Frame> frames = recording("2026-11-06_7.2-raw");
+    replay(reader, frames, Frames::Start::Ip, 14);
+    REQUIRE(reader.GetState() == State::Reading);
+    uint64_t last = frames.back().ms;
+    reader.Tick(last + 59999);
+    CHECK(reader.GetState() == State::Reading);
+    reader.Tick(last + 60000);
+    CHECK(reader.GetState() == State::WaitingForLogin);
+    CHECK(reader.GetReason() == Reason::None);
+}
+
+TEST_CASE("Recordings: frames the capture threw away need a relog, before a login they don't") {
+    if (!haveRecordings())
+        SKIP("the recordings aren't on this PC");
+    Packets::Reader reader(keys());
+    reader.SetGameStart(1793966745000);
+    reader.SetSamples(1, 0);
+    reader.Missed();
+    CHECK(reader.GetState() == State::WaitingForLogin);
+    replay(reader, recording("2026-11-06_7.2-raw"), Frames::Start::Ip, 14);
+    REQUIRE(reader.GetState() == State::Reading);
+    reader.Missed();
+    CHECK(reader.GetState() == State::NeedsRelog);
+    CHECK(reader.GetReason() == Reason::MissedPackets);
+}
+
 TEST_CASE("Recordings: a compressed login still tells the next one where the generator is") {
     if (!haveRecordings())
         SKIP("the recordings aren't on this PC");
