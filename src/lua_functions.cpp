@@ -7,6 +7,8 @@
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
+#include "settings.hpp"
+#include "packets/game_traffic.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -60,6 +62,7 @@ namespace LuaFunctions {
 		luaState.set_function("GetMapGrid", GetMapGrid);
 		luaState.set_function("GetMapTile", GetMapTile);
 		luaState.set_function("GetMapFloor", GetMapFloor);
+		luaState.set_function("GetGameTraffic", GetGameTraffic);
 		luaState.set_function("DrawImage", DrawImage);
 		luaState.set_function("DrawText", GDrawText);
 		luaState.set_function("PushClipRect", PushClipRect);
@@ -1017,5 +1020,21 @@ namespace LuaFunctions {
 			return sol::lua_nil;
 
 		return JsonToLua(data, sol::state_view(state));
+	}
+
+	// Reading the game's traffic, for what needs it. on is the player's switch
+	// in the menu. state is off, cant_listen, waiting_for_login, searching,
+	// reading, needs_relog or no_key, and reason says why for cant_listen,
+	// needs_relog and no_key (npcap_missing, started_late, unknown_key_id and so
+	// on), "" otherwise. Codes, not sentences: the menu says what they mean.
+	// Needs no permission, it's only a status. An extension can't turn it on.
+	sol::table GetGameTraffic(sol::this_state state)
+	{
+		GameTraffic::Status status = GameTraffic::GetStatus();
+		sol::state_view lua(state);
+		return lua.create_table_with(
+			"on", Settings::readGameTraffic,
+			"state", std::string(GameTraffic::StateCode(status)),
+			"reason", std::string(GameTraffic::ReasonCode(status)));
 	}
 }
