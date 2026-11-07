@@ -326,6 +326,9 @@ TEST_CASE("The capture's queue is capped by bytes and says what it threw away") 
     queue.Take(out, 0);
     queue.Take(out, 0);
     CHECK(out.empty());
+    // Npcap's own drops count the same
+    queue.AddMissed(3);
+    CHECK(queue.Missed() == 4);
 }
 
 TEST_CASE("Why nothing listens") {

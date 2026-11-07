@@ -52,7 +52,9 @@ namespace PacketCapture {
         // waits up to milliseconds for a frame, then hands over all, oldest first
         void Take(std::vector<Frame>& out, int milliseconds);
         void Clear();
-        // frames thrown away since the queue was made
+        // frames lost before they got here, Npcap's own drops
+        void AddMissed(uint64_t count);
+        // frames thrown away or lost since the queue was made
         uint64_t Missed() const;
         size_t Bytes() const;
 
