@@ -30,6 +30,10 @@ namespace PacketCapture {
     // true for the game's udp, what raw sockets keep of everything they see
     extern bool GamePacket(const uint8_t* ip, size_t size);
 
+    // only tests set it: Start acts as if Npcap isn't installed, so raw
+    // sockets can be checked on a PC that has Npcap
+    extern std::atomic<bool> skipNpcap;
+
     struct Frame {
         // unix ms when it was caught
         uint64_t ms = 0;

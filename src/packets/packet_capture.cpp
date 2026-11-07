@@ -302,11 +302,13 @@ namespace PacketCapture {
         return !opened.empty();
     }
 
+    std::atomic<bool> skipNpcap = false;
+
     bool Listener::Start() {
         Stop();
         std::vector<Opened> opened;
         bool admin = Helpers::isElevated();
-        Npcap loaded = loadNpcap();
+        Npcap loaded = skipNpcap ? Npcap::Missing : loadNpcap();
         bool adminOnly = loaded == Npcap::Loaded && npcapAdminOnly();
         if (loaded == Npcap::Loaded && (!adminOnly || admin) && startNpcap(opened))
             m_way = Way::Npcap;
