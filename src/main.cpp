@@ -205,6 +205,11 @@ int main(int argc, char** argv) {
         return saysWhy([&]() { return ItemFiles::make(argv[2], allowDrop); });
     }
 
+    // acts as if Npcap isn't installed, to see what the menu says then
+    if (argc >= 2 && std::string(argv[1]) == "--skip-npcap") {
+        PacketCapture::skipNpcap = true;
+    }
+
     Settings::Load();
 
 
