@@ -12,6 +12,7 @@
 #include "settings.hpp"
 #include "capture.hpp"
 #include "game_traffic_text.hpp"
+#include "npcap_download.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -396,6 +397,29 @@ namespace Overlay {
         ImGui::End();
     }
 
+    static void DrawNpcapButton() {
+        switch (NpcapDownload::GetState()) {
+        case NpcapDownload::State::Downloading:
+            ImGui::BeginDisabled();
+            ImGui::Button("Downloading Npcap...");
+            ImGui::EndDisabled();
+            return;
+        case NpcapDownload::State::Opened:
+            ImGui::TextWrapped("Npcap's installer is open. Game traffic starts by itself once it's installed.");
+            // for when the installer got closed
+            if (ImGui::Button("Open the installer again"))
+                NpcapDownload::Start();
+            return;
+        case NpcapDownload::State::Failed:
+            ImGui::TextWrapped("Couldn't get Npcap. Check your internet connection, or get it from npcap.com.");
+            break;
+        case NpcapDownload::State::Idle:
+            break;
+        }
+        if (ImGui::Button("Download Npcap"))
+            NpcapDownload::Start();
+    }
+
     static void DrawGameTraffic() {
         if (ImGui::Checkbox("Read the game's traffic", &Settings::readGameTraffic)) {
             Settings::Save();
@@ -405,6 +429,7 @@ namespace Overlay {
         GameTrafficText::Line line = GameTrafficText::For(GameTraffic::GetStatus());
         if (line.quiet) ImGui::TextDisabled("%s", line.text.c_str());
         else ImGui::TextWrapped("%s", line.text.c_str());
+        if (line.downloadNpcap) DrawNpcapButton();
         if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
     }
 

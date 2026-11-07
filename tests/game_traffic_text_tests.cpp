@@ -95,3 +95,25 @@ TEST_CASE("Game traffic: the note on screen is only for a relog") {
     CHECK_FALSE(GameTrafficText::NeedsRelog(cantListen(Problem::NpcapMissing)));
     CHECK_FALSE(GameTrafficText::NeedsRelog(Status()));
 }
+
+#include "npcap_download.hpp"
+
+TEST_CASE("Npcap download: the installer's name from npcap.com's page") {
+    // the download list on npcap.com, 2026-11-07
+    std::string page =
+        "<li><a href=\"dist/npcap-1.90.exe\">Npcap 1.90 installer</a> for Windows 7/2008R2, 8/2012, 8.1/2012R2, 10/2016, 2019, 11 (x86, x64, and ARM64).</li>\n"
+        "<li><a href=\"dist/npcap-sdk-1.17.zip\">Npcap SDK 1.17</a> (ZIP).</li>\n"
+        "<li><a href=\"dist/npcap-1.90-DebugSymbols.zip\">Npcap 1.90 debug symbols</a> (ZIP).</li>\n";
+    CHECK(NpcapDownload::InstallerName(page) == "npcap-1.90.exe");
+    // the sdk and the symbols aren't the installer
+    CHECK(NpcapDownload::InstallerName(page.substr(page.find("\n") + 1)).empty());
+    CHECK(NpcapDownload::InstallerName("").empty());
+}
+
+TEST_CASE("Npcap download: only an installer signed by Npcap's makers is opened") {
+    // npcap-1.90.exe is signed by Nmap Software LLC, older ones by Insecure.Com LLC
+    CHECK(NpcapDownload::NpcapSigner(L"Nmap Software LLC"));
+    CHECK(NpcapDownload::NpcapSigner(L"Insecure.Com LLC"));
+    CHECK_FALSE(NpcapDownload::NpcapSigner(L"Nmap Software"));
+    CHECK_FALSE(NpcapDownload::NpcapSigner(L""));
+}
