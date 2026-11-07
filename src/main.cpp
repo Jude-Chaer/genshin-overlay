@@ -22,6 +22,7 @@
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
+#include "packets/game_traffic.hpp"
 
 // genshin-overlay.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -222,12 +223,15 @@ int main(int argc, char** argv) {
     MapTiles::Init(Helpers::exeDirectory() / "map_data");
     MapCheck::Start(Helpers::exeDirectory() / "map_data");
     MiniMap::Start(Helpers::exeDirectory() / "map_data");
+    // off until the player turns it on in the menu
+    if (Settings::readGameTraffic) GameTraffic::Start();
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
     // told first so it winds down while the others are joined
     ItemFiles::AskToStop();
     ScreenPictures::stop();
+    GameTraffic::Stop();
     // first, it grabs the game and asks the map matching, which the tracker closes
     MiniMap::Stop();
     MapTracking::Stop();

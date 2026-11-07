@@ -24,6 +24,7 @@ namespace Settings {
     std::string lightDark = "Follow Windows";
     int size = 100;
     const std::vector<int> Sizes = { 80, 90, 100, 110, 125, 150 };
+    bool readGameTraffic = false;
 
     std::filesystem::path file;
 
@@ -103,6 +104,7 @@ namespace Settings {
             int saved = savedSize->get<int>();
             if (std::find(Sizes.begin(), Sizes.end(), saved) != Sizes.end()) size = saved;
         }
+        readGameTraffic = settings.value("readGameTraffic", false);
     }
 
     // extension settings are in the same file, don't wipe them
@@ -124,6 +126,7 @@ namespace Settings {
         settings["look"] = look;
         settings["lightDark"] = lightDark;
         settings["size"] = size;
+        settings["readGameTraffic"] = readGameTraffic;
         write(settings);
     }
 

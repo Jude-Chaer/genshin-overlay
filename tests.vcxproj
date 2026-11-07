@@ -167,6 +167,7 @@
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\packets\frames.cpp" />
+    <ClCompile Include="src\game_traffic_text.cpp" />
     <ClCompile Include="src\packets\game_traffic.cpp" />
     <ClCompile Include="src\packets\kcp.cpp" />
     <ClCompile Include="src\packets\messages.cpp" />
@@ -185,6 +186,7 @@
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
     <ClCompile Include="tests\file_dialog_tests.cpp" />
+    <ClCompile Include="tests\game_traffic_text_tests.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
     <ClCompile Include="tests\item_catalog_tests.cpp" />
@@ -244,6 +246,7 @@
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
     <ClInclude Include="src\packets\frames.hpp" />
+    <ClInclude Include="src\game_traffic_text.hpp" />
     <ClInclude Include="src\packets\game_traffic.hpp" />
     <ClInclude Include="src\packets\kcp.hpp" />
     <ClInclude Include="src\packets\messages.hpp" />
