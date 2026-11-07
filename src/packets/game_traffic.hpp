@@ -11,28 +11,30 @@
 // game, and nothing of the traffic is written anywhere.
 
 namespace GameTraffic {
-    enum class State { Off, CantListen, WaitingForLogin, Searching, Reading, NeedsRelog, NoKey };
-    enum class Reason {
-        None,
-        // can't listen
-        NpcapMissing, NpcapTooOld, NpcapAdminOnly, NoAdapter, KeysMissing,
-        // the reader's
-        CompressedLogin, StartedLate, MissedPackets, KeyStoppedFitting, UnknownKeyId, NotFound,
-    };
-
-    // the codes extensions get, the same as Packets' and PacketCapture's
-    extern const char* StateCode(State state);
-    extern const char* ReasonCode(Reason reason);
+    // Listening hands over to the reader's own state and reason
+    enum class State { Off, CantListen, Listening };
 
     struct Status {
         State state = State::Off;
-        Reason reason = Reason::None;
+        // why it can't listen: the capture's problem, or the keys files are
+        // missing or don't load
+        PacketCapture::Problem problem = PacketCapture::Problem::None;
+        bool keysMissing = false;
+        bool keysDamaged = false;
+        // while listening
+        Packets::State read = Packets::State::WaitingForLogin;
+        Packets::Reason reason = Packets::Reason::None;
         PacketCapture::Way way = PacketCapture::Way::None;
         // while searching: 1 from the game's start, 2 every sample
         int searchPass = 0;
         // while searching, follows the PC's load. -1 when it can't say yet
         int secondsLeft = -1;
     };
+
+    // the codes extensions get: off, cant_listen, or the reader's state, and
+    // the capture's problem, keys_missing or the reader's reason
+    extern const char* StateCode(const Status& status);
+    extern const char* ReasonCode(const Status& status);
 
     // the status a reader gives, for the worker and for replays
     extern Status FromReader(const Packets::Reader& reader);

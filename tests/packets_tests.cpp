@@ -256,19 +256,37 @@ TEST_CASE("The state codes are the ones extensions get") {
 
 TEST_CASE("The game traffic's codes are the reader's and the capture's") {
     using GameTraffic::ReasonCode;
+    using GameTraffic::State;
     using GameTraffic::StateCode;
-    CHECK(std::string(StateCode(GameTraffic::State::Off)) == "off");
-    CHECK(std::string(StateCode(GameTraffic::State::CantListen)) == "cant_listen");
-    CHECK(std::string(StateCode(GameTraffic::State::WaitingForLogin)) == "waiting_for_login");
-    CHECK(std::string(StateCode(GameTraffic::State::NoKey)) == "no_key");
-    CHECK(std::string(ReasonCode(GameTraffic::Reason::NpcapMissing)) == "npcap_missing");
-    CHECK(std::string(ReasonCode(GameTraffic::Reason::KeysMissing)) == "keys_missing");
-    CHECK(std::string(ReasonCode(GameTraffic::Reason::MissedPackets)) == "missed_packets");
-    CHECK(std::string(ReasonCode(GameTraffic::Reason::NotFound)) == "not_found");
+    GameTraffic::Status status;
+    CHECK(std::string(StateCode(status)) == "off");
+    CHECK(std::string(ReasonCode(status)).empty());
+    status.state = State::CantListen;
+    status.problem = PacketCapture::Problem::NpcapMissing;
+    CHECK(std::string(StateCode(status)) == "cant_listen");
+    CHECK(std::string(ReasonCode(status)) == "npcap_missing");
+    status.keysMissing = true;
+    CHECK(std::string(ReasonCode(status)) == "keys_missing");
+    status.keysMissing = false;
+    status.keysDamaged = true;
+    CHECK(std::string(ReasonCode(status)) == "keys_damaged");
+    status = {};
+    status.state = State::Listening;
+    CHECK(std::string(StateCode(status)) == "waiting_for_login");
+    status.read = Packets::State::NoKey;
+    status.reason = Packets::Reason::NotFound;
+    CHECK(std::string(StateCode(status)) == "no_key");
+    CHECK(std::string(ReasonCode(status)) == "not_found");
 }
 
 TEST_CASE("The keys next to the overlay load") {
     SessionKey::Keys loaded = keys();
+    CHECK(SessionKey::Rsa(loaded.rsaPem).AllLoaded());
+    // a damaged one, or none, is told apart
+    std::vector<std::string> damaged = loaded.rsaPem;
+    damaged.push_back("-----BEGIN RSA PRIVATE KEY-----\nnot a key\n-----END RSA PRIVATE KEY-----\n");
+    CHECK_FALSE(SessionKey::Rsa(damaged).AllLoaded());
+    CHECK_FALSE(SessionKey::Rsa({}).AllLoaded());
     CHECK(loaded.dispatch.size() >= 10);
     CHECK(loaded.rsaPem.size() == 2);
 }
@@ -389,18 +407,20 @@ static void readLiveLogin(PacketCapture::Way way) {
     GameTraffic::Start();
     auto start = std::chrono::steady_clock::now();
     GameTraffic::Status last;
-    last.state = GameTraffic::State(-1);
+    std::string lastCodes = "-";
     bool reading = false;
     while (std::chrono::steady_clock::now() - start < std::chrono::minutes(10)) {
         GameTraffic::Status now = GameTraffic::GetStatus();
-        if (now.state != last.state || now.reason != last.reason || now.searchPass != last.searchPass) {
+        std::string codes = std::string(GameTraffic::StateCode(now)) + " " + GameTraffic::ReasonCode(now);
+        if (codes != lastCodes || now.searchPass != last.searchPass) {
             auto s = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count();
-            std::cout << s << " s  " << GameTraffic::StateCode(now.state) << " " << GameTraffic::ReasonCode(now.reason)
+            std::cout << s << " s  " << codes
                       << "  way " << int(now.way) << "  pass " << now.searchPass << "  left " << now.secondsLeft
                       << "  read " << read << std::endl;
             last = now;
+            lastCodes = codes;
         }
-        reading = now.state == GameTraffic::State::Reading;
+        reading = now.state == GameTraffic::State::Listening && now.read == Packets::State::Reading;
         if (reading && read >= 200)
             break;
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -756,19 +776,20 @@ TEST_CASE("Recordings: the game traffic status follows the reader") {
     if (!haveRecordings())
         SKIP("the recordings aren't on this PC");
     Packets::Reader reader(keys());
-    CHECK(GameTraffic::FromReader(reader).state == GameTraffic::State::WaitingForLogin);
+    CHECK(GameTraffic::FromReader(reader).state == GameTraffic::State::Listening);
+    CHECK(GameTraffic::FromReader(reader).read == Packets::State::WaitingForLogin);
     reader.SetGameStart(1793966745000);
     reader.SetSamples(1, 0);
     replay(reader, recording("2026-11-06_7.2-raw"), Frames::Start::Ip, 14);
     GameTraffic::Status status = GameTraffic::FromReader(reader);
-    CHECK(status.state == GameTraffic::State::Reading);
-    CHECK(status.reason == GameTraffic::Reason::None);
+    CHECK(status.read == Packets::State::Reading);
+    CHECK(status.reason == Packets::Reason::None);
     CHECK(status.searchPass == 0);
     CHECK(status.secondsLeft == -1);
     reader.Missed();
     status = GameTraffic::FromReader(reader);
-    CHECK(status.state == GameTraffic::State::NeedsRelog);
-    CHECK(status.reason == GameTraffic::Reason::MissedPackets);
+    CHECK(status.read == Packets::State::NeedsRelog);
+    CHECK(status.reason == Packets::Reason::MissedPackets);
 }
 
 TEST_CASE("Recordings: frames the capture threw away need a relog, before a login they don't") {

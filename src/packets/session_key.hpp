@@ -76,11 +76,14 @@ namespace SessionKey {
         Rsa(const Rsa&) = delete;
         Rsa& operator=(const Rsa&) = delete;
 
+        // there was at least one key and every one loaded
+        bool AllLoaded() const { return m_wanted > 0 && m_keys.size() == m_wanted; }
         // every 8 byte answer any key gives for any bytes field of body
         std::vector<uint64_t> ServerSeeds(std::string_view body) const;
 
     private:
         void* m_algorithm = nullptr;
         std::vector<void*> m_keys;
+        size_t m_wanted = 0;
     };
 }
