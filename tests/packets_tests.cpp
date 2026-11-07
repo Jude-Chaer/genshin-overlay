@@ -1,4 +1,6 @@
+#include <atomic>
 #include <chrono>
+#include <iostream>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -374,6 +376,49 @@ TEST_CASE("Turning game traffic off doesn't wait", "[.][live]") {
     CHECK(GameTraffic::GetStatus().state != GameTraffic::State::Off);
     GameTraffic::Stop();
     CHECK(GameTraffic::GetStatus().state == GameTraffic::State::Off);
+}
+
+// on a real PC with the game: prints every status change until 200 messages
+// were read after a login, or 10 minutes. Run by hand with [login]
+static void readLiveLogin(PacketCapture::Way way) {
+    std::atomic<int> read = 0;
+    int listener = GameTraffic::AddListener([&](const Messages::Message&) { read++; });
+    GameTraffic::Start();
+    auto start = std::chrono::steady_clock::now();
+    GameTraffic::Status last;
+    last.state = GameTraffic::State(-1);
+    bool reading = false;
+    while (std::chrono::steady_clock::now() - start < std::chrono::minutes(10)) {
+        GameTraffic::Status now = GameTraffic::GetStatus();
+        if (now.state != last.state || now.reason != last.reason || now.searchPass != last.searchPass) {
+            auto s = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count();
+            std::cout << s << " s  " << GameTraffic::StateCode(now.state) << " " << GameTraffic::ReasonCode(now.reason)
+                      << "  way " << int(now.way) << "  pass " << now.searchPass << "  left " << now.secondsLeft
+                      << "  read " << read << std::endl;
+            last = now;
+        }
+        reading = now.state == GameTraffic::State::Reading;
+        if (reading && read >= 200)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    std::cout << "read " << read << " messages" << std::endl;
+    GameTraffic::Stop();
+    GameTraffic::RemoveListener(listener);
+    CHECK(last.way == way);
+    CHECK(reading);
+    CHECK(read >= 200);
+}
+
+TEST_CASE("The worker reads a live login", "[.][login]") {
+    readLiveLogin(PacketCapture::Way::Npcap);
+}
+
+// run as admin: the same without Npcap, by raw sockets
+TEST_CASE("The worker reads a live login by raw sockets", "[.][login-raw]") {
+    PacketCapture::skipNpcap = true;
+    readLiveLogin(PacketCapture::Way::RawSockets);
+    PacketCapture::skipNpcap = false;
 }
 
 TEST_CASE("KCP starts at the first sn it sees when there was no handshake") {
