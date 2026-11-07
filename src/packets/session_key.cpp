@@ -275,7 +275,7 @@ namespace SessionKey {
         return found;
     }
 
-    Rsa::Rsa(const std::vector<std::string>& pems) {
+    Rsa::Rsa(const std::vector<std::string>& pems) : m_wanted(pems.size()) {
         BCRYPT_ALG_HANDLE algorithm = nullptr;
         if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_RSA_ALGORITHM, nullptr, 0) != 0)
             return;

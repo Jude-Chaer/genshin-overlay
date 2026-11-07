@@ -4,6 +4,7 @@
 #include <chrono>
 #include <iostream>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include "../helpers.hpp"
@@ -27,64 +28,44 @@ namespace GameTraffic {
     static std::vector<std::pair<int, Listener>> listeners;
     static int nextListener = 1;
 
-    const char* StateCode(State state) {
-        switch (state) {
+    const char* StateCode(const Status& status) {
+        switch (status.state) {
         case State::Off: return "off";
         case State::CantListen: return "cant_listen";
-        case State::WaitingForLogin: return Packets::StateCode(Packets::State::WaitingForLogin);
-        case State::Searching: return Packets::StateCode(Packets::State::Searching);
-        case State::Reading: return Packets::StateCode(Packets::State::Reading);
-        case State::NeedsRelog: return Packets::StateCode(Packets::State::NeedsRelog);
-        case State::NoKey: return Packets::StateCode(Packets::State::NoKey);
+        case State::Listening: return Packets::StateCode(status.read);
         }
         return "";
     }
 
-    const char* ReasonCode(Reason reason) {
-        switch (reason) {
-        case Reason::None: return "";
-        case Reason::NpcapMissing: return PacketCapture::ProblemCode(PacketCapture::Problem::NpcapMissing);
-        case Reason::NpcapTooOld: return PacketCapture::ProblemCode(PacketCapture::Problem::NpcapTooOld);
-        case Reason::NpcapAdminOnly: return PacketCapture::ProblemCode(PacketCapture::Problem::NpcapAdminOnly);
-        case Reason::NoAdapter: return PacketCapture::ProblemCode(PacketCapture::Problem::NoAdapter);
-        case Reason::KeysMissing: return "keys_missing";
-        case Reason::CompressedLogin: return Packets::ReasonCode(Packets::Reason::CompressedLogin);
-        case Reason::StartedLate: return Packets::ReasonCode(Packets::Reason::StartedLate);
-        case Reason::MissedPackets: return Packets::ReasonCode(Packets::Reason::MissedPackets);
-        case Reason::KeyStoppedFitting: return Packets::ReasonCode(Packets::Reason::KeyStoppedFitting);
-        case Reason::UnknownKeyId: return Packets::ReasonCode(Packets::Reason::UnknownKeyId);
-        case Reason::NotFound: return Packets::ReasonCode(Packets::Reason::NotFound);
+    const char* ReasonCode(const Status& status) {
+        switch (status.state) {
+        case State::Off: return "";
+        case State::CantListen:
+            if (status.keysMissing)
+                return "keys_missing";
+            if (status.keysDamaged)
+                return "keys_damaged";
+            return PacketCapture::ProblemCode(status.problem);
+        case State::Listening: return Packets::ReasonCode(status.reason);
         }
         return "";
     }
 
-    static Reason fromCapture(PacketCapture::Problem problem) {
-        switch (problem) {
-        case PacketCapture::Problem::NpcapMissing: return Reason::NpcapMissing;
-        case PacketCapture::Problem::NpcapTooOld: return Reason::NpcapTooOld;
-        case PacketCapture::Problem::NpcapAdminOnly: return Reason::NpcapAdminOnly;
-        default: return Reason::NoAdapter;
-        }
+    static Status cantListen(PacketCapture::Problem problem, bool keysMissing = false, bool keysDamaged = false) {
+        Status out;
+        out.state = State::CantListen;
+        // a capture that started and then lost every adapter has no problem of its own
+        out.problem = problem == PacketCapture::Problem::None ? PacketCapture::Problem::NoAdapter : problem;
+        out.keysMissing = keysMissing;
+        out.keysDamaged = keysDamaged;
+        return out;
     }
 
     Status FromReader(const Packets::Reader& reader) {
         Status out;
-        switch (reader.GetState()) {
-        case Packets::State::WaitingForLogin: out.state = State::WaitingForLogin; break;
-        case Packets::State::Searching: out.state = State::Searching; break;
-        case Packets::State::Reading: out.state = State::Reading; break;
-        case Packets::State::NeedsRelog: out.state = State::NeedsRelog; break;
-        case Packets::State::NoKey: out.state = State::NoKey; break;
-        }
-        switch (reader.GetReason()) {
-        case Packets::Reason::None: out.reason = Reason::None; break;
-        case Packets::Reason::CompressedLogin: out.reason = Reason::CompressedLogin; break;
-        case Packets::Reason::StartedLate: out.reason = Reason::StartedLate; break;
-        case Packets::Reason::MissedPackets: out.reason = Reason::MissedPackets; break;
-        case Packets::Reason::KeyStoppedFitting: out.reason = Reason::KeyStoppedFitting; break;
-        case Packets::Reason::UnknownKeyId: out.reason = Reason::UnknownKeyId; break;
-        case Packets::Reason::NotFound: out.reason = Reason::NotFound; break;
-        }
+        out.state = State::Listening;
+        out.read = reader.GetState();
+        out.reason = reader.GetReason();
         out.searchPass = reader.SearchPass();
         out.secondsLeft = reader.SecondsLeft();
         return out;
@@ -120,12 +101,12 @@ namespace GameTraffic {
         std::lock_guard lock(mutex);
         if (stopping && !stopped)
             return;
-        bool changed = now.state != status.state || now.reason != status.reason;
+        bool changed = std::string(StateCode(now)) != StateCode(status) || std::string(ReasonCode(now)) != ReasonCode(status);
         status = now;
         if (changed) {
-            std::cout << "Game traffic: " << StateCode(now.state);
-            if (now.reason != Reason::None)
-                std::cout << " (" << ReasonCode(now.reason) << ")";
+            std::cout << "Game traffic: " << StateCode(now);
+            if (*ReasonCode(now))
+                std::cout << " (" << ReasonCode(now) << ")";
             std::cout << std::endl;
         }
     }
@@ -150,8 +131,15 @@ namespace GameTraffic {
 
     static void listen() {
         SessionKey::Keys keys;
-        if (!SessionKey::LoadKeys(Helpers::exeDirectory() / "packets", keys)) {
-            setStatus({ State::CantListen, Reason::KeysMissing });
+        std::filesystem::path folder = Helpers::exeDirectory() / "packets";
+        std::error_code error;
+        if (!std::filesystem::exists(folder / "dispatch-keys.json", error)) {
+            setStatus(cantListen(PacketCapture::Problem::None, true));
+            return;
+        }
+        // without them every login would end in not_found
+        if (!SessionKey::LoadKeys(folder, keys) || keys.dispatch.empty() || !SessionKey::Rsa(keys.rsaPem).AllLoaded()) {
+            setStatus(cantListen(PacketCapture::Problem::None, false, true));
             return;
         }
         PacketCapture::Listener capture;
@@ -180,7 +168,7 @@ namespace GameTraffic {
             if (capture.Live() == 0) {
                 // every adapter went away, the stream has a hole now
                 reader.Missed();
-                setStatus({ State::CantListen, fromCapture(capture.GetProblem()) });
+                setStatus(cantListen(capture.GetProblem()));
                 std::this_thread::sleep_for(std::chrono::milliseconds(TAKE_MS));
                 continue;
             }
