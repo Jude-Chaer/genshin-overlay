@@ -78,6 +78,11 @@ namespace PacketCapture {
         m_bytes = 0;
     }
 
+    void Queue::AddMissed(uint64_t count) {
+        std::lock_guard lock(m_mutex);
+        m_missed += count;
+    }
+
     uint64_t Queue::Missed() const {
         std::lock_guard lock(m_mutex);
         return m_missed;
@@ -102,6 +107,9 @@ namespace PacketCapture {
         long sec, usec;
         uint32_t caplen, len;
     };
+    struct pcap_stat {
+        unsigned int recv, drop, ifdrop;
+    };
     struct bpf_program {
         unsigned int length;
         void* instructions;
@@ -125,6 +133,7 @@ namespace PacketCapture {
         int (*setfilter)(pcap*, bpf_program*);
         void (*freecode)(bpf_program*);
         int (*next_ex)(pcap*, pcap_pkthdr**, const unsigned char**);
+        int (*stats)(pcap*, pcap_stat*);
         void (*close)(pcap*);
     } api;
     static Npcap npcap = Npcap::Missing;
@@ -160,6 +169,7 @@ namespace PacketCapture {
         get(api.setfilter, "pcap_setfilter");
         get(api.freecode, "pcap_freecode");
         get(api.next_ex, "pcap_next_ex");
+        get(api.stats, "pcap_stats");
         get(api.close, "pcap_close");
         if (!ok) {
             FreeLibrary(dll);
@@ -336,7 +346,20 @@ namespace PacketCapture {
             m_keys.push_back(one.key);
             if (one.handle) {
                 m_threads.emplace_back([this, handle = one.handle, start = one.start] {
+                    // Npcap drops game packets itself when its buffer is full,
+                    // those break the stream as much as the queue's own
+                    unsigned int dropped = 0;
+                    auto looked = std::chrono::steady_clock::now();
                     while (!m_stopping) {
+                        pcap_stat stats = {};
+                        auto now = std::chrono::steady_clock::now();
+                        if (now - looked >= std::chrono::seconds(1)) {
+                            looked = now;
+                            if (api.stats(handle, &stats) == 0 && stats.drop != dropped) {
+                                m_queue.AddMissed(stats.drop - dropped);
+                                dropped = stats.drop;
+                            }
+                        }
                         pcap_pkthdr* header = nullptr;
                         const unsigned char* data = nullptr;
                         int result = api.next_ex(handle, &header, &data);
