@@ -113,6 +113,7 @@ namespace LuaFunctions {
     sol::object GetItemRegions(sol::this_state state);
     sol::object GetItemIcon(int type, sol::this_state state);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
+    sol::table GetGameTraffic(sol::this_state state);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     // DrawText(text, x, y, size, color, { wrap = width }), color is 0xRRGGBBAA
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color,
