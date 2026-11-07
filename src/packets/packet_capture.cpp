@@ -108,6 +108,8 @@ namespace PacketCapture {
     };
     static constexpr int ERRBUF_SIZE = 256;
     static constexpr int DLT_EN10MB = 1;
+    // vpn tunnels like WireGuard give the ip packet with nothing in front
+    static constexpr int DLT_RAW = 12;
     static constexpr uint32_t NETMASK_UNKNOWN = 0xffffffff;
 
     static struct {
@@ -174,7 +176,7 @@ namespace PacketCapture {
     }
 
     // one adapter, only the game's ports. Nullptr for loopback and the like, or when it can't
-    static pcap* openNpcap(const char* name) {
+    static pcap* openNpcap(const char* name, Frames::Start& start) {
         char error[ERRBUF_SIZE] = {};
         pcap* handle = api.create(name, error);
         if (!handle)
@@ -182,10 +184,12 @@ namespace PacketCapture {
         api.set_promisc(handle, 0);
         api.set_immediate_mode(handle, 1);
         api.set_timeout(handle, TIMEOUT_MS);
-        if (api.activate(handle) < 0 || api.datalink(handle) != DLT_EN10MB) {
+        int link = api.activate(handle) < 0 ? -1 : api.datalink(handle);
+        if (link != DLT_EN10MB && link != DLT_RAW) {
             api.close(handle);
             return nullptr;
         }
+        start = link == DLT_RAW ? Frames::Start::Ip : Frames::Start::Ethernet;
         bpf_program program = {};
         bool filtered = api.compile(handle, &program, FILTER, 1, NETMASK_UNKNOWN) >= 0 && api.setfilter(handle, &program) >= 0;
         api.freecode(&program);
@@ -198,6 +202,7 @@ namespace PacketCapture {
 
     struct Listener::Opened {
         pcap* handle = nullptr;
+        Frames::Start start = Frames::Start::Ethernet;
         SOCKET socket = INVALID_SOCKET;
         std::string name, key;
     };
@@ -217,11 +222,13 @@ namespace PacketCapture {
         for (pcap_if* device = devices; device; device = device->next)
             m_listed++;
         for (pcap_if* device = devices; device && opened.size() < MAX_ADAPTERS; device = device->next) {
-            pcap* handle = openNpcap(device->name);
+            Frames::Start start = Frames::Start::Ethernet;
+            pcap* handle = openNpcap(device->name, start);
             if (!handle)
                 continue;
             Opened one;
             one.handle = handle;
+            one.start = start;
             one.name = device->description ? device->description : device->name;
             one.key = device->name;
             opened.push_back(std::move(one));
@@ -328,7 +335,7 @@ namespace PacketCapture {
             m_names.push_back(one.name);
             m_keys.push_back(one.key);
             if (one.handle) {
-                m_threads.emplace_back([this, handle = one.handle] {
+                m_threads.emplace_back([this, handle = one.handle, start = one.start] {
                     while (!m_stopping) {
                         pcap_pkthdr* header = nullptr;
                         const unsigned char* data = nullptr;
@@ -340,7 +347,7 @@ namespace PacketCapture {
                             break;
                         Frame frame;
                         frame.ms = uint64_t(header->sec) * 1000 + uint64_t(header->usec) / 1000;
-                        frame.start = Frames::Start::Ethernet;
+                        frame.start = start;
                         frame.data.assign(data, data + header->caplen);
                         m_queue.Push(std::move(frame));
                     }
