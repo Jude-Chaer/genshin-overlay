@@ -11,6 +11,7 @@
 #include "stats.hpp"
 #include "settings.hpp"
 #include "capture.hpp"
+#include "game_traffic_text.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -365,6 +366,48 @@ namespace Overlay {
         ImGui::PopStyleVar();
     }
 
+    // The note on screen when the player has to relog, shown with the map
+    // closed too. It comes up once each time the status turns to a relog.
+    static constexpr double TRAFFIC_NOTE_SECONDS = 10.0;
+    static double trafficNoteUntil = 0.0;
+    static std::string trafficNote;
+    static std::string trafficLastRelog;
+
+    static void updateTrafficNote() {
+        GameTraffic::Status now = GameTraffic::GetStatus();
+        std::string relog = GameTrafficText::NeedsRelog(now) ? GameTraffic::ReasonCode(now) : "";
+        if (!relog.empty() && relog != trafficLastRelog) {
+            trafficNote = GameTrafficText::For(now).text;
+            trafficNoteUntil = glfwGetTime() + TRAFFIC_NOTE_SECONDS;
+        }
+        trafficLastRelog = relog;
+    }
+
+    static bool trafficNoteUp() {
+        return glfwGetTime() < trafficNoteUntil;
+    }
+
+    static void DrawTrafficNote() {
+        if (!trafficNoteUp()) return;
+        ImGui::SetNextWindowPos(ImVec2(Overlay::IO->DisplaySize.x * 0.5f, 80.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.8f);
+        ImGui::Begin("##game traffic", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::Text("Genshin Overlay: %s", trafficNote.c_str());
+        ImGui::End();
+    }
+
+    static void DrawGameTraffic() {
+        if (ImGui::Checkbox("Read the game's traffic", &Settings::readGameTraffic)) {
+            Settings::Save();
+            if (Settings::readGameTraffic) GameTraffic::Start();
+            else GameTraffic::Stop(false);
+        }
+        GameTrafficText::Line line = GameTrafficText::For(GameTraffic::GetStatus());
+        if (line.quiet) ImGui::TextDisabled("%s", line.text.c_str());
+        else ImGui::TextWrapped("%s", line.text.c_str());
+        if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
+    }
+
     static void DrawMenu() {
         ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
@@ -516,6 +559,10 @@ namespace Overlay {
                 }
             }
 
+            if (ImGui::CollapsingHeader("Game traffic")) {
+                DrawGameTraffic();
+            }
+
             if (ImGui::CollapsingHeader("Advanced")) {
                 ImGui::TextDisabled("How the map is followed while it moves");
 
@@ -618,11 +665,13 @@ namespace Overlay {
             // sends the tracker a new screenshot when it's ready for one
             MapTracking::Tick(glfwGetWin32Window(Overlay::Window));
             Stats::Update();
+            updateTrafficNote();
 
             // map and menu closed: nothing to show, so don't draw at all
             bool showing = Overlay::menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;
-            // an extension that follows the player has things to draw with the map closed too
-            bool forPlayer = !showing && MiniMap::Wanted();
+            // an extension that follows the player, or the relog note, has
+            // things to draw with the map closed too
+            bool forPlayer = !showing && (MiniMap::Wanted() || trafficNoteUp());
             if (!showing && !forPlayer) {
                 pickerBox = {};
                 updateClickThrough();
@@ -652,6 +701,7 @@ namespace Overlay {
 
             Extensions::frameUpdateExtensions();
             DrawStartupHint();
+            DrawTrafficNote();
 
             if (Settings::hideOnMapClose) {
                 Overlay::menuOpen = MapTracking::IsMapOpen();

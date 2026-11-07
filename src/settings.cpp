@@ -14,6 +14,7 @@ namespace Settings {
     bool followOnThread = true;
     bool shrinkOnGpu = true;
     bool findSmallFirst = true;
+    bool readGameTraffic = false;
 
     std::filesystem::path file;
 
@@ -37,6 +38,7 @@ namespace Settings {
         followOnThread = settings.value("followOnThread", true);
         shrinkOnGpu = settings.value("shrinkOnGpu", true);
         findSmallFirst = settings.value("findSmallFirst", true);
+        readGameTraffic = settings.value("readGameTraffic", false);
     }
 
     static nlohmann::json read() {
@@ -64,6 +66,7 @@ namespace Settings {
         settings["followOnThread"] = followOnThread;
         settings["shrinkOnGpu"] = shrinkOnGpu;
         settings["findSmallFirst"] = findSmallFirst;
+        settings["readGameTraffic"] = readGameTraffic;
         write(settings);
     }
 

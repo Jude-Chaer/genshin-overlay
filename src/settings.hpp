@@ -27,6 +27,9 @@ namespace Settings {
     // SIFT tries the game 480 wide first, and 960 only if that isn't a strong match
     extern bool findSmallFirst;
 
+    // Game traffic, off until the player turns it on in the menu
+    extern bool readGameTraffic;
+
     // The file the settings are in. Empty means settings.json next to the exe,
     // the tests point it somewhere else.
     extern std::filesystem::path file;

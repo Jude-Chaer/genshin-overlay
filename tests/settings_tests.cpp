@@ -17,6 +17,7 @@ static void defaults() {
     Settings::followOnThread = true;
     Settings::shrinkOnGpu = true;
     Settings::findSmallFirst = true;
+    Settings::readGameTraffic = false;
 }
 
 TEST_CASE("settings come back after Save and Load") {
@@ -25,6 +26,7 @@ TEST_CASE("settings come back after Save and Load") {
     Settings::hideOnMapClose = true;
     Settings::ignoreSea = false;
     Settings::findSmallFirst = false;
+    Settings::readGameTraffic = true;
     Settings::Save();
 
     defaults();
@@ -32,6 +34,7 @@ TEST_CASE("settings come back after Save and Load") {
     CHECK(Settings::hideOnMapClose == true);
     CHECK(Settings::ignoreSea == false);
     CHECK(Settings::findSmallFirst == false);
+    CHECK(Settings::readGameTraffic == true);
     // the ones that weren't changed
     CHECK(Settings::lineUpWithMap == true);
     CHECK(Settings::guessAhead == true);
@@ -42,9 +45,12 @@ TEST_CASE("a setting that isn't in the file gets its default") {
     std::ofstream(Settings::file, std::ios::trunc) << R"({ "ignoreSea": false })";
     defaults();
     Settings::guessAhead = false;
+    Settings::readGameTraffic = true;
     Settings::Load();
     CHECK(Settings::ignoreSea == false);
     CHECK(Settings::guessAhead == true);
+    // game traffic is off until the player turns it on
+    CHECK(Settings::readGameTraffic == false);
     defaults();
 }
 
