@@ -117,3 +117,24 @@ TEST_CASE("Npcap download: only an installer signed by Npcap's makers is opened"
     CHECK_FALSE(NpcapDownload::NpcapSigner(L"Nmap Software"));
     CHECK_FALSE(NpcapDownload::NpcapSigner(L""));
 }
+
+#include <sol/sol.hpp>
+#include "lua_functions.hpp"
+#include "settings.hpp"
+
+TEST_CASE("Lua: GetGameTraffic gives the switch and the codes, no sentences") {
+    sol::state lua;
+    lua.open_libraries(sol::lib::base);
+    lua.set_function("GetGameTraffic", LuaFunctions::GetGameTraffic);
+    Settings::readGameTraffic = false;
+    sol::table off = lua.safe_script("return GetGameTraffic()");
+    CHECK(off.get<bool>("on") == false);
+    CHECK(off.get<std::string>("state") == "off");
+    CHECK(off.get<std::string>("reason").empty());
+    // the switch is the player's, the state is the worker's
+    Settings::readGameTraffic = true;
+    sol::table on = lua.safe_script("return GetGameTraffic()");
+    CHECK(on.get<bool>("on") == true);
+    CHECK(on.get<std::string>("state") == "off");
+    Settings::readGameTraffic = false;
+}
