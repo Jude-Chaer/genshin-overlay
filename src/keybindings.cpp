@@ -135,6 +135,10 @@ namespace Keybindings {
     }
 
     std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers) {
+        // a press is looked up by its key, so a key is bound once
+        if (DoesKeybindExist(glfwKey) != nullptr) {
+            return "";
+        }
         auto keybind = std::make_unique<Keybind>(nextHotkeyId++, glfwKey, modifiers, callbackFunction, flags);
 
         std::string uuid = keybind->GetUUID();

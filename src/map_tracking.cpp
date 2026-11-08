@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <dwmapi.h>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <opencv2/imgproc.hpp>
@@ -49,6 +50,8 @@ namespace MapTracking {
 
     static std::atomic<Status> status{ Status::NoData };
     static std::atomic<bool> stopping{ false };
+    // cuts the map data check short, also mid-request, so closing right after start is quick
+    static std::unique_ptr<Net::Stopper> netStop;
     static std::thread worker;
     static std::thread followWorker;
     static std::atomic<HWND> overlayWindow{ nullptr };
@@ -140,7 +143,7 @@ namespace MapTracking {
             std::lock_guard<std::mutex> lock(mutex);
             downloadStage = stage;
             downloadPercent = percent;
-        }, &stopping);
+        }, netStop.get());
         if (stopping) return;
         if (!ready) {
             status = Status::NoData;
@@ -363,6 +366,7 @@ namespace MapTracking {
         if (worker.joinable()) return;
         stopping = false;
         detectorStopping = false;
+        netStop = std::make_unique<Net::Stopper>();
         worker = std::thread(workerLoop, dataFolder);
         followWorker = std::thread(followLoop);
 		detectorWorker = std::thread(zoombarDetectorLoop);  
@@ -373,6 +377,7 @@ namespace MapTracking {
             std::lock_guard<std::mutex> lock(mutex);
             stopping = true;
         }
+        if (netStop) netStop->stop();
 
         detectorStopping = true;
 

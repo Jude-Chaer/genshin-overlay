@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -13,6 +14,7 @@
 #include "extensions.hpp"
 #include "helpers.hpp"
 #include "settings.hpp"
+#include "item_files.hpp"
 #include "map_data.hpp"
 #include "map_check.hpp"
 #include "map_tiles.hpp"
@@ -167,6 +169,20 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
     return 0;
 }
 
+// for the workflow's builders: an exception says what it was before the run goes red
+static int saysWhy(const std::function<int()>& run) {
+    try {
+        return run();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed: " << e.what() << std::endl;
+    }
+    catch (...) {
+        std::cerr << "Failed with an unknown exception" << std::endl;
+    }
+    return 1;
+}
+
 int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
         return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0, argc >= 6 && std::string(argv[5]) == "timed");
@@ -179,7 +195,12 @@ int main(int argc, char** argv) {
     }
     // genshin-overlay.exe --make-index <folder>, used by the map-index workflow
     if (argc >= 3 && std::string(argv[1]) == "--make-index") {
-        return MapData::makeIndex(argv[2]);
+        return saysWhy([&]() { return MapData::makeIndex(argv[2]); });
+    }
+    // genshin-overlay.exe --make-items <folder> [--allow-drop], used by the map-index workflow too
+    if (argc >= 3 && std::string(argv[1]) == "--make-items") {
+        bool allowDrop = argc >= 4 && std::string(argv[3]) == "--allow-drop";
+        return saysWhy([&]() { return ItemFiles::make(argv[2], allowDrop); });
     }
 
     Settings::Load();
@@ -196,15 +217,19 @@ int main(int argc, char** argv) {
     }
 
     MapTracking::Start(Helpers::exeDirectory() / "map_data");
+    ItemFiles::Start(Helpers::exeDirectory() / "items", Settings::downloadItems);
     MapTiles::Init(Helpers::exeDirectory() / "map_data");
     MapCheck::Start(Helpers::exeDirectory() / "map_data");
     MiniMap::Start(Helpers::exeDirectory() / "map_data");
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
+    // told first so it winds down while the others are joined
+    ItemFiles::AskToStop();
     // first, it grabs the game and asks the map matching, which the tracker closes
     MiniMap::Stop();
     MapTracking::Stop();
+    ItemFiles::Stop();
     MapCheck::Stop();
     MapTiles::Shutdown();
     Overlay::Shutdown();

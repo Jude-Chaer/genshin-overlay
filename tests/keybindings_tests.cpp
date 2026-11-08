@@ -54,9 +54,11 @@ TEST_CASE("a pressed key runs its function once") {
 TEST_CASE("a key that's taken isn't bound a second time") {
     Keybindings::keybinds.clear();
     int first = 0, second = 0;
-    Keybindings::CreateKeybind(GLFW_KEY_F5, [&]() { first++; }, Keybindings::KeybindFlags_None);
-    Keybindings::CreateKeybind(GLFW_KEY_F5, [&]() { second++; }, Keybindings::KeybindFlags_ProcessWhileHidden,
+    std::string id = Keybindings::CreateKeybind(GLFW_KEY_F5, [&]() { first++; }, Keybindings::KeybindFlags_None);
+    CHECK_FALSE(id.empty());
+    std::string taken = Keybindings::CreateKeybind(GLFW_KEY_F5, [&]() { second++; }, Keybindings::KeybindFlags_ProcessWhileHidden,
         Keybindings::KeybindModifiers_Ctrl);
+    CHECK(taken.empty());
     CHECK(Keybindings::keybinds.size() == 1);
 
     press(GLFW_KEY_F5);
@@ -64,7 +66,8 @@ TEST_CASE("a key that's taken isn't bound a second time") {
     CHECK(first == 1);
     CHECK(second == 0);
 
-    Keybindings::DeleteKeybind(GLFW_KEY_F5);
+    CHECK_FALSE(Keybindings::DeleteKeybind(taken));
+    CHECK(Keybindings::DeleteKeybind(id));
     CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5) == nullptr);
     // free again now
     Keybindings::CreateKeybind(GLFW_KEY_F5, [&]() { second++; }, Keybindings::KeybindFlags_None);
@@ -77,11 +80,12 @@ TEST_CASE("a key that's taken isn't bound a second time") {
 TEST_CASE("a function can delete keybinds while they're being run") {
     Keybindings::keybinds.clear();
     int other = 0;
-    Keybindings::CreateKeybind(GLFW_KEY_F5, []() {
-        Keybindings::DeleteKeybind(GLFW_KEY_F5);
-        Keybindings::DeleteKeybind(GLFW_KEY_F6);
+    std::string f5, f6;
+    f5 = Keybindings::CreateKeybind(GLFW_KEY_F5, [&]() {
+        Keybindings::DeleteKeybind(f5);
+        Keybindings::DeleteKeybind(f6);
         }, Keybindings::KeybindFlags_None);
-    Keybindings::CreateKeybind(GLFW_KEY_F6, [&]() { other++; }, Keybindings::KeybindFlags_None);
+    f6 = Keybindings::CreateKeybind(GLFW_KEY_F6, [&]() { other++; }, Keybindings::KeybindFlags_None);
 
     // both pressed in the same frame, F5 runs first and takes F6 away
     press(GLFW_KEY_F5);
