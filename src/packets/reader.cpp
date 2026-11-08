@@ -82,7 +82,12 @@ namespace Packets {
         }
     };
 
-    Reader::Reader(const SessionKey::Keys& keys) : m_dispatchKeys(keys.dispatch), m_rsa(keys.rsaPem) {}
+    Reader::Reader(const SessionKey::Keys& keys) : m_dispatchKeys(keys.dispatch), m_rsa(std::make_unique<SessionKey::Rsa>(keys.rsaPem)) {}
+
+    void Reader::SetKeys(const SessionKey::Keys& keys) {
+        m_dispatchKeys = keys.dispatch;
+        m_rsa = std::make_unique<SessionKey::Rsa>(keys.rsaPem);
+    }
 
     Reader::~Reader() = default;
 
@@ -290,7 +295,7 @@ namespace Packets {
                 stop(State::NeedsRelog, Reason::CompressedLogin);
                 return;
             }
-            std::vector<uint64_t> seeds = m_rsa.ServerSeeds(opened.body);
+            std::vector<uint64_t> seeds = m_rsa->ServerSeeds(opened.body);
             if (!seeds.empty()) {
                 m_serverSeeds = std::move(seeds);
                 m_sentMs = sentMs;

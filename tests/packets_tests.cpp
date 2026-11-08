@@ -681,6 +681,27 @@ TEST_CASE("Recordings: logins found by the quick search") {
         { { 1792319064426, 1, 17523539364873015369ull }, { 1792319064426, 2, 11498923107378565284ull } } });
 }
 
+TEST_CASE("Recordings: keys that come later are used from the next login") {
+    if (!haveRecordings())
+        SKIP("the recordings aren't on this PC");
+    // no dispatch keys at first: 2026-10-18_relog's first login has a key id the reader doesn't know
+    SessionKey::Keys none = keys();
+    none.dispatch.clear();
+    Packets::Reader reader(none);
+    reader.SetSamples(1, 0);
+    std::vector<Frame> relog = recording("2026-10-18_relog");
+    REQUIRE_FALSE(relog.empty());
+    uint64_t first = relog[0].ms;
+    relog.erase(std::remove_if(relog.begin(), relog.end(), [&](const Frame& frame) { return frame.ms >= first + 80000; }), relog.end());
+    checkReplay(replay(reader, relog), { { 0.1, State::NoKey, Reason::UnknownKeyId }, { 76.9, WAIT, NONE } }, {});
+
+    // the release's keys come, the next login (2026-11-06_7.2-npcap's) reads
+    reader.SetKeys(keys());
+    reader.SetGameStart(1793966745000);
+    checkReplay(replay(reader, recording("2026-11-06_7.2-npcap")), { { 2.4, SEARCH, NONE }, { 2.4, READ, NONE } },
+        { { 1793967083884, 2, 10272110719125014212ull } });
+}
+
 TEST_CASE("Recordings: started in the middle of a session") {
     checkAnswer({ "2026-10-17_20-01", 0, { { 5, RELOG, LATE }, { 10.5, WAIT, NONE }, { 65.2, READ, NONE } },
         { { 1792263759254, 1, 5229061421258750016ull } } });

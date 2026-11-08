@@ -29,6 +29,19 @@ namespace SessionKey {
         return out;
     }
 
+    size_t AddDispatch(const nlohmann::json& keys, Keys& out) {
+        size_t left = 0;
+        for (auto& [id, key] : keys.items()) {
+            int number = std::atoi(id.c_str());
+            std::string bytes = key.is_string() ? fromBase64(key.get<std::string>()) : "";
+            if (number > 0 && number <= UINT16_MAX && std::to_string(number) == id && bytes.size() == KEY_SIZE)
+                out.dispatch[uint16_t(number)] = bytes;
+            else
+                left++;
+        }
+        return left;
+    }
+
     bool LoadKeys(const std::filesystem::path& folder, Keys& out) {
         std::ifstream file(folder / "dispatch-keys.json");
         if (!file)
@@ -36,14 +49,7 @@ namespace SessionKey {
         nlohmann::json keys = nlohmann::json::parse(file, nullptr, false);
         if (!keys.is_object())
             return false;
-        for (auto& [id, key] : keys.items()) {
-            if (!key.is_string())
-                continue;
-            int number = std::atoi(id.c_str());
-            std::string bytes = fromBase64(key.get<std::string>());
-            if (number > 0 && number <= UINT16_MAX && bytes.size() == KEY_SIZE)
-                out.dispatch[uint16_t(number)] = bytes;
-        }
+        AddDispatch(keys, out);
 
         std::error_code error;
         for (auto& entry : std::filesystem::directory_iterator(folder, error)) {
