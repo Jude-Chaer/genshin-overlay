@@ -32,6 +32,8 @@ namespace Packets {
 
         // when the game was started, unix ms. The first search pass looks at every time since
         void SetGameStart(uint64_t unixMs) { m_gameStart = unixMs; }
+        // New keys from the next login on, a login going on keeps the key it has
+        void SetKeys(const SessionKey::Keys& keys);
         // the samples the second pass tries, all of them unless a test makes it fewer
         void SetSamples(int32_t first, int32_t last) { m_samplesFirst = first; m_samplesLast = last; }
 
@@ -78,7 +80,7 @@ namespace Packets {
         void searchDone(std::vector<Messages::Message>& out);
 
         std::map<uint16_t, std::string> m_dispatchKeys;
-        SessionKey::Rsa m_rsa;
+        std::unique_ptr<SessionKey::Rsa> m_rsa;
         Kcp::Reader m_kcp;
         // The server the game talks to. Once there is one, packets from any
         // other address are left out until it goes quiet.

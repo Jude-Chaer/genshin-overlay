@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <nlohmann/json_fwd.hpp>
 
 // Finds the key the game encrypts its messages with after the login. Based on
 // auto-artifactarium (MIT), see packets/NOTICE.txt.
@@ -24,6 +25,9 @@ namespace SessionKey {
 
     // dispatch-keys.json and rsa-*.pem from the folder
     extern bool LoadKeys(const std::filesystem::path& folder, Keys& out);
+    // The keys of a dispatch-keys.json, {"id": "base64 key"}, into out. How
+    // many were left out for a bad id or a key that isn't 4096 bytes.
+    extern size_t AddDispatch(const nlohmann::json& keys, Keys& out);
 
     // .NET Framework's System.Random
     class CsRandom {
