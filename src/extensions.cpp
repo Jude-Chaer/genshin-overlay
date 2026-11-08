@@ -4,8 +4,11 @@
 #include "lua_functions.hpp"
 #include "settings.hpp"
 #include <imgui.h>
+#include <algorithm>
 #include <iostream>
 
+
+namespace fs = std::filesystem;
 
 namespace Extensions {
 	std::vector<std::unique_ptr<Extension>> registeredExtensions;
@@ -224,20 +227,26 @@ namespace Extensions {
 	void findAndLoadExtensions() {
 		std::filesystem::path extensionsRoot = Helpers::exeDirectory() / "extensions";
 
-		if (!std::filesystem::exists(extensionsRoot)) {
-			std::filesystem::create_directory(extensionsRoot);
+		std::error_code ec;
+		if (!std::filesystem::exists(extensionsRoot, ec)) {
+			std::filesystem::create_directory(extensionsRoot, ec);
 			return;
 		}
 
-		for (const auto& dirEntry : std::filesystem::directory_iterator(extensionsRoot)) {
-			if (!dirEntry.is_directory()) continue;
+		// an entry that can't be looked at is skipped, the others still load
+		fs::directory_iterator folders(extensionsRoot, ec);
+		for (; !ec && folders != fs::directory_iterator(); folders.increment(ec)) {
+			const fs::directory_entry& dirEntry = *folders;
+			std::error_code entryError;
+			if (!dirEntry.is_directory(entryError)) continue;
 
 			std::filesystem::path scriptPath = dirEntry.path() / "main.lua";
-			if (std::filesystem::exists(scriptPath)) {
-				std::cout << "Found extension in: " << dirEntry.path().filename() << std::endl;
+			if (std::filesystem::is_regular_file(scriptPath, entryError)) {
+				std::cout << "Found extension in: " << Helpers::utf8(dirEntry.path().filename()) << std::endl;
 				loadLuaExtension(scriptPath, dirEntry.path());
 			}
 		}
+		if (ec) std::cerr << "Couldn't look through " << Helpers::utf8(extensionsRoot) << ": " << ec.message() << std::endl;
 	}
 
 	// wraps a Lua function so an error gets printed instead of taking the overlay down
@@ -277,16 +286,22 @@ namespace Extensions {
 		ext->luaState->globals()["package"]["loadlib"] = sol::nil;
 		LuaFunctions::registerLuaFunctions(*ext->luaState);
 
+		// Names as UTF-8 with '/', any language works. The same as the code page
+		// names for plain English ones, so their hash didn't change.
 		std::vector<std::pair<std::string, std::string>> luaFileHashes;
-		for (const auto& entry : std::filesystem::recursive_directory_iterator(folderPath)) {
-			if (!entry.is_regular_file())
+		std::error_code walkError;
+		fs::recursive_directory_iterator entries(folderPath, walkError);
+		for (; !walkError && entries != fs::recursive_directory_iterator(); entries.increment(walkError)) {
+			const fs::directory_entry& entry = *entries;
+			std::error_code ec;
+			if (!entry.is_regular_file(ec))
 				continue;
 
 			if (entry.path().extension() != ".lua")
 				continue;
 
-			std::filesystem::path relative =
-				std::filesystem::relative(entry.path(), folderPath);
+			std::string relative = Helpers::utf8(entry.path().lexically_relative(folderPath));
+			std::replace(relative.begin(), relative.end(), '\\', '/');
 
 			std::string fileHash = Helpers::hashFile(entry.path());
 
@@ -295,10 +310,12 @@ namespace Extensions {
 				return;
 			}
 
-			luaFileHashes.emplace_back(
-				relative.generic_string(),
-				fileHash
-			);
+			luaFileHashes.emplace_back(relative, fileHash);
+		}
+		// a folder it can't look through can't be hashed whole
+		if (walkError) {
+			std::cerr << "Failed to hash " << Helpers::utf8(folderPath) << ": " << walkError.message() << std::endl;
+			return;
 		}
 		std::sort(
 			luaFileHashes.begin(),
@@ -361,7 +378,7 @@ namespace Extensions {
 		std::filesystem::path iconPath = folderPath / "icon.png";
 		if (std::filesystem::exists(iconPath)) {
 			ext->extensionImage = Helpers::loadTextureFromFile(
-				iconPath.string(),
+				iconPath,
 				ext->extensionImageWidth,
 				ext->extensionImageHeight
 			);

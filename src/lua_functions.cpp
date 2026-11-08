@@ -292,7 +292,7 @@ namespace LuaFunctions {
 			}
 		}
 		int width = 0, height = 0;
-		GLuint tex = Helpers::loadTextureFromFile(filePath.string(), width, height);
+		GLuint tex = Helpers::loadTextureFromFile(filePath, width, height);
 		return { tex, width, height };
 	}
 

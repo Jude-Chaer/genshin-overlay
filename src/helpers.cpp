@@ -9,22 +9,35 @@
 #include <opencv2/opencv.hpp>
 #include <cmath>
 #include <fstream>
+#include <iterator>
 #include <iomanip>
 #include <sstream>
 #include <vector>
 #include <array>
 
 namespace Helpers {
-    GLuint loadTextureFromFile(const std::string& filename, int& width, int& height) {
-        GLuint textureID = SOIL_load_OGL_texture(
-            filename.c_str(),
+    std::string utf8(const std::filesystem::path& path) {
+        return path.u8string();
+    }
+
+    std::filesystem::path fromUtf8(const std::string& text) {
+        return std::filesystem::u8path(text);
+    }
+
+    // read here, SOIL opens files by code page names
+    GLuint loadTextureFromFile(const std::filesystem::path& filename, int& width, int& height) {
+        std::ifstream file(filename, std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        GLuint textureID = bytes.empty() ? 0 : SOIL_load_OGL_texture_from_memory(
+            (const unsigned char*)bytes.data(),
+            (int)bytes.size(),
             SOIL_LOAD_AUTO,
             SOIL_CREATE_NEW_ID,
             SOIL_FLAG_MIPMAPS
         );
 
         if (textureID == 0) {
-            std::cerr << "Failed to load texture: " << filename << std::endl;
+            std::cerr << "Failed to load texture: " << utf8(filename) << std::endl;
             return 0;
         }
 

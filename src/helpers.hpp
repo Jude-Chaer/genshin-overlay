@@ -5,7 +5,11 @@
 #include <opencv2/opencv.hpp>
 
 namespace Helpers {
-    extern GLuint loadTextureFromFile(const std::string& filePath, int& width, int& height);
+    extern GLuint loadTextureFromFile(const std::filesystem::path& filePath, int& width, int& height);
+    // Path text as UTF-8, what Lua, ImGui and settings.json use. path::string()
+    // gives the code page instead, which can't hold every folder name.
+    extern std::string utf8(const std::filesystem::path& path);
+    extern std::filesystem::path fromUtf8(const std::string& text);
     extern std::filesystem::path exeDirectory();
     extern bool isElevated();
     // starts this exe again as admin (UAC prompt), false if that was declined
