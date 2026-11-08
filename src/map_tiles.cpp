@@ -219,9 +219,14 @@ namespace MapTiles {
         return true;
     }
 
+    bool IsTile(const Grid& grid, int x, int y, int size) {
+        bool knownSize = size == 32 || size == 64 || size == 128 || size == 256;
+        return knownSize && x >= 0 && x < grid.cols && y >= 0 && y < grid.rows;
+    }
+
     GLuint GetTile(int mapId, int x, int y, int size) {
-        loadGrids();
-        if (maps.count(mapId) == 0) return 0;
+        Grid grid;
+        if (!GetGrid(mapId, grid) || !IsTile(grid, x, y, size)) return 0;
 
         Key key(mapId, x, y, size);
         auto it = textures.find(key);
