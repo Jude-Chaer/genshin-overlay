@@ -17,7 +17,24 @@ namespace Keybindings {
 
     static HWND hotkeyWindow = nullptr;
     static WNDPROC originalWndProc = nullptr;
-    static int nextHotkeyId = 1;
+    // Windows takes hotkey ids from 1 to 0xBFFF for a program
+    static const int LAST_HOTKEY_ID = 0xBFFF;
+
+    // the next id after the last one given that no keybind has, going round to 1 after
+    // the last, so one bound and deleted over and over never runs out; 0 for none.
+    // Not the one just freed: a press of the old key can still be waiting in the queue.
+    static int lastHotkeyId = 0;
+    static int freeHotkeyId() {
+        std::vector<bool> used(LAST_HOTKEY_ID + 1, false);
+        for (const auto& keybind : keybinds) {
+            if (keybind->GetId() > 0 && keybind->GetId() <= LAST_HOTKEY_ID) used[keybind->GetId()] = true;
+        }
+        for (int step = 1; step <= LAST_HOTKEY_ID; step++) {
+            int id = (lastHotkeyId + step - 1) % LAST_HOTKEY_ID + 1;
+            if (!used[id]) return lastHotkeyId = id;
+        }
+        return 0;
+    }
     static bool gameInFront = false;
     static bool enabled = true;
 
@@ -62,6 +79,14 @@ namespace Keybindings {
         case GLFW_KEY_DOWN: return VK_DOWN;
         default: return 0;
         }
+    }
+
+    static UINT windowsModifiers(KeybindModifiers modifiers) {
+        UINT out = MOD_NOREPEAT;
+        if (modifiers & KeybindModifiers_Alt) out |= MOD_ALT;
+        if (modifiers & KeybindModifiers_Ctrl) out |= MOD_CONTROL;
+        if (modifiers & KeybindModifiers_Shift) out |= MOD_SHIFT;
+        return out;
     }
 
     // GLFW ignores WM_HOTKEY, so we put our own window proc in front of it
@@ -112,12 +137,9 @@ namespace Keybindings {
 
             if (wanted) {
                 UINT virtualKey = GlfwKeyToVirtualKey(keybind->GetKey());
-                UINT modifiers = MOD_NOREPEAT;
-                if (keybind->GetModifiers() & KeybindModifiers_Alt) modifiers |= MOD_ALT;
-                if (keybind->GetModifiers() & KeybindModifiers_Ctrl) modifiers |= MOD_CONTROL;
-                if (keybind->GetModifiers() & KeybindModifiers_Shift) modifiers |= MOD_SHIFT;
+                UINT modifiers = windowsModifiers(keybind->GetModifiers());
                 if (virtualKey == 0 || !RegisterHotKey(hotkeyWindow, keybind->GetId(), modifiers, virtualKey)) {
-                    std::cerr << "Could not register key " << keybind->GetKey() << std::endl;
+                    std::cerr << "Could not register key " << KeyName(keybind->GetKey(), keybind->GetModifiers()) << std::endl;
                     continue;
                 }
                 keybind->SetRegistered(true);
@@ -134,12 +156,38 @@ namespace Keybindings {
         RefreshRegistrations();
     }
 
-    std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers) {
-        // a press is looked up by its key, so a key is bound once
-        if (DoesKeybindExist(glfwKey) != nullptr) {
-            return "";
+    std::string WhyNotBindable(int glfwKey, KeybindFlags flags, KeybindModifiers modifiers) {
+        if (GlfwKeyToVirtualKey(glfwKey) == 0) {
+            return "key " + std::to_string(glfwKey) + " can't be bound";
         }
-        auto keybind = std::make_unique<Keybind>(nextHotkeyId++, glfwKey, modifiers, callbackFunction, flags);
+        // any other bit would make Alt+F5 and Alt+F5 with it two keys to the check below, but one to Windows
+        const KeybindModifiers allModifiers = KeybindModifiers_Alt | KeybindModifiers_Ctrl | KeybindModifiers_Shift;
+        if ((modifiers & ~allModifiers) != 0) {
+            return "modifiers " + std::to_string(modifiers) + " aren't only Alt, Ctrl and Shift";
+        }
+        if ((flags & ~KeybindFlags_ProcessWhileHidden) != 0) {
+            return "flags " + std::to_string(flags) + " aren't only ProcessWhileHidden";
+        }
+        // a press runs one function, so a key with the same modifiers is bound once
+        if (DoesKeybindExist(glfwKey, modifiers) != nullptr) {
+            return KeyName(glfwKey, modifiers) + " is taken already";
+        }
+        return "";
+    }
+
+    std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers,
+        std::string* whyNot) {
+        auto refuse = [&](const std::string& reason) {
+            if (whyNot) *whyNot = reason;
+            return std::string();
+        };
+        std::string cant = WhyNotBindable(glfwKey, flags, modifiers);
+        if (!cant.empty()) return refuse(cant);
+        int id = freeHotkeyId();
+        if (id == 0) {
+            return refuse("there are too many keybinds");
+        }
+        auto keybind = std::make_unique<Keybind>(id, glfwKey, modifiers, callbackFunction, flags);
 
         std::string uuid = keybind->GetUUID();
 
@@ -159,19 +207,20 @@ namespace Keybindings {
             RefreshRegistrations();
         }
 
-        std::vector<int> pressed;
+        std::vector<std::string> pressed;
         for (auto& keybind : keybinds) {
             if (keybind->ConsumePress()) {
-                pressed.push_back(keybind->GetKey());
+                pressed.push_back(keybind->GetUUID());
             }
         }
 
         // callbacks can create or delete keybinds, so look each one up again
-        for (int key : pressed) {
-            Keybind* keybind = DoesKeybindExist(key);
-            if (!keybind) continue;
+        for (const std::string& uuid : pressed) {
+            auto it = std::find_if(keybinds.begin(), keybinds.end(),
+                [&uuid](const std::unique_ptr<Keybind>& keybind) { return keybind->GetUUID() == uuid; });
+            if (it == keybinds.end()) continue;
 
-            auto callback = keybind->GetCallback();
+            auto callback = (*it)->GetCallback();
             if (callback) {
                 callback();
             }
@@ -197,12 +246,60 @@ namespace Keybindings {
         return false;
     }
 
-    Keybind* DoesKeybindExist(int glfwKey) {
+    Keybind* DoesKeybindExist(int glfwKey, KeybindModifiers modifiers) {
         for (auto& keybind : keybinds) {
-            if (keybind->GetKey() == glfwKey) {
+            if (keybind->GetKey() == glfwKey && keybind->GetModifiers() == modifiers) {
                 return keybind.get();
             }
         }
         return nullptr;
+    }
+
+    // the name of a key without modifiers, empty for one without a name
+    static std::string plainName(int glfwKey) {
+        if (glfwKey >= GLFW_KEY_F1 && glfwKey <= GLFW_KEY_F24) return "F" + std::to_string(glfwKey - GLFW_KEY_F1 + 1);
+        if ((glfwKey >= GLFW_KEY_A && glfwKey <= GLFW_KEY_Z) || (glfwKey >= GLFW_KEY_0 && glfwKey <= GLFW_KEY_9)) {
+            return std::string(1, (char)glfwKey);
+        }
+        if (glfwKey >= GLFW_KEY_KP_0 && glfwKey <= GLFW_KEY_KP_9) return "Numpad " + std::to_string(glfwKey - GLFW_KEY_KP_0);
+        switch (glfwKey) {
+        case GLFW_KEY_GRAVE_ACCENT: return "`";
+        case GLFW_KEY_MINUS: return "-";
+        case GLFW_KEY_EQUAL: return "=";
+        case GLFW_KEY_LEFT_BRACKET: return "[";
+        case GLFW_KEY_RIGHT_BRACKET: return "]";
+        case GLFW_KEY_BACKSLASH: return "\\";
+        case GLFW_KEY_SEMICOLON: return ";";
+        case GLFW_KEY_APOSTROPHE: return "'";
+        case GLFW_KEY_COMMA: return ",";
+        case GLFW_KEY_PERIOD: return ".";
+        case GLFW_KEY_SLASH: return "/";
+        case GLFW_KEY_SPACE: return "Space";
+        case GLFW_KEY_ESCAPE: return "Esc";
+        case GLFW_KEY_ENTER: return "Enter";
+        case GLFW_KEY_TAB: return "Tab";
+        case GLFW_KEY_BACKSPACE: return "Backspace";
+        case GLFW_KEY_INSERT: return "Insert";
+        case GLFW_KEY_DELETE: return "Delete";
+        case GLFW_KEY_HOME: return "Home";
+        case GLFW_KEY_END: return "End";
+        case GLFW_KEY_PAGE_UP: return "Page Up";
+        case GLFW_KEY_PAGE_DOWN: return "Page Down";
+        case GLFW_KEY_LEFT: return "Left";
+        case GLFW_KEY_RIGHT: return "Right";
+        case GLFW_KEY_UP: return "Up";
+        case GLFW_KEY_DOWN: return "Down";
+        default: return "";
+        }
+    }
+
+    std::string KeyName(int glfwKey, KeybindModifiers modifiers) {
+        std::string name;
+        if (modifiers & KeybindModifiers_Ctrl) name += "Ctrl+";
+        if (modifiers & KeybindModifiers_Alt) name += "Alt+";
+        if (modifiers & KeybindModifiers_Shift) name += "Shift+";
+        std::string plain = plainName(glfwKey);
+        if (plain.empty()) return name + "key " + std::to_string(glfwKey);
+        return name + plain;
     }
 }

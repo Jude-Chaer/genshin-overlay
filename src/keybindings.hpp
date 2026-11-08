@@ -61,15 +61,22 @@ namespace Keybindings {
     extern std::vector<std::unique_ptr<Keybind>> keybinds;
     extern void Init(GLFWwindow* window);
     extern void Shutdown();
-    // the keybind's id for DeleteKeybind, empty when the key is taken
-    extern std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags, KeybindModifiers modifiers = KeybindModifiers_None);
+    // The keybind's id for DeleteKeybind. Empty when it can't be bound, and whyNot
+    // (when given) says why: the key with these modifiers is taken, or it's a key
+    // Windows can't hold. F5 and Ctrl+F5 are two keybinds.
+    // why the key can't be bound, empty when it can
+    extern std::string WhyNotBindable(int glfwKey, KeybindFlags flags, KeybindModifiers modifiers);
+    extern std::string CreateKeybind(int glfwKey, std::function<void()> callbackFunction, KeybindFlags flags,
+        KeybindModifiers modifiers = KeybindModifiers_None, std::string* whyNot = nullptr);
     extern void ProcessKeybindings();
     extern void RefreshRegistrations();
     // lets go of every key, or takes them back
     extern void SetEnabled(bool enabled);
     // the Windows key for a GLFW one, 0 for a key that can't be bound
     extern unsigned int GlfwKeyToVirtualKey(int key);
-    extern Keybind* DoesKeybindExist(int glfwKey);
+    extern Keybind* DoesKeybindExist(int glfwKey, KeybindModifiers modifiers = KeybindModifiers_None);
+    // the key as a player reads it, like Ctrl+F5
+    extern std::string KeyName(int glfwKey, KeybindModifiers modifiers);
     extern bool DeleteKeybind(const std::string& uuid);
 
 }
