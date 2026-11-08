@@ -694,6 +694,7 @@ TEST_CASE("Recordings: keys that come later are used from the next login") {
     uint64_t first = relog[0].ms;
     relog.erase(std::remove_if(relog.begin(), relog.end(), [&](const Frame& frame) { return frame.ms >= first + 80000; }), relog.end());
     checkReplay(replay(reader, relog), { { 0.1, State::NoKey, Reason::UnknownKeyId }, { 76.9, WAIT, NONE } }, {});
+    CHECK(reader.UnknownKeyIds() == 1);
 
     // the release's keys come, the next login (2026-11-06_7.2-npcap's) reads
     reader.SetKeys(keys());

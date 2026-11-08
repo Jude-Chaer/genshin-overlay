@@ -175,6 +175,7 @@
     <ClCompile Include="src\packets\packet_capture.cpp" />
     <ClCompile Include="src\packets\reader.cpp" />
     <ClCompile Include="src\packets\session_key.cpp" />
+    <ClCompile Include="src\packets\traffic_keys.cpp" />
     <ClCompile Include="src\screen_pictures.cpp" />
     <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -207,6 +208,7 @@
     <ClCompile Include="tests\minimap_tests.cpp" />
     <ClCompile Include="tests\overlay_tests.cpp" />
     <ClCompile Include="tests\packets_tests.cpp" />
+    <ClCompile Include="tests\traffic_keys_tests.cpp" />
     <ClCompile Include="tests\triggers_tests.cpp" />
     <ClCompile Include="tests\typing_tests.cpp" />
     <ClCompile Include="tests\screen_pictures_tests.cpp" />
@@ -255,6 +257,7 @@
     <ClInclude Include="src\packets\packet_capture.hpp" />
     <ClInclude Include="src\packets\reader.hpp" />
     <ClInclude Include="src\packets\session_key.hpp" />
+    <ClInclude Include="src\packets\traffic_keys.hpp" />
     <ClInclude Include="src\screen_pictures.hpp" />
     <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />

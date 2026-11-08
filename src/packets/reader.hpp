@@ -54,6 +54,8 @@ namespace Packets {
         // no login going on, restarting the capture now loses nothing
         bool Idle() const { return m_phase == Phase::Idle; }
         Reason GetReason() const { return m_reason; }
+        // logins that ended in UnknownKeyId so far
+        uint64_t UnknownKeyIds() const { return m_unknownKeyIds; }
         // 1 from the game's start, 2 every sample, 0 when not searching
         int SearchPass() const;
         // Seconds the pass that runs has left, from how fast it went so far, so
@@ -92,6 +94,7 @@ namespace Packets {
         bool m_fromHandshake = false;
         State m_state = State::WaitingForLogin;
         Reason m_reason = Reason::None;
+        uint64_t m_unknownKeyIds = 0;
         uint64_t m_lastHandshake = 0;
         uint64_t m_lastFrame = 0;
         // data with no login since, to say it started late

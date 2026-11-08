@@ -250,10 +250,12 @@ namespace Packets {
             auto found = m_dispatchKeys.find(Messages::KeyId(data));
             if (found == m_dispatchKeys.end()) {
                 // without the handshake this may not be the login at all
-                if (m_fromHandshake)
+                if (m_fromHandshake) {
                     stop(State::NoKey, Reason::UnknownKeyId);
-                else
+                    m_unknownKeyIds++;
+                } else {
                     stop(State::NeedsRelog, Reason::StartedLate);
+                }
                 return;
             }
             m_key = found->second;
