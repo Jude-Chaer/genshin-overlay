@@ -46,7 +46,7 @@ TEST_CASE("Game traffic: every state and reason has the menu's sentence") {
     CHECK(text(listening(Packets::State::NeedsRelog, Reason::MissedPackets)) == "Lost some of the game's traffic." + RELOG);
     CHECK(text(listening(Packets::State::NeedsRelog, Reason::KeyStoppedFitting)) == "The game's key changed." + RELOG);
     CHECK(text(listening(Packets::State::NoKey, Reason::UnknownKeyId))
-        == "This game version is new. It needs a newer overlay.");
+        == "This game version is new. Its key can take a few hours to come. Log in again later.");
     CHECK(text(listening(Packets::State::NoKey, Reason::NotFound))
         == "Couldn't find the game's key. Restart the game, then log in.");
 

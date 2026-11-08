@@ -53,7 +53,7 @@ namespace GameTrafficText {
             }
         case Packets::State::NoKey:
             if (status.reason == Reason::UnknownKeyId)
-                return { "This game version is new. It needs a newer overlay." };
+                return { "This game version is new. Its key can take a few hours to come. Log in again later." };
             return { "Couldn't find the game's key. Restart the game, then log in." };
         }
         return {};

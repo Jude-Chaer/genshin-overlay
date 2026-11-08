@@ -9,6 +9,8 @@
 #include <vector>
 #include "../helpers.hpp"
 
+#include "traffic_keys.hpp"
+
 namespace GameTraffic {
     // how long Stop can wait for the worker to notice
     static constexpr int TAKE_MS = 250;
@@ -138,10 +140,35 @@ namespace GameTraffic {
             return;
         }
         // without them every login would end in not_found
-        if (!SessionKey::LoadKeys(folder, keys) || keys.dispatch.empty() || !SessionKey::Rsa(keys.rsaPem).AllLoaded()) {
+        if (!TrafficKeys::Load(folder, keys) || keys.dispatch.empty() || !SessionKey::Rsa(keys.rsaPem).AllLoaded()) {
             setStatus(cantListen(PacketCapture::Problem::None, false, true));
             return;
         }
+
+        // The release's keys, at the start and after a login with a key id
+        // none of them has. On a thread of its own, so a slow network never
+        // holds up reading a login.
+        Net::Stopper keysStop;
+        std::thread keysThread;
+        std::atomic<bool> keysDone = false;
+        SessionKey::Keys newKeys;
+        TrafficKeys::Got keysGot = TrafficKeys::Got::Same;
+        auto downloadKeys = [&] {
+            if (keysThread.joinable()) {
+                if (!keysDone)
+                    return;
+                keysThread.join();
+            }
+            keysDone = false;
+            keysThread = std::thread([&] {
+                keysGot = TrafficKeys::Download(folder, newKeys, &keysStop);
+                keysDone = true;
+            });
+        };
+        downloadKeys();
+        bool keysTaken = false;
+        Packets::Reason lastReason = Packets::Reason::None;
+
         PacketCapture::Listener capture;
         capture.Start();
         printAdapters(capture);
@@ -155,6 +182,24 @@ namespace GameTraffic {
         int64_t lastFrameAt = 0;
 
         while (!stopping) {
+            if (keysDone && !keysTaken) {
+                keysTaken = true;
+                if (keysGot == TrafficKeys::Got::New) {
+                    reader.SetKeys(newKeys);
+                    std::cout << "Game traffic: new keys from the release, " << newKeys.dispatch.size() << " dispatch and "
+                              << newKeys.rsaPem.size() << " login keys, used from the next login" << std::endl;
+                } else if (keysGot != TrafficKeys::Got::Same) {
+                    std::cout << "Game traffic: keys from the release " << TrafficKeys::GotCode(keysGot) << ", reading with the ones there are" << std::endl;
+                }
+            }
+            if (reader.GetReason() != lastReason) {
+                lastReason = reader.GetReason();
+                if (lastReason == Packets::Reason::UnknownKeyId && keysTaken) {
+                    keysTaken = false;
+                    downloadKeys();
+                }
+            }
+
             int64_t now = steadyMs();
             Packets::State read = reader.GetState();
             bool waiting = reader.Idle();
@@ -198,6 +243,9 @@ namespace GameTraffic {
             got.way = capture.GetWay();
             setStatus(got);
         }
+        keysStop.stop();
+        if (keysThread.joinable())
+            keysThread.join();
     }
 
     void Start() {
