@@ -1,0 +1,74 @@
+# Copies the keys the game's traffic is read with to the "map-index" release
+# as one traffic-keys.json: Irminsul's dispatch keys and auto-artifactarium's
+# login keys. The overlay downloads it when game traffic starts, so a new key
+# reaches players without a new overlay. It only downloads a few small files
+# and builds nothing, so it checks every hour. Uploaded only when a key changed.
+
+name: Traffic keys
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: traffic-keys
+  cancel-in-progress: false
+
+jobs:
+  keys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Download the keys
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir in
+          curl -fsSL --retry 3 -o in/gi.json https://raw.githubusercontent.com/konkers/irminsul/main/keys/gi.json
+          # every login key, so a private_key_6.pem is picked up too
+          pems=$(gh api "repos/konkers/auto-artifactarium/git/trees/main?recursive=1" --jq '.tree[].path | select(test("^keys/private_key_[0-9]+\\.pem$"))')
+          for path in $pems; do
+            curl -fsSL --retry 3 -o "in/$(basename "$path")" "https://raw.githubusercontent.com/konkers/auto-artifactarium/main/$path"
+          done
+          irminsul=$(gh api "repos/konkers/irminsul/commits?path=keys/gi.json&per_page=1" --jq '.[0].sha')
+          artifactarium=$(gh api "repos/konkers/auto-artifactarium/commits?path=keys&per_page=1" --jq '.[0].sha')
+          printf '{"irminsul": "%s", "auto-artifactarium": "%s"}\n' "$irminsul" "$artifactarium" > in/from.json
+
+      - name: Make sure the release is there
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view map-index > /dev/null 2>&1; then
+            gh release create map-index --prerelease --latest=false --title "Map index" --notes "Map data for the overlay, downloaded by the app. Not an app release."
+          fi
+
+      - name: Make the keys file
+        id: keys
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # the published one is kept in, so it has to come when it's there
+          if gh release view map-index --json assets --jq '.assets[].name' | grep -qx traffic-keys.json; then
+            gh release download map-index -p traffic-keys.json -O in/published.json
+          fi
+          code=0
+          python3 -I .github/scripts/traffic_keys.py in traffic-keys.json || code=$?
+          if [ "$code" -eq 3 ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$code" -ne 0 ]; then exit "$code"; fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload
+        if: steps.keys.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload map-index traffic-keys.json --clobber
