@@ -492,7 +492,15 @@ namespace LuaFunctions {
 		ImGui::GetBackgroundDrawList()->PopClipRect();
 	}
 
-	static nlohmann::json LuaToJson(sol::object obj) {
+	// Deeper than this is refused, both ways: each level is a C++ call, and
+	// without an end a table that holds itself runs out of stack, which nothing catches.
+	static const int JSON_MAX_DEPTH = 128;
+
+	// open: the tables being written right now, a table inside itself is refused
+	static nlohmann::json LuaToJson(sol::object obj, int depth, std::vector<const void*>& open) {
+		if (depth > JSON_MAX_DEPTH)
+			throw std::runtime_error("deeper than " + std::to_string(JSON_MAX_DEPTH) + " levels");
+
 		switch (obj.get_type()) {
 		case sol::type::nil:
 			return nullptr;
@@ -508,6 +516,11 @@ namespace LuaFunctions {
 
 		case sol::type::table: {
 			sol::table table = obj.as<sol::table>();
+			const void* self = table.pointer();
+			if (std::find(open.begin(), open.end(), self) != open.end())
+				throw std::runtime_error("a table holds itself");
+			open.push_back(self);
+			struct Close { std::vector<const void*>& open; ~Close() { open.pop_back(); } } close{ open };
 
 			bool isArray = true;
 			size_t count = 0;
@@ -541,7 +554,7 @@ namespace LuaFunctions {
 				nlohmann::json result = nlohmann::json::array();
 
 				for (size_t i = 1; i <= count; i++) {
-					result.push_back(LuaToJson(table.raw_get<sol::object>(i)));
+					result.push_back(LuaToJson(table.raw_get<sol::object>(i), depth + 1, open));
 				}
 
 				return result;
@@ -554,7 +567,7 @@ namespace LuaFunctions {
 					throw std::runtime_error("JSON object keys must be strings");
 
 				std::string key = pair.first.as<std::string>();
-				result[key] = LuaToJson(pair.second);
+				result[key] = LuaToJson(pair.second, depth + 1, open);
 			}
 
 			return result;
@@ -606,7 +619,8 @@ namespace LuaFunctions {
 
 	sol::object JSONEncode(sol::object value, sol::this_state state) {
 		try {
-			std::string encoded = LuaToJson(value).dump();
+			std::vector<const void*> open;
+			std::string encoded = LuaToJson(value, 0, open).dump();
 			return sol::make_object(state, encoded);
 		}
 		catch (const std::exception& e) {
@@ -617,7 +631,12 @@ namespace LuaFunctions {
 
 	sol::object JSONDecode(const std::string& input, sol::this_state state) {
 		try {
-			nlohmann::json decoded = nlohmann::json::parse(input);
+			// the depth is checked while reading, so a reply nested a million deep stops early
+			nlohmann::json decoded = nlohmann::json::parse(input, [](int depth, nlohmann::json::parse_event_t, nlohmann::json&) {
+				if (depth > JSON_MAX_DEPTH)
+					throw std::runtime_error("deeper than " + std::to_string(JSON_MAX_DEPTH) + " levels");
+				return true;
+			});
 			sol::state_view lua(state);
 			return JsonToLua(decoded, lua);
 		}
