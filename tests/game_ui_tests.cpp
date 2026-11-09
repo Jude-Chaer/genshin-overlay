@@ -12,6 +12,7 @@
 #include <opencv2/imgproc.hpp>
 #include "game_ui.hpp"
 #include "map_screen.hpp"
+#include "map_tracking.hpp"
 
 namespace fs = std::filesystem;
 using namespace GameUi;
@@ -303,4 +304,20 @@ TEST_CASE("score on every screenshot", "[.][score]") {
     std::cout << shots << " shots, " << misses << " missed, " << (shots ? took / shots : 0.0) << " ms a shot to read both\n";
     CHECK(shots > 0);
     CHECK(misses == 0);
+}
+
+// The part getZoomBarRect gives, cut from the game's frames
+static bool zoomBar(const std::string& name) {
+    cv::Mat zoomTemplate, grey;
+    cv::cvtColor(readPicture(fs::path(__FILE__).parent_path().parent_path() / "zoombar_template.png"), zoomTemplate, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(readPicture(MapScreen::DATA / "zoom_bar" / (name + ".png")), grey, cv::COLOR_BGR2GRAY);
+    return MapTracking::zoomBarShows(grey, zoomTemplate);
+}
+
+TEST_CASE("the zoom bar at the game's height", "[game_ui]") {
+    // the map open at 3840x2160 and in a 1920x1080 window
+    CHECK(zoomBar("open_2160"));
+    CHECK(zoomBar("open_1080"));
+    // the map closed in the 1920x1080 window
+    CHECK_FALSE(zoomBar("closed_1080"));
 }

@@ -653,15 +653,25 @@ namespace MapTracking {
         else
             detectorGreyscaleMatCache = image;
 
-        if (detectorGreyscaleMatCache.cols < zoomTemplate.cols ||
-            detectorGreyscaleMatCache.rows < zoomTemplate.rows)
+        return zoomBarShows(detectorGreyscaleMatCache, zoomTemplate);
+    }
+
+    // The template is the zoom bar in a 2160 high game. getZoomBarRect's
+    // part goes with the game's height, so other heights scale the template.
+    bool zoomBarShows(const cv::Mat& grey, const cv::Mat& zoomTemplate)
+    {
+        if (grey.empty() || zoomTemplate.empty())
             return false;
+
+        cv::Mat scaled = zoomTemplate;
+        if (grey.size() != zoomTemplate.size())
+            cv::resize(zoomTemplate, scaled, grey.size(), 0, 0, cv::INTER_AREA);
 
         cv::Mat result;
 
         cv::matchTemplate(
-            detectorGreyscaleMatCache,
-            zoomTemplate,
+            grey,
+            scaled,
             result,
             cv::TM_CCOEFF_NORMED
         );
