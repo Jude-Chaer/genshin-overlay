@@ -40,18 +40,20 @@ namespace MapLocator {
     static int m_maskHeight = 0;
 
     // Game UI to leave out of the match, in a 2000x1125 frame. Each rect is
-    // anchored to the edge it sits on so other aspect ratios still line up.
+    // anchored to the edge it sits on so other aspect ratios still line up:
+    // x to the left or right, each y to the top (0), middle (1) or bottom (2).
     struct UiRect {
         int x0, y0, x1, y1;
         bool right;
+        int top, bottom;
     };
     static constexpr UiRect UI_RECTS[] = {
-        { 0, 0, 370, 440, false },       // event banner and list
-        { 0, 430, 90, 690, false },      // zoom slider
-        { 0, 1015, 100, 1115, false },
-        { 1030, 15, 2000, 85, true },    // resource bar
-        { 1530, 1015, 2000, 1125, true },// region name
-        { 1930, 600, 2000, 800, true },  // layer switcher
+        { 0, 0, 370, 440, false, 0, 1 },        // event banner and list
+        { 0, 430, 90, 690, false, 1, 1 },       // zoom slider
+        { 0, 1015, 100, 1115, false, 2, 2 },    // gear
+        { 1030, 15, 2000, 85, true, 0, 0 },     // resource bar
+        { 1530, 1015, 2000, 1125, true, 2, 2 }, // region name
+        { 1930, 600, 2000, 800, true, 1, 1 },   // layer switcher
     };
 
     // manifest paths can use either slash
@@ -565,11 +567,16 @@ namespace MapLocator {
         int w = screen.cols, h = screen.rows;
         if (w < 64 || h < 64) return Result();
 
-        // the game UI scales with the screen height
         if (m_maskWidth != w || m_maskHeight != h) {
             m_matchMask = cv::Mat(h, w, CV_8U, cv::Scalar(255));
 
-            double s = h / 1125.0;
+            // the game UI scales with the height, or the width when narrower than 16:9
+            double s = (std::min)(h / 1125.0, w / 2000.0);
+            auto toY = [&](int y, int edge) {
+                if (edge == 0) return (int)(y * s);
+                if (edge == 2) return (int)(h - (1125 - y) * s);
+                return (int)(h / 2.0 + (y - 562.5) * s);
+            };
 
             for (const auto& r : UI_RECTS) {
                 int x0, x1;
@@ -583,8 +590,8 @@ namespace MapLocator {
                     x1 = (int)(r.x1 * s);
                 }
 
-                int y0 = (int)(r.y0 * s);
-                int y1 = (int)(r.y1 * s);
+                int y0 = toY(r.y0, r.top);
+                int y1 = toY(r.y1, r.bottom);
 
                 cv::Rect rect(
                     cv::Point((std::max)(0, x0), (std::max)(0, y0)),

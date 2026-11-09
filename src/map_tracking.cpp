@@ -615,14 +615,18 @@ namespace MapTracking {
         if (!Capture::getClientRectOnScreen(game, client))
             return false;
 
+        int w = client.right - client.left;
         int h = client.bottom - client.top;
 
-        double scale = h / 1125.0;
+        // Narrower than 16:9 the game's UI fits the width, the zoom bar stays
+        // in the middle of the height
+        double scale = std::min(h / 1125.0, w / 2000.0);
+        double middle = h / 2.0;
 
         out.left = client.left + (LONG)(37.5 * scale);
-        out.top = client.top + (LONG)(450 * scale);
+        out.top = client.top + (LONG)(middle + (450 - 562.5) * scale);
         out.right = client.left + (LONG)(62.5 * scale);
-        out.bottom = client.top + (LONG)(475 * scale);
+        out.bottom = client.top + (LONG)(middle + (475 - 562.5) * scale);
 
         return out.right > out.left && out.bottom > out.top;
     }
@@ -657,7 +661,7 @@ namespace MapTracking {
     }
 
     // The template is the zoom bar in a 2160 high game. getZoomBarRect's
-    // part goes with the game's height, so other heights scale the template.
+    // part scales with the game's UI, so other sizes scale the template.
     bool zoomBarShows(const cv::Mat& grey, const cv::Mat& zoomTemplate)
     {
         if (grey.empty() || zoomTemplate.empty())

@@ -3,9 +3,10 @@
 #include <cmath>
 #include <opencv2/imgproc.hpp>
 
-// All numbers are in a 2000x1125 picture, the UI scales with the height and
-// the right side is anchored to the right edge. Measured on screenshots of
-// the big map at 3840x2160.
+// All numbers are in a 2000x1125 picture. The UI scales by the smaller of
+// height / 1125 and width / 2000, the right side is anchored to the right
+// edge and each piece to its own top, middle or bottom. Measured on
+// screenshots of the big map at 3840x2160 and in a 1600x1200 window.
 namespace GameUi {
     static constexpr double HEIGHT = 1125.0, WIDTH = 2000.0;
     // smaller than this the game's UI is too small to read, a minimised window
@@ -36,21 +37,35 @@ namespace GameUi {
         return WIDTH - (width - x) / s;
     }
 
+    // the UI's scale in a picture that big
+    static double scaleOf(double width, double height) {
+        return std::min(height / HEIGHT, width / WIDTH);
+    }
+
+    // The edge a piece keeps to top to bottom. Narrower than 16:9 the UI fits
+    // the width and the pieces in the middle of a side stay in the middle.
+    enum class Edge { Top, Middle, Bottom };
+    static double toPixelsY(double height, double s, double y, Edge edge) {
+        if (edge == Edge::Top) return y * s;
+        if (edge == Edge::Bottom) return height - (HEIGHT - y) * s;
+        return height / 2 + (y - HEIGHT / 2) * s;
+    }
+
     // Where a part given in 2000x1125 units is in a picture that big
-    static cv::Rect place(cv::Size size, double x0, double y0, double x1, double y1) {
-        double s = size.height / HEIGHT;
+    static cv::Rect place(cv::Size size, double x0, double y0, double x1, double y1, Edge edge) {
+        double s = scaleOf(size.width, size.height);
         int w = (int)std::lround(x1 - x0), h = (int)std::lround(y1 - y0);
-        return { (int)std::floor(toPixels(size.width, s, x0)), (int)std::floor(y0 * s),
+        return { (int)std::floor(toPixels(size.width, s, x0)), (int)std::floor(toPixelsY(size.height, s, y0, edge)),
             (int)std::lround(w * s), (int)std::lround(h * s) };
     }
 
     // A part of the picture given in 2000x1125 units, scaled to that size,
     // so the numbers below work at any resolution. Black where the picture
     // has nothing.
-    static cv::Mat cut(const Picture& picture, double x0, double y0, double x1, double y1) {
-        double s = picture.size.height / HEIGHT;
+    static cv::Mat cut(const Picture& picture, double x0, double y0, double x1, double y1, Edge edge) {
+        double s = scaleOf(picture.size.width, picture.size.height);
         int w = (int)std::lround(x1 - x0), h = (int)std::lround(y1 - y0);
-        cv::Rect want = place(picture.size, x0, y0, x1, y1);
+        cv::Rect want = place(picture.size, x0, y0, x1, y1, edge);
         cv::Mat bgr(want.size(), CV_8UC3, cv::Scalar::all(0));
         for (size_t i = 0; i < picture.parts.size(); i++) {
             const cv::Mat& part = picture.parts[i];
@@ -100,13 +115,13 @@ namespace GameUi {
 
     // where that panel starts in a picture that big
     static int panelLeft(cv::Size size, const PanelLook& look) {
-        return (int)std::lround(toPixels(size.width, size.height / HEIGHT, look.edge));
+        return (int)std::lround(toPixels(size.width, scaleOf(size.width, size.height), look.edge));
     }
 
     std::vector<cv::Rect> PanelParts(cv::Size size) {
         std::vector<cv::Rect> parts;
         for (const PanelLook& look : PANELS) {
-            parts.push_back(around(size, place(size, look.edge + STRIP_FROM, 0, look.edge + STRIP_TO, HEIGHT), 1));
+            parts.push_back(around(size, place(size, look.edge + STRIP_FROM, 0, look.edge + STRIP_TO, HEIGHT, Edge::Middle), 1));
         }
         return parts;
     }
@@ -117,7 +132,7 @@ namespace GameUi {
         const PanelLook* best = nullptr;
         double bestShare = 0.0;
         for (const PanelLook& look : PANELS) {
-            cv::Mat strip = cut(frame, look.edge + STRIP_FROM, 0, look.edge + STRIP_TO, HEIGHT);
+            cv::Mat strip = cut(frame, look.edge + STRIP_FROM, 0, look.edge + STRIP_TO, HEIGHT, Edge::Middle);
             int matching = 0;
             for (int i = 0; i < ROWS; i++) {
                 int y = (int)(HEIGHT * (0.08 + 0.84 * i / (ROWS - 1)));
@@ -190,12 +205,12 @@ namespace GameUi {
 
     // the switcher's middle in 2000x1125 units, with that panel open
     static double switcherMiddle(cv::Size size, const Panel& panel) {
-        return panel.seen == Seen::Read ? toUnits(size.width, size.height / HEIGHT, panel.left) - FROM_PANEL : WIDTH - FROM_RIGHT;
+        return panel.seen == Seen::Read ? toUnits(size.width, scaleOf(size.width, size.height), panel.left) - FROM_PANEL : WIDTH - FROM_RIGHT;
     }
 
     static cv::Rect switcherArea(cv::Size size, const Panel& panel) {
         double left = std::floor(switcherMiddle(size, panel) - AREA_HALF);
-        return place(size, left, AREA_TOP, left + 2 * AREA_HALF, AREA_BOTTOM);
+        return place(size, left, AREA_TOP, left + 2 * AREA_HALF, AREA_BOTTOM, Edge::Middle);
     }
 
     // where it is with no panel, and left of each panel that doesn't hide it
@@ -217,7 +232,7 @@ namespace GameUi {
 
         double middleX = switcherMiddle(frame.size, panel);
         double left = std::floor(middleX - AREA_HALF);
-        cv::Mat area = cut(frame, left, AREA_TOP, left + 2 * AREA_HALF, AREA_BOTTOM);
+        cv::Mat area = cut(frame, left, AREA_TOP, left + 2 * AREA_HALF, AREA_BOTTOM, Edge::Middle);
         double x = middleX - left;
         auto at = [&](double steps) { return MIDDLE - AREA_TOP + steps * STEP; };
         auto icon = [&](double steps) { return spot(area, x, at(steps), ICON_HALF_WIDTH, ICON_HALF_HEIGHT).icon >= ICON_PIXELS; };
@@ -253,19 +268,21 @@ namespace GameUi {
         return { Seen::Read, count, lit };
     }
 
+    // x kept to the right edge or the left, y0 and y1 each to its edge
     struct Box {
         double x0, y0, x1, y1;
         bool right;
+        Edge top, bottom;
     };
 
     // with no panel open
-    static constexpr Box ZOOM = { 0, 430, 90, 690, false };
+    static constexpr Box ZOOM = { 0, 430, 90, 690, false, Edge::Middle, Edge::Middle };
     static constexpr Box MAP_UI[] = {
-        { 0, 0, 370, 440, false },        // event banner and list
-        ZOOM,                             // zoom slider
-        { 0, 1015, 100, 1115, false },    // gear
-        { 1030, 15, 2000, 85, true },     // resource bar
-        { 1530, 1015, 2000, 1125, true }, // region name
+        { 0, 0, 370, 440, false, Edge::Top, Edge::Middle },          // event banner and list, longer with room
+        ZOOM,                                                         // zoom slider
+        { 0, 1015, 100, 1115, false, Edge::Bottom, Edge::Bottom },   // gear
+        { 1030, 15, 2000, 85, true, Edge::Top, Edge::Top },          // resource bar
+        { 1530, 1015, 2000, 1125, true, Edge::Bottom, Edge::Bottom }, // region name
     };
     // The layer switcher's box round its middle, as tall as with 7 floors. It
     // moves with a panel like the switcher does. With a panel open only the
@@ -277,16 +294,17 @@ namespace GameUi {
     }
 
     static RECT toScreen(const Box& box, const RECT& game) {
-        double width = game.right - game.left, s = (game.bottom - game.top) / HEIGHT;
+        double width = game.right - game.left, height = game.bottom - game.top, s = scaleOf(width, height);
         double x0 = box.right ? toPixels(width, s, box.x0) : box.x0 * s;
         double x1 = box.right ? toPixels(width, s, box.x1) : box.x1 * s;
-        return { game.left + rounded(x0), game.top + rounded(box.y0 * s), game.left + rounded(x1), game.top + rounded(box.y1 * s) };
+        double y0 = toPixelsY(height, s, box.y0, box.top), y1 = toPixelsY(height, s, box.y1, box.bottom);
+        return { game.left + rounded(x0), game.top + rounded(y0), game.left + rounded(x1), game.top + rounded(y1) };
     }
 
     static RECT switcherBox(const RECT& game, const Panel& panel) {
         double middle = switcherMiddle(cv::Size(game.right - game.left, game.bottom - game.top), panel);
         Box box = { middle - SWITCHER_HALF_WIDTH, MIDDLE - SWITCHER_HALF_HEIGHT,
-            middle + SWITCHER_HALF_WIDTH, MIDDLE + SWITCHER_HALF_HEIGHT, true };
+            middle + SWITCHER_HALF_WIDTH, MIDDLE + SWITCHER_HALF_HEIGHT, true, Edge::Middle, Edge::Middle };
         return toScreen(box, game);
     }
 
@@ -309,9 +327,9 @@ namespace GameUi {
 
     bool BesideSwitcher(const RECT& game, const Panel& panel, POINT& out) {
         if (panel.seen == Seen::Unsure || hidesSwitcher(panel)) return false;
-        double s = (game.bottom - game.top) / HEIGHT;
+        double height = game.bottom - game.top, s = scaleOf(game.right - game.left, height);
         LONG boxLeft = switcherBox(game, panel.left >= 0 ? panel : Panel{}).left;
-        out = { boxLeft - rounded(BESIDE_GAP * s), game.top + rounded(MIDDLE * s) };
+        out = { boxLeft - rounded(BESIDE_GAP * s), game.top + rounded(toPixelsY(height, s, MIDDLE, Edge::Middle)) };
         return true;
     }
 

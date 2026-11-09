@@ -315,9 +315,49 @@ static bool zoomBar(const std::string& name) {
 }
 
 TEST_CASE("the zoom bar at the game's height", "[game_ui]") {
-    // the map open at 3840x2160 and in a 1920x1080 window
+    // the map open at 3840x2160, in a 1920x1080 window and a 1600x1200 one
     CHECK(zoomBar("open_2160"));
     CHECK(zoomBar("open_1080"));
+    CHECK(zoomBar("open_4_3"));
     // the map closed in the 1920x1080 window
     CHECK_FALSE(zoomBar("closed_1080"));
+}
+
+// A 1600x1200 window: its right side, 536 wide, back in a black frame
+static cv::Mat screen43(const std::string& name) {
+    cv::Mat part = readPicture(MapScreen::DATA / "map_screen" / (name + ".png"));
+    REQUIRE_FALSE(part.empty());
+    cv::Mat frame(1200, 1600, CV_8UC3, cv::Scalar::all(0));
+    part.copyTo(frame(cv::Rect(1600 - part.cols, 0, part.cols, part.rows)));
+    return frame;
+}
+
+TEST_CASE("the layer switcher in a 4:3 window", "[game_ui]") {
+    cv::Mat frame = screen43("two_floors_4_3");
+    Panel panel = ReadPanel(frame);
+    CHECK(panel.seen == GameUi::Seen::None);
+    Switcher switcher = ReadSwitcher(frame, panel);
+    CHECK(switcher.seen == GameUi::Seen::Read);
+    CHECK(switcher.count == 2);
+    CHECK(switcher.lit == 1);
+}
+
+TEST_CASE("the game's UI boxes in a 4:3 window", "[game_ui]") {
+    // the UI fits the width (0.8), pieces in the middle of a side stay there
+    RECT game = { 0, 0, 1600, 1200 };
+    std::vector<RECT> boxes = Boxes(game, Panel{});
+    REQUIRE(boxes.size() == 6);
+    // event list from the top to above the zoom bar
+    CHECK(boxes[0].top == 0);
+    CHECK(boxes[0].bottom == 502);
+    // zoom bar around the window's middle
+    CHECK(boxes[1].top == 494);
+    CHECK(boxes[1].bottom == 702);
+    // gear and region name at the bottom
+    CHECK(boxes[2].bottom == 1192);
+    CHECK(boxes[4].bottom == 1200);
+    CHECK(boxes[4].left == 1224);
+    // resource bar at the top right
+    CHECK(boxes[3].top == 12);
+    CHECK(boxes[3].right == 1600);
 }
