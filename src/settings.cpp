@@ -1,6 +1,7 @@
 #include "settings.hpp"
+#include "files.hpp"
 #include "helpers.hpp"
-#include <fstream>
+#include <iostream>
 #include <nlohmann/json.hpp>
 
 namespace Settings {
@@ -23,12 +24,55 @@ namespace Settings {
         return Helpers::exeDirectory() / "settings.json";
     }
 
-    void Load() {
-        std::ifstream file(settingsPath());
-        if (!file) return;
+    // The whole file, or {} when there's none. One that isn't a JSON object is
+    // moved to settings.json.broken first, so the next save can't wipe what's in it.
+    // An empty file has nothing to keep, and one that can't be opened right now
+    // (another program has it) isn't broken, so both stay where they are.
+    static nlohmann::json read() {
+        std::filesystem::path path = settingsPath();
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) return nlohmann::json::object();
+        std::uintmax_t size = std::filesystem::file_size(path, ec);
+        if (ec || size == 0) return nlohmann::json::object();
 
-        nlohmann::json settings = nlohmann::json::parse(file, nullptr, false);
-        if (settings.is_discarded()) return;
+        std::string text = Files::readText(path);
+        if (text.empty()) {
+            std::cerr << "[settings] " << Helpers::utf8(path.filename()) << " can't be opened right now, starting from the defaults" << std::endl;
+            return nlohmann::json::object();
+        }
+        nlohmann::json settings = nlohmann::json::parse(text, nullptr, false);
+        if (!settings.is_discarded() && settings.is_object()) return settings;
+
+        // an older broken file stays too: settings.json.broken2, 3 and so on
+        std::filesystem::path broken = path;
+        broken += ".broken";
+        for (int n = 2; std::filesystem::exists(broken, ec); n++) {
+            broken = path;
+            broken += ".broken" + std::to_string(n);
+        }
+        std::filesystem::rename(path, broken, ec);
+        if (ec) {
+            std::cerr << "[settings] " << Helpers::utf8(path.filename()) << " can't be read and can't be moved: " << ec.message() << std::endl;
+        }
+        else {
+            std::cerr << "[settings] " << Helpers::utf8(path.filename()) << " can't be read, kept it as "
+                << Helpers::utf8(broken.filename()) << ", starting from the defaults" << std::endl;
+        }
+        return nlohmann::json::object();
+    }
+
+    // under another name first, so a save cut half way leaves the old file
+    static void write(const nlohmann::json& settings) {
+        // text that isn't UTF-8 (an extension's setting) is saved with each bad byte replaced, dump would throw on it
+        if (!Files::writeFile(settingsPath(), settings.dump(2, ' ', false, nlohmann::json::error_handler_t::replace))) {
+            std::cerr << "[settings] couldn't save " << Helpers::utf8(settingsPath()) << std::endl;
+        }
+    }
+
+    // nothing to read leaves the settings as they are
+    void Load() {
+        nlohmann::json settings = read();
+        if (settings.empty()) return;
 		hideOnMapClose = settings.value("hideOnMapClose", false);
         lineUpWithMap = settings.value("lineUpWithMap", true);
         ignoreSea = settings.value("ignoreSea", true);
@@ -39,19 +83,6 @@ namespace Settings {
         shrinkOnGpu = settings.value("shrinkOnGpu", true);
         findSmallFirst = settings.value("findSmallFirst", true);
         downloadItems = settings.value("downloadItems", true);
-    }
-
-    static nlohmann::json read() {
-        std::ifstream file(settingsPath());
-        if (!file) return nlohmann::json::object();
-        nlohmann::json settings = nlohmann::json::parse(file, nullptr, false);
-        if (settings.is_discarded() || !settings.is_object()) return nlohmann::json::object();
-        return settings;
-    }
-
-    static void write(const nlohmann::json& settings) {
-        std::ofstream file(settingsPath(), std::ios::trunc);
-        file << settings.dump(2);
     }
 
     // extension settings are in the same file, don't wipe them

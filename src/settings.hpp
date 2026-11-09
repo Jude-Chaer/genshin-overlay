@@ -2,7 +2,9 @@
 #include <nlohmann/json.hpp>
 #include <unordered_set>
 #include "extensions.hpp"
-// The app's own settings, saved in settings.json next to the exe.
+// The app's own settings, saved in settings.json next to the exe. A
+// settings.json that can't be read is kept as settings.json.broken, and
+// everything starts from the defaults.
 
 namespace Settings {
     // Start as admin. Only needed to see M and Esc while the game has focus,

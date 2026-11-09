@@ -1,0 +1,49 @@
+{
+  "aheadFrames": 0,
+  "extensionPermissions": {
+    "29e5150a0f495697a29d728ba1922627980171428642c39d6d6696100083605930e03dc44645f147b148b2e23fcfdeed78578377d54407b922aa111a5c7f5001": [
+      6,
+      7,
+      8,
+      4,
+      5,
+      2
+    ]
+  },
+  "extensions": {
+    "example": {
+      "show_clicks": true
+    },
+    "map": {
+      "opacity": 0.5,
+      "showMap": true,
+      "showWhileMoving": true
+    },
+    "markers": {
+      "showChests": true,
+      "showWhileMoving": true,
+      "size": 32.0
+    },
+    "player": {
+      "onTop": false,
+      "opacity": 1.0,
+      "show": true,
+      "showMap": true
+    }
+  },
+  "findAfterFlick": false,
+  "findSmallFirst": true,
+  "followByTiles": true,
+  "followCursor": false,
+  "followOnThread": true,
+  "glideToStop": false,
+  "guessAhead": true,
+  "ignoreSea": true,
+  "lineUpWithMap": true,
+  "lookAgainStill": true,
+  "runAsAdmin": false,
+  "shrinkOnGpu": true,
+  "steadyZoom": true,
+  "waitForFrame": false,
+  "zoomFromKnob": true
+}
