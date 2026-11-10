@@ -106,6 +106,25 @@ TEST_CASE("the mouse's ring on a floor isn't that floor lit", "[game_ui]") {
     CHECK(seen.switcher.lit == 0);
 }
 
+TEST_CASE("above ground in the middle of the buttons", "[game_ui]") {
+    // 5 floors over it, 1 under, above ground lit: its button is bigger
+    Answer seen = read("ground_in_the_middle");
+    CHECK(seen.switcher.seen == GameUi::Seen::Read);
+    CHECK(seen.switcher.count == 7);
+    CHECK(seen.switcher.ground == 5);
+    CHECK(seen.switcher.lit == 5);
+}
+
+TEST_CASE("a dark map underground isn't the region list", "[game_ui]") {
+    // Kresnik Kristall Mines lit: the map round the strip is dark and flat
+    Answer seen = read("dark_underground");
+    CHECK(seen.panel.seen == GameUi::Seen::None);
+    CHECK(seen.switcher.seen == GameUi::Seen::Read);
+    CHECK(seen.switcher.count == 2);
+    CHECK(seen.switcher.ground == 0);
+    CHECK(seen.switcher.lit == 1);
+}
+
 TEST_CASE("the same at the game's size", "[game_ui]") {
     cv::Mat frame = screen("info_panel"), big;
     cv::resize(frame, big, cv::Size(3840, 2160), 0, 0, cv::INTER_CUBIC);
@@ -118,7 +137,8 @@ TEST_CASE("the same at the game's size", "[game_ui]") {
 }
 
 static const char* const SHOTS[] = { "custom_pin", "five_floors_bottom_lit", "five_floors_top_lit", "info_panel",
-    "info_panel_top_lit", "mouse_on_a_floor", "no_panel", "pier", "region_list", "snow", "statue_panel", "two_floors" };
+    "info_panel_top_lit", "mouse_on_a_floor", "no_panel", "pier", "region_list", "snow", "statue_panel", "two_floors",
+    "ground_in_the_middle", "dark_underground" };
 
 // only the parts the follower copies out of the game's frame
 static Picture parts(const cv::Mat& frame) {
@@ -150,6 +170,7 @@ TEST_CASE("the follower's parts of a frame read the same as all of it", "[game_u
             CHECK(switcher.seen == all.seen);
             CHECK(switcher.count == all.count);
             CHECK(switcher.lit == all.lit);
+            CHECK(switcher.ground == all.ground);
         }
     }
 }
@@ -228,7 +249,7 @@ TEST_CASE("the lit button is HoYoLAB's floor in its order", "[game_ui]") {
     // Pardis Dhyai, the game showed 5 buttons
     auto lit = [&](int button) {
         group = floor = -1;
-        return SwitcherFloor({ GameUi::Seen::Read, 5, button }, floors(), 2, 19, group, floor);
+        return SwitcherFloor({ GameUi::Seen::Read, 5, button, 0 }, floors(), 2, 19, 0, 0, group, floor);
     };
     REQUIRE(lit(0));
     CHECK((group == 0 && floor == 0));
@@ -240,23 +261,41 @@ TEST_CASE("the lit button is HoYoLAB's floor in its order", "[game_ui]") {
     CHECK((group == 19 && floor == 109));
 
     // Dragonspine, 2 buttons
-    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 2, 1 }, floors(), 2, 26, group, floor));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 2, 1, 0 }, floors(), 2, 26, 0, 0, group, floor));
     CHECK((group == 26 && floor == 46));
 
     // The Fortress of Meropide, 7 buttons, SIFT on Fontaine's underwater
     // floor round it. HoYoLAB lists its floors out of id order.
-    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 1 }, floors(), 2, 90, group, floor));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 1, 0 }, floors(), 2, 90, 0, 0, group, floor));
     CHECK((group == 20 && floor == 122));
-    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 2 }, floors(), 2, 90, group, floor));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 2, 0 }, floors(), 2, 90, 0, 0, group, floor));
     CHECK((group == 20 && floor == 42));
+}
+
+TEST_CASE("floors over above ground", "[game_ui]") {
+    // Kuuvahki Experimental Design Bureau: 5 floors over above ground, 1 under
+    int group = -1, floor = -1;
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 0, 5 }, floors(), 2, 185, 0, 0, group, floor));
+    CHECK((group == 185 && floor == 252));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 4, 5 }, floors(), 2, 185, 0, 0, group, floor));
+    CHECK((group == 185 && floor == 257));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 5, 5 }, floors(), 2, 185, 0, 0, group, floor));
+    CHECK((group == 0 && floor == 0));
+    // SIFT taking a lit floor for the ground: the group under the map's middle
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 2, 5 }, floors(), 2, 0, -10700.6, -973.7, group, floor));
+    CHECK((group == 185 && floor == 255));
+    // the one under isn't in HoYoLAB
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 7, 6, 5 }, floors(), 2, 0, -10700.6, -973.7, group, floor));
+    // the one under isn't one of the 5
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 7, 6, 5 }, floors(), 2, 185, 0, 0, group, floor));
 }
 
 TEST_CASE("no floor when the buttons don't fit SIFT's area", "[game_ui]") {
     int group = -1, floor = -1;
-    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 3, 1 }, floors(), 2, 19, group, floor));
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 3, 1, 0 }, floors(), 2, 19, 0, 0, group, floor));
     // above ground, SIFT has no area to go by
-    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 2, 1 }, floors(), 2, 0, group, floor));
-    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Unsure, 5, -1 }, floors(), 2, 19, group, floor));
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 2, 1, 0 }, floors(), 2, 0, 0, 0, group, floor));
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Unsure, 5, -1 }, floors(), 2, 19, 0, 0, group, floor));
 }
 
 // All the screenshots kept for the readers, full size. Not part of the normal
@@ -298,7 +337,8 @@ TEST_CASE("score on every screenshot", "[.][score]") {
         int count = switcher.seen == GameUi::Seen::Read ? switcher.count : 0;
         bool good = kind == f[1] && left == wantLeft && count == wantCount && (wantCount == 0 || switcher.lit == wantLit);
         if (!good) misses++;
-        std::cout << f[0] << "  panel " << kind << " " << left << "  buttons " << count << " lit " << switcher.lit
+        const char* buttons = switcher.seen == GameUi::Seen::Read ? "" : switcher.seen == GameUi::Seen::Unsure ? " (unsure)" : " (none)";
+        std::cout << f[0] << "  panel " << kind << " " << left << "  buttons " << count << buttons << " lit " << switcher.lit << " ground " << switcher.ground
             << (good ? "" : "   MISS") << "\n";
     }
     std::cout << shots << " shots, " << misses << " missed, " << (shots ? took / shots : 0.0) << " ms a shot to read both\n";

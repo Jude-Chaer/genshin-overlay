@@ -274,7 +274,7 @@ namespace MapTracking {
 
         double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
-            layers.Guess({ match.mapId, match.groupId, match.floorId });
+            layers.Guess({ match.mapId, match.groupId, match.floorId }, match.drawnLit);
             LayerChoice::Layer layer = layers.Now();
             if (layer.mapId == match.mapId) {
                 match.groupId = layer.groupId;
@@ -334,7 +334,7 @@ namespace MapTracking {
                     switcherReadAt = now;
                     const MapLocator::Result& at = follower.View();
                     GameUi::Switcher read = GameUi::ReadSwitcher(picture, panel);
-                    layers.Read(read, at.mapId);
+                    layers.Read(read, at.mapId, at.lng, at.lat);
                     useLayer();
                 }
             }
