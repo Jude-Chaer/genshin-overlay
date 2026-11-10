@@ -38,6 +38,9 @@ namespace MapData {
 
     struct Plan {
         std::string manifest;
+        // floor_names.tsv: <floor> <short name> <name>, a file of its own
+        // beside the manifest
+        std::string floorNames;
         std::vector<File> files;
         std::set<std::string> tileDirs;
     };
@@ -57,6 +60,9 @@ namespace MapData {
         double left = 0.0, top = 0.0, right = 0.0, bottom = 0.0;
         std::filesystem::path path;
         std::string url;
+        // HoYoLAB's names, "B1" and "Ruins Beyond the Mirror", empty when
+        // the data was saved before names were kept
+        std::string shortName, name;
     };
 
     // The floor's box with left smaller than right and top smaller than

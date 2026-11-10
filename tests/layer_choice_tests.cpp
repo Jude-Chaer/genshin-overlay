@@ -318,6 +318,27 @@ TEST_CASE("the locator on every screenshot", "[.][locate-set]") {
     }
 }
 
+TEST_CASE("a floor's names come back from the map data, none from data saved before they were kept") {
+    fs::path folder = fs::temp_directory_path() / "genshin-overlay-tests" / "floor-names";
+    fs::remove_all(folder);
+    fs::create_directories(folder);
+    // Sumeru's mirror ruins as HoYoLAB gave them
+    std::ofstream(folder / "manifest.tsv") << "# genshin-overlay map manifest v1\n"
+        << "image\t2\t245\t366\t-3510\t-7707\toverlays/366_a.png\t-3162\t-7418\n"
+        << "image\t2\t245\t367\t-3510\t-7707\toverlays/367_b.png\t-3162\t-7418\n";
+    {
+        std::ofstream names(folder / "floor_names.tsv");
+        names << "366\tB1\tRuins Beyond the Mirror\n";
+    }
+    std::vector<MapData::Floor> floors = MapData::readManifest(folder).floors;
+    REQUIRE(floors.size() == 2);
+    CHECK(floors[0].shortName == "B1");
+    CHECK(floors[0].name == "Ruins Beyond the Mirror");
+    CHECK(floors[1].shortName.empty());
+    CHECK(floors[1].name.empty());
+    fs::remove_all(folder);
+}
+
 TEST_CASE("a floor HoYoLAB has no map for, and floors over the ground", "[layer_choice]") {
     // Kuuvahki: 5 floors over the ground, 1 under it that HoYoLAB doesn't have
     const double x = -10600, y = -900;

@@ -210,6 +210,41 @@ namespace MapTracking {
         view.pickerGroup = view.visible ? layers.Area(view.result.lng, view.result.lat) : 0;
         view.opening = session;
         view.pickerFloors = view.pickerGroup ? MapData::groupFloors(loadedFloors, view.result.mapId, view.pickerGroup) : std::vector<int>{};
+        // The short name is the floor's count from the ground's button, L1
+        // up and B1 down, as the game's buttons sit. The whole one is
+        // HoYoLAB's, the short one when it has none.
+        auto place = [](bool above, int count) { return (above ? "L" : "B") + std::to_string(count); };
+        auto names = [&](int groupId, const std::vector<int>& area, int floorId, std::string& shortName, std::string& name) {
+            auto at = std::find(area.begin(), area.end(), floorId);
+            int i = (int)(at - area.begin());
+            bool above = layers.Over(groupId);
+            shortName = at == area.end() ? "Underground" : place(above, above ? (int)area.size() - i : i + 1);
+            name = shortName;
+            for (const MapData::Floor& floor : loadedFloors) {
+                if (floor.mapId != view.result.mapId || floor.floorId != floorId) continue;
+                if (!floor.name.empty()) name = floor.name;
+            }
+        };
+        view.floorShort = view.floorName = "Above ground";
+        view.aboveGround = !(view.visible && view.result.groupId);
+        bool unmappedAbove = false;
+        int unmappedPlace = 0;
+        view.noMapFloor = view.visible && layers.Unmapped(unmappedAbove, unmappedPlace);
+        if (view.noMapFloor) {
+            view.aboveGround = false;
+            view.floorShort = place(unmappedAbove, unmappedPlace);
+            view.floorName = view.floorShort + ", no map for this floor";
+        }
+        else if (view.visible && view.result.groupId)
+            names(view.result.groupId, MapData::groupFloors(loadedFloors, view.result.mapId, view.result.groupId), view.result.floorId, view.floorShort, view.floorName);
+        view.pickerGround = view.pickerGroup && layers.Over(view.pickerGroup) ? (int)view.pickerFloors.size() : 0;
+        view.pickerNames.clear();
+        for (int floorId : view.pickerFloors) {
+            std::string shortName, name;
+            names(view.pickerGroup, view.pickerFloors, floorId, shortName, name);
+            view.pickerNames.push_back(name);
+        }
+        view.pickerNames.insert(view.pickerNames.begin() + view.pickerGround, "Above ground");
         lastUpdate = now;
         answers++;
         answered.notify_all();

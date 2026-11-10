@@ -12,12 +12,15 @@
 #include "stats.hpp"
 #include "settings.hpp"
 #include "capture.hpp"
+#include <imgui_internal.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #include <iostream>
 #include <string>
+#include <algorithm>
+#include <vector>
 
 namespace Overlay {
     GLFWwindow* Window = nullptr;
@@ -292,7 +295,11 @@ namespace Overlay {
     static double pickerLeftAt = 0.0;
     // how long the cursor can be off the open list before it closes
     static constexpr double PICKER_LEAVE = 0.4;
-    static const ImU32 PICKER_CYAN = IM_COL32(110, 225, 245, 255);
+    // the game's map buttons in the Game look's dark colours, the same in every look
+    static const ImU32 PICKER_TOP = IM_COL32(232, 232, 232, 255);
+    static const ImU32 PICKER_UNDER = IM_COL32(140, 146, 158, 255);
+    static const ImU32 PICKER_TOP_LIT = IM_COL32(110, 230, 250, 255);
+    static const ImU32 PICKER_UNDER_LIT = IM_COL32(30, 160, 210, 255);
 
     // The open list closes once the cursor has been off it PICKER_LEAVE.
     // Not on screen counts as off.
@@ -302,13 +309,65 @@ namespace Overlay {
         else if (now - pickerLeftAt > PICKER_LEAVE) pickerOpen = false;
     }
 
-    // a box like one of the game's layer buttons, lit or not
-    static void pickerButton(ImDrawList* draw, ImVec2 min, float size, bool lit, bool hovered) {
-        ImVec2 max(min.x + size, min.y + size);
-        float round = size * 0.2f;
-        if (lit) draw->AddRectFilled(min, max, PICKER_CYAN, round);
-        else if (hovered) draw->AddRectFilled(min, max, IM_COL32(255, 255, 255, 60), round);
-        draw->AddRect(min, max, lit ? PICKER_CYAN : IM_COL32(235, 235, 235, 255), round, 0, (std::max)(1.0f, size * 0.1f));
+    static void pickerDiamond(ImDrawList* draw, ImVec2 center, float w, float h, ImU32 colour) {
+        draw->AddQuadFilled(ImVec2(center.x, center.y - h), ImVec2(center.x + w, center.y),
+            ImVec2(center.x, center.y + h), ImVec2(center.x - w, center.y), colour);
+    }
+
+    // a round button like the game's layer buttons: a thin ring around two
+    // stacked diamonds; the lit one has no ring, its diamonds cyan with a glow
+    // the game's above ground icon: two peaks, w and h from its middle
+    static void pickerMountain(ImDrawList* draw, ImVec2 c, float w, float h, ImU32 colour) {
+        draw->AddTriangleFilled(ImVec2(c.x - w, c.y + h), ImVec2(c.x - w * 0.3f, c.y - h * 0.6f), ImVec2(c.x + w * 0.4f, c.y + h), colour);
+        draw->AddTriangleFilled(ImVec2(c.x - w * 0.1f, c.y + h), ImVec2(c.x + w * 0.4f, c.y - h), ImVec2(c.x + w, c.y + h), colour);
+    }
+
+    static void pickerButton(ImDrawList* draw, ImVec2 center, float radius, bool lit, bool hovered) {
+        float w = radius * 0.5f, h = radius * 0.3f;
+        ImVec2 top(center.x, center.y - h * 0.3f), under(center.x, center.y + h * 0.45f);
+        if (lit) {
+            for (int i = 4; i >= 1; i--) draw->AddCircleFilled(center, radius * (0.4f + 0.15f * i), IM_COL32(70, 216, 240, 14));
+            pickerDiamond(draw, under, w, h, PICKER_UNDER_LIT);
+            pickerDiamond(draw, top, w, h, PICKER_TOP_LIT);
+            return;
+        }
+        if (hovered) draw->AddCircleFilled(center, radius, IM_COL32(255, 255, 255, 24));
+        draw->AddCircle(center, radius - 1.0f, IM_COL32(255, 255, 255, 50), 0, (std::max)(1.0f, radius * 0.06f));
+        pickerDiamond(draw, under, w, h, PICKER_UNDER);
+        pickerDiamond(draw, top, w, h, PICKER_TOP);
+    }
+
+    // a pill's outline in dashes, for a floor the overlay only guessed
+    static void dashedPill(ImDrawList* draw, ImVec2 min, ImVec2 max, ImU32 colour, float thickness, float dash) {
+        draw->PathRect(min, max, (max.y - min.y) / 2);
+        std::vector<ImVec2> points(draw->_Path.Data, draw->_Path.Data + draw->_Path.Size);
+        draw->PathClear();
+        if (points.size() < 2) return;
+        points.push_back(points[0]);
+        // walk the outline, drawing every other dash's length of it
+        bool on = true;
+        float left = dash;
+        std::vector<ImVec2> piece = { points[0] };
+        for (size_t i = 1; i < points.size(); i++) {
+            ImVec2 from = points[i - 1], to = points[i];
+            float length = std::sqrt((to.x - from.x) * (to.x - from.x) + (to.y - from.y) * (to.y - from.y));
+            float done = 0;
+            while (length - done > left) {
+                done += left;
+                ImVec2 at(from.x + (to.x - from.x) * done / length, from.y + (to.y - from.y) * done / length);
+                if (on) {
+                    piece.push_back(at);
+                    draw->AddPolyline(piece.data(), (int)piece.size(), colour, ImDrawFlags_None, thickness);
+                }
+                piece.assign(1, at);
+                on = !on;
+                left = dash;
+            }
+            left -= length - done;
+            if (on) piece.push_back(to);
+            else piece.assign(1, to);
+        }
+        if (on && piece.size() > 1) draw->AddPolyline(piece.data(), (int)piece.size(), colour, ImDrawFlags_None, thickness);
     }
 
     static void pickerArrow(ImDrawList* draw, float x, float y, float half, bool up, ImU32 colour) {
@@ -332,68 +391,108 @@ namespace Overlay {
             return;
         }
 
-        // the buttons from the top: above ground, then the area's floors
+        // the buttons from the top: the area's floors with above ground at pickerGround
         int count = 1 + (int)view.pickerFloors.size();
+        auto floorAt = [&](int button) { return button < view.pickerGround ? button : button - 1; };
         int lit = -1;
-        if (view.result.groupId == 0) lit = 0;
+        if (view.noMapFloor) lit = -1;
+        else if (view.result.groupId == 0) lit = view.pickerGround;
         else if (view.result.groupId == view.pickerGroup) {
-            for (int i = 0; i < (int)view.pickerFloors.size(); i++) {
-                if (view.pickerFloors[i] == view.result.floorId) lit = i + 1;
+            for (int i = 0; i < count; i++) {
+                if (i != view.pickerGround && view.pickerFloors[floorAt(i)] == view.result.floorId) lit = i;
             }
         }
         bool picked = view.layerFrom == LayerChoice::From::Picked;
+        ImU32 cream = IM_COL32(236, 229, 216, 255);
+        ImU32 gold = IM_COL32(211, 188, 142, 255);
 
-        // Just left of the game's buttons, the chip half way down them. The
-        // list opens downwards from it.
+        // A rounded dark column just left of the game's buttons, the chip
+        // half way down them. The list opens downwards from it.
         float font = ImGui::GetFontSize();
-        float chipTop = beside.y - font * 0.6f - ImGui::GetStyle().WindowPadding.y;
-        ImGui::SetNextWindowPos(ImVec2((float)beside.x, chipTop), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-        ImGui::SetNextWindowBgAlpha(0.75f);
+        float pad = font * 0.45f;
+        float chipHeight = font * 1.55f;
+        float radius = font * 1.15f;
+        // The floor: a mountain above ground, else its short name. Who said
+        // it (the game's buttons, a pick, or the overlay's guess) and its
+        // whole name on the tooltip.
+        bool guessed = view.layerFrom == LayerChoice::From::Guess;
+        const char* who = picked ? "Picked" : guessed ? "Guess" : "Auto";
+        ImGui::PushFont(nullptr, ImGui::GetCurrentContext()->FontSizeBase * 0.9f);
+        float small = ImGui::GetFontSize();
+        float lineHeight = ImGui::GetTextLineHeight();
+        float mountainHalf = small * 0.6f;
+        float floorWidth = view.aboveGround ? mountainHalf * 2 : ImGui::CalcTextSize(view.floorShort.c_str()).x;
+        float autoText = ImGui::CalcTextSize("Auto").x;
+        ImGui::PopFont();
+        float chipWidth = floorWidth + small * 2.4f;
+        float width = (std::max)(chipWidth, radius * 2 + pad);
+
+        ImGui::SetNextWindowPos(ImVec2((float)beside.x, beside.y - chipHeight / 2 - pad), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, chipHeight / 2 + pad);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, font * 0.7f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(28 / 255.0f, 32 / 255.0f, 48 / 255.0f, 0.82f));
         ImGui::Begin("##floorPicker", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
             | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
         ImDrawList* draw = ImGui::GetWindowDrawList();
+        float left = ImGui::GetCursorPosX();
+        auto centred = [&](float itemWidth) { ImGui::SetCursorPosX(left + (width - itemWidth) / 2); };
 
-        // the chip: a small row of boxes, who chose the floor, an arrow
-        float small = font * 0.5f, smallGap = font * 0.2f;
-        std::string why = std::string(" \xC2\xB7 ") + LayerChoice::Name(view.layerFrom);
-        ImVec2 whySize = ImGui::CalcTextSize(why.c_str());
-        float rowWidth = count * small + (count - 1) * smallGap;
-        ImVec2 chipSize(rowWidth + whySize.x + font * 1.2f, font * 1.2f);
-        if (ImGui::InvisibleButton("##chip", chipSize)) pickerOpen = !pickerOpen;
-        ImVec2 chip = ImGui::GetItemRectMin();
-        if (ImGui::IsItemHovered()) draw->AddRectFilled(chip, ImGui::GetItemRectMax(), IM_COL32(255, 255, 255, 25), font * 0.2f);
-        float middleY = chip.y + chipSize.y / 2;
-        for (int i = 0; i < count; i++) {
-            pickerButton(draw, ImVec2(chip.x + i * (small + smallGap), middleY - small / 2), small, i == lit, false);
+        // the chip: who chose the floor, an arrow
+        centred(chipWidth);
+        if (ImGui::InvisibleButton("##chip", ImVec2(chipWidth, chipHeight))) pickerOpen = !pickerOpen;
+        // with the floors open their own hover text names them
+        if (!pickerOpen && ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %s", who, view.floorName.c_str());
+        ImVec2 chip = ImGui::GetItemRectMin(), chipEnd = ImGui::GetItemRectMax();
+        draw->AddRectFilled(chip, chipEnd, IM_COL32(255, 255, 255, ImGui::IsItemHovered() ? 36 : 20), chipHeight / 2);
+        if (guessed) {
+            float line = (std::max)(1.0f, font * 0.1f);
+            ImVec2 in(line / 2, line / 2);
+            dashedPill(draw, ImVec2(chip.x + in.x, chip.y + in.y), ImVec2(chipEnd.x - in.x, chipEnd.y - in.y), gold, line, font * 0.3f);
         }
-        ImU32 text = ImGui::GetColorU32(picked ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-        draw->AddText(ImVec2(chip.x + rowWidth, middleY - whySize.y / 2), text, why.c_str());
-        pickerArrow(draw, chip.x + rowWidth + whySize.x + font * 0.6f, middleY, font * 0.25f, pickerOpen, text);
+        float middleY = chip.y + chipHeight / 2;
+        ImGui::PushFont(nullptr, ImGui::GetCurrentContext()->FontSizeBase * 0.9f);
+        float textX = chip.x + small * 0.7f;
+        if (view.aboveGround) pickerMountain(draw, ImVec2(textX + mountainHalf, middleY), mountainHalf, small * 0.38f, cream);
+        else draw->AddText(ImVec2(textX, middleY - lineHeight / 2), cream, view.floorShort.c_str());
+        ImGui::PopFont();
+        pickerArrow(draw, chip.x + chipWidth - small * 0.75f, middleY, small * 0.22f, pickerOpen, cream);
 
         if (pickerOpen) {
-            ImGui::Separator();
-            // Auto: back to what the game's buttons say
-            if (ImGui::RadioButton("Auto", !picked)) {
+            // Auto: back to what the game's buttons say, ticked while it's on
+            ImGui::PushFont(nullptr, ImGui::GetCurrentContext()->FontSizeBase * 0.9f);
+            float tick = small * 0.75f;
+            float autoWidth = autoText + (picked ? 0 : small * 0.35f + tick);
+            centred(autoWidth);
+            if (ImGui::InvisibleButton("##auto", ImVec2(autoWidth, ImGui::GetTextLineHeight()))) {
                 MapTracking::PickAuto(view.opening);
                 pickerOpen = false;
             }
-            // the buttons as the game lays them out, the one shown lit when
-            // picked, a dot in it when not
-            float box = font * 1.1f, gap = font * 0.35f;
+            ImU32 autoColour = ImGui::IsItemHovered() ? cream : gold;
+            ImVec2 at = ImGui::GetItemRectMin();
+            draw->AddText(at, autoColour, "Auto");
+            if (!picked) {
+                float x = at.x + autoText + small * 0.35f, y = at.y + ImGui::GetTextLineHeight() / 2;
+                ImVec2 points[3] = { ImVec2(x, y), ImVec2(x + tick * 0.35f, y + tick * 0.32f), ImVec2(x + tick, y - tick * 0.38f) };
+                draw->AddPolyline(points, 3, autoColour, ImDrawFlags_None, (std::max)(1.0f, small * 0.1f));
+            }
+            ImGui::PopFont();
+            // the buttons as the game lays them out, the floor shown lit
             for (int i = 0; i < count && pickerOpen; i++) {
                 ImGui::PushID(i);
-                bool clicked = ImGui::InvisibleButton("##floor", ImVec2(box, box));
+                centred(radius * 2);
+                bool clicked = ImGui::InvisibleButton("##floor", ImVec2(radius * 2, radius * 2));
+                if (i < (int)view.pickerNames.size() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", view.pickerNames[i].c_str());
                 ImVec2 min = ImGui::GetItemRectMin();
-                pickerButton(draw, min, box, picked && i == lit, ImGui::IsItemHovered());
-                if (i == lit && !picked) draw->AddCircleFilled(ImVec2(min.x + box / 2, min.y + box / 2), box * 0.18f, PICKER_CYAN);
+                pickerButton(draw, ImVec2(min.x + radius, min.y + radius), radius, i == lit, ImGui::IsItemHovered());
                 if (clicked) {
                     LayerChoice::Layer layer = { view.result.mapId, 0, 0 };
-                    if (i > 0) layer = { view.result.mapId, view.pickerGroup, view.pickerFloors[i - 1] };
+                    if (i != view.pickerGround) layer = { view.result.mapId, view.pickerGroup, view.pickerFloors[floorAt(i)] };
                     MapTracking::PickLayer(view.opening, layer);
                     pickerOpen = false;
                 }
                 ImGui::PopID();
-                if (i + 1 < count) ImGui::Dummy(ImVec2(0, (std::max)(0.0f, gap - ImGui::GetStyle().ItemSpacing.y)));
             }
         }
         pickerCursor(ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
@@ -401,6 +500,8 @@ namespace Overlay {
         ImVec2 min = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
         pickerBox = { (LONG)min.x, (LONG)min.y, (LONG)(min.x + size.x), (LONG)(min.y + size.y) };
         ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(4);
     }
 
     // a short note at the top of the screen after starting, so you know it's running

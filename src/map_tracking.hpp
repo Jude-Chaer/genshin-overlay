@@ -30,6 +30,16 @@ namespace MapTracking {
         // of the game's buttons. 0 and empty where there are none.
         int pickerGroup = 0;
         std::vector<int> pickerFloors;
+        // the place of the above ground button among the picker's, under
+        // the floors when the area is over the ground
+        int pickerGround = 0;
+        // the shown floor's short name and its whole one, and the picker's
+        // buttons' from the top
+        std::string floorShort, floorName;
+        bool aboveGround = true;
+        // the game shows a floor HoYoLAB has no map for, the result is above ground
+        bool noMapFloor = false;
+        std::vector<std::string> pickerNames;
         // goes up every time the map opens, a picker click names the one it was made on
         int opening = 0;
     };
