@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <dwmapi.h>
 #include "overlay.hpp"
+#include "controls.hpp"
 #include "keybindings.hpp"
 #include "extensions.hpp"
 #include "helpers.hpp"
@@ -85,13 +86,12 @@ namespace Overlay {
         iniPath = (Helpers::exeDirectory() / "imgui.ini").string();
         Overlay::IO->IniFilename = iniPath.c_str();
 
-        ImGui::StyleColorsDark();
-
         // scale the UI for high DPI screens
         float scaleX = 1.0f, scaleY = 1.0f;
         glfwGetMonitorContentScale(Overlay::mainMonitor, &scaleX, &scaleY);
         ImGui::GetStyle().ScaleAllSizes(scaleX);
         ImGui::GetStyle().FontScaleDpi = scaleX;
+        Controls::ApplyStyle(scaleX);
 
         ImGui_ImplGlfw_InitForOpenGL(Overlay::Window, true);
         ImGui_ImplOpenGL3_Init(glsl_version);
@@ -298,12 +298,11 @@ namespace Overlay {
         case MapTracking::Status::Downloading: {
             int percent = 0;
             std::string stage = MapTracking::GetDownloadStage(percent);
-            ImGui::Text("%s", stage.c_str());
-            ImGui::ProgressBar(percent / 100.0f);
+            Controls::Progress(stage.c_str(), percent / 100.0f);
             return;
         }
         case MapTracking::Status::Loading:
-            ImGui::Text("Loading map data...");
+            Controls::Waiting("Loading map data...");
             return;
         case MapTracking::Status::Failed:
             ImGui::Text("Map data failed to load, check the console");
@@ -317,9 +316,9 @@ namespace Overlay {
         MapTracking::MapView view = MapTracking::GetView();
         if (!view.visible) {
             if (MapTracking::IsMapOpen())
-                ImGui::Text("Map is open, looking for where it is...");
+                Controls::Waiting("Map is open, looking for where it is...");
             else
-                ImGui::Text("Waiting for the in-game map (M)");
+                Controls::Waiting("Waiting for the in-game map (M)");
             return;
         }
 
@@ -345,8 +344,8 @@ namespace Overlay {
             bool tryAgain = false;
             std::string line;
             if (items.state == State::Downloading) {
-                ImGui::Text("Map items: downloading %d%%", items.percent);
-                ImGui::ProgressBar(items.percent / 100.0f);
+                std::string downloading = "Map items: downloading " + std::to_string(items.percent) + "%";
+                Controls::Progress(downloading.c_str(), items.percent / 100.0f);
             }
             else if (items.reason == Reason::NoNetwork) {
                 line = items.state == State::Old ? "Map items: couldn't update, using the list from " + items.built + ", trying again every minute"
@@ -371,18 +370,20 @@ namespace Overlay {
             if (!line.empty()) ImGui::TextWrapped("%s", line.c_str());
             if (tryAgain) {
                 ImGui::BeginDisabled(items.checking);
-                if (ImGui::Button("Try again")) ItemFiles::CheckNow();
+                if (Controls::Button("Try again")) ItemFiles::CheckNow();
                 ImGui::EndDisabled();
             }
         }
 
-        if (ImGui::Checkbox("Download map items", &Settings::downloadItems)) {
+        if (Controls::Toggle("Download map items", &Settings::downloadItems)) {
             Settings::Save();
             ItemFiles::SetDownload(Settings::downloadItems);
         }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(items.checking || !Settings::downloadItems);
-        if (ImGui::Button(items.checking ? "Checking..." : "Check for new map items")) ItemFiles::CheckNow();
+        Controls::ButtonOptions check;
+        check.busy = items.checking;
+        check.busyLabel = "Checking...";
+        ImGui::BeginDisabled(!Settings::downloadItems);
+        if (Controls::Button("Check for new map items", check)) ItemFiles::CheckNow();
         ImGui::EndDisabled();
     }
 
@@ -504,8 +505,9 @@ namespace Overlay {
             }
         }
         bool picked = view.layerFrom == LayerChoice::From::Picked;
-        ImU32 cream = IM_COL32(236, 229, 216, 255);
-        ImU32 gold = IM_COL32(211, 188, 142, 255);
+        Controls::Theme gameLook = Controls::GetTheme(Controls::Look::Game, true);
+        ImU32 cream = Controls::Color(gameLook.text);
+        ImU32 gold = Controls::Color(gameLook.gold);
 
         // A rounded dark column just left of the game's buttons, the chip
         // half way down them. The list opens downwards from it.
@@ -533,7 +535,7 @@ namespace Overlay {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, chipHeight / 2 + pad);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, font * 0.7f));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(28 / 255.0f, 32 / 255.0f, 48 / 255.0f, 0.82f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, Controls::ColorVec(Controls::Faded(gameLook.panel | 0xFF, 0.82f)));
         ImGui::Begin("##floorPicker", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
             | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
         ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -544,7 +546,7 @@ namespace Overlay {
         centred(chipWidth);
         if (ImGui::InvisibleButton("##chip", ImVec2(chipWidth, chipHeight))) pickerOpen = !pickerOpen;
         // with the floors open their own hover text names them
-        if (!pickerOpen && ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %s", who, view.floorName.c_str());
+        if (!pickerOpen) Controls::Tooltip((std::string(who) + ": " + view.floorName).c_str(), Controls::TipAt::Under);
         ImVec2 chip = ImGui::GetItemRectMin(), chipEnd = ImGui::GetItemRectMax();
         draw->AddRectFilled(chip, chipEnd, IM_COL32(255, 255, 255, ImGui::IsItemHovered() ? 36 : 20), chipHeight / 2);
         if (guessed) {
@@ -584,7 +586,7 @@ namespace Overlay {
                 ImGui::PushID(i);
                 centred(radius * 2);
                 bool clicked = ImGui::InvisibleButton("##floor", ImVec2(radius * 2, radius * 2));
-                if (i < (int)view.pickerNames.size() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", view.pickerNames[i].c_str());
+                if (i < (int)view.pickerNames.size()) Controls::Tooltip(view.pickerNames[i].c_str(), Controls::TipAt::Left);
                 ImVec2 min = ImGui::GetItemRectMin();
                 pickerButton(draw, ImVec2(min.x + radius, min.y + radius), radius, i == lit, ImGui::IsItemHovered());
                 if (clicked) {
@@ -622,18 +624,21 @@ namespace Overlay {
     }
 
     static void DrawMenu() {
-        ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
+        float font = ImGui::GetFontSize();
+        ImGui::SetNextWindowPos(ImVec2(font * 4, font * 4), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(font * 55, font * 40), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(font * 30, font * 20), ImVec2(FLT_MAX, FLT_MAX));
 
         bool open = true;
 
+        // the list and the page reach the window's edges
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin(
             "Genshin Overlay",
             &open,
             ImGuiWindowFlags_NoCollapse
         );
-
-
+        ImGui::PopStyleVar();
 
         // 0 = Home
         // 1 = Settings
@@ -641,50 +646,49 @@ namespace Overlay {
         // 3+ = extensions
         static int activeTab = 0;
 
-        static float sidebarWidth = 150.0f;
+        Controls::Theme theme = Controls::GetTheme();
+        // the player's width in font sizes once the splitter is dragged, below 0 to fit the names
+        static float sidebarFonts = -1;
+        const float sidebarMin = font * 9, sidebarMax = font * 18;
+        float splitterWidth = std::max(2.0f, font * 0.35f);
+        float listPad = font * 0.35f;
 
-        constexpr float sidebarMinWidth = 100.0f;
-        constexpr float sidebarMaxWidth = 300.0f;
-        constexpr float splitterWidth = 5.0f;
-        constexpr float quitButtonWidth = 80.0f;
-
+        std::vector<std::string> pageNames = { "Home", "Settings", "Usage" };
+        for (auto& ext : Extensions::registeredExtensions) pageNames.push_back(ext->name);
+        float sidebarWidth = sidebarMin;
+        if (sidebarFonts > 0) sidebarWidth = sidebarFonts * font;
+        else {
+            // a page button's icon and gaps around its name
+            for (const std::string& name : pageNames) {
+                sidebarWidth = std::max(sidebarWidth, ImGui::CalcTextSize(name.c_str()).x + font * 3.45f + Controls::DotRoom());
+            }
+            sidebarWidth += listPad * 2;
+        }
+        sidebarWidth = std::clamp(sidebarWidth, sidebarMin, sidebarMax);
 
         ImVec2 contentSize = ImGui::GetContentRegionAvail();
 
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(listPad, listPad));
         ImGui::BeginChild(
             "Sidebar",
             ImVec2(sidebarWidth, contentSize.y),
-            true,
+            ImGuiChildFlags_AlwaysUseWindowPadding,
             ImGuiWindowFlags_NoScrollbar
         );
+        ImGui::PopStyleVar();
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
 
-        auto DrawTab = [&](const char* label, int tabIndex) {
-            bool selected = activeTab == tabIndex;
+        // by number, so an extension named "Settings" or two with one name are their own buttons
+        auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile = 0) {
+            ImGui::PushID(index);
+            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile)) activeTab = index;
+            ImGui::PopID();
+        };
 
-            ImVec2 size(
-                ImGui::GetContentRegionAvail().x,
-                65.0f
-            );
-
-            if (selected) {
-                ImGui::PushStyleColor(
-                    ImGuiCol_Button,
-                    ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered)
-                );
-            }
-
-            if (ImGui::Button(label, size)) {
-                activeTab = tabIndex;
-            }
-
-            if (selected) {
-                ImGui::PopStyleColor();
-            }
-            };
-
-        DrawTab("Home", 0);
-        DrawTab("Settings", 1);
-        DrawTab("Usage", 2);
+        // Apple's grey and orange tiles for the overlay's own pages
+        DrawPage("Home", 0, 0, false, 0x8E8E93FF);
+        DrawPage("Settings", 1, 0, false, 0x8E8E93FF);
+        DrawPage("Usage", 2, 0, false, 0xFF9F0AFF);
 
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();
@@ -692,13 +696,11 @@ namespace Overlay {
 
         for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
             auto& ext = Extensions::registeredExtensions[i];
-
-            DrawTab(
-                ext->name.c_str(),
-                static_cast<int>(i) + 3
-            );
+            ImTextureID icon = ext->extensionImage ? (ImTextureID)(intptr_t)ext->extensionImage : 0;
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + 3, icon, false);
         }
 
+        ImGui::PopStyleVar();
         ImGui::EndChild();
 
 
@@ -709,141 +711,149 @@ namespace Overlay {
             ImVec2(splitterWidth, contentSize.y)
         );
 
-        if (ImGui::IsItemHovered()) {
+        bool splitterHovered = ImGui::IsItemHovered();
+        if (splitterHovered) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
         }
 
-        if (ImGui::IsItemActive()) {
-            sidebarWidth += ImGui::GetIO().MouseDelta.x;
-
-            sidebarWidth = std::clamp(
-                sidebarWidth,
-                sidebarMinWidth,
-                sidebarMaxWidth
-            );
+        if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.x != 0) {
+            sidebarFonts = std::clamp(sidebarWidth + ImGui::GetIO().MouseDelta.x, sidebarMin, sidebarMax) / font;
         }
 
         ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-        ImVec2 splitterMin = ImGui::GetItemRectMin();
-        ImVec2 splitterMax = ImGui::GetItemRectMax();
-
-        drawList->AddRectFilled(
-            splitterMin,
-            splitterMax,
-            ImGui::GetColorU32(ImGuiCol_Border)
-        );
+        // shown only while it's under the mouse or held
+        if (splitterHovered || ImGui::IsItemActive()) {
+            ImVec2 splitterMin = ImGui::GetItemRectMin();
+            ImVec2 splitterMax = ImGui::GetItemRectMax();
+            float middle = (splitterMin.x + splitterMax.x) / 2;
+            drawList->AddLine(ImVec2(middle, splitterMin.y), ImVec2(middle, splitterMax.y), Controls::Color(theme.accent), std::max(1.0f, font * 0.12f));
+        }
 
         ImGui::SameLine(0.0f, 0.0f);
 
+        // the page on its own layer, its top left corner rounded
+        ImVec2 pageMin = ImGui::GetCursorScreenPos();
+        ImVec2 windowMax(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y);
+        float rounding = ImGui::GetStyle().WindowRounding;
+        drawList->AddRectFilled(pageMin, windowMax, Controls::Color(theme.page), rounding, ImDrawFlags_RoundCornersTopLeft | ImDrawFlags_RoundCornersBottomRight);
+        drawList->AddRect(pageMin, ImVec2(windowMax.x + rounding, windowMax.y + rounding), Controls::Color(theme.cardLine), rounding, 1.0f, ImDrawFlags_RoundCornersTopLeft);
+
+        // the scrollbar keeps its room, so nothing moves when the page grows,
+        // and shows only once there's something to scroll
+        static bool pageScrolls = false;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(font * 1.6f, font * 1.1f));
+        if (!pageScrolls) ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, ImVec4(0, 0, 0, 0));
         ImGui::BeginChild(
             "MainContent",
             ImVec2(0, contentSize.y),
-            true,
+            ImGuiChildFlags_AlwaysUseWindowPadding,
             ImGuiWindowFlags_AlwaysVerticalScrollbar
         );
-        
+        if (!pageScrolls) ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        pageScrolls = ImGui::GetScrollMaxY() > 0;
+
         switch (activeTab) {
         case 0:
 
-            ImGui::TextDisabled("Press Alt+` to hide");
-
-
-            ImGui::SameLine();
-
-            ImGui::SetCursorPosX(
-                ImGui::GetWindowContentRegionMax().x - quitButtonWidth
-            );
-
-            if (ImGui::Button("Shutdown", ImVec2(quitButtonWidth, 0))) {
-                glfwSetWindowShouldClose(Overlay::Window, true);
+            {
+                // Shutdown at the end of the title, or beside the title and the
+                // line under it when it's taller than the title
+                ImVec2 top = ImGui::GetCursorPos();
+                Controls::PageTitle("Home");
+                float titleHeight = ImGui::GetCursorPosY() - top.y;
+                ImGui::TextDisabled("Press Alt+` to hide");
+                ImVec2 below = ImGui::GetCursorPos();
+                ImVec2 quit = Controls::ButtonSize("Shutdown");
+                float quitHeight = quit.y;
+                float block = quitHeight > titleHeight - ImGui::GetStyle().ItemSpacing.y ? below.y - top.y - ImGui::GetStyle().ItemSpacing.y : titleHeight - ImGui::GetStyle().ItemSpacing.y;
+                ImGui::SetCursorPos(ImVec2(std::max(top.x, ImGui::GetWindowContentRegionMax().x - quit.x), top.y + (block - quitHeight) / 2));
+                if (Controls::Button("Shutdown")) glfwSetWindowShouldClose(Overlay::Window, true);
+                ImGui::SetCursorPos(below);
             }
+            ImGui::Dummy(ImVec2(0, font * 0.4f));
 
-            ImGui::Separator();
-
-            if (ImGui::CollapsingHeader(
-                "Map",
-                ImGuiTreeNodeFlags_DefaultOpen
-            )) {
+            if (Controls::BeginSection("Map", true)) {
                 DrawMapStatus();
                 DrawItemsStatus();
 
-                if (ImGui::Checkbox("Hide on map close", &Settings::hideOnMapClose)) {
+                if (Controls::Toggle("Hide on map close", &Settings::hideOnMapClose)) {
                     Settings::Save();
                 }
+                Controls::EndSection();
             }
 
-            if (ImGui::CollapsingHeader("Advanced")) {
+            if (Controls::BeginSection("Advanced")) {
                 ImGui::TextDisabled("How the map is followed while it moves");
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Line up with the map tiles",
                     &Settings::lineUpWithMap
                 )) {
                     Settings::Save();
                 }
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Ignore open water",
                     &Settings::ignoreSea
                 )) {
                     Settings::Save();
                 }
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Draw ahead of the map while it moves",
                     &Settings::guessAhead
                 )) {
                     Settings::Save();
                 }
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Don't draw ahead while zooming",
                     &Settings::steadyZoom
                 )) {
                     Settings::Save();
                 }
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Look again when a still map changes (floors)",
                     &Settings::lookAgainStill
                 )) {
                     Settings::Save();
                 }
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Follow on its own thread",
                     &Settings::followOnThread
                 )) {
                     Settings::Save();
                 }
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Shrink the patches on the graphics card",
                     &Settings::shrinkOnGpu
                 )) {
                     Settings::Save();
                 }
 
-                if (ImGui::Checkbox(
+                if (Controls::Toggle(
                     "Find the map on a smaller picture first",
                     &Settings::findSmallFirst
                 )) {
                     Settings::Save();
                 }
+                Controls::EndSection();
             }
 
             break;
 
         case 1:
-            ImGui::Text("Settings");
-            ImGui::Separator();
+            Controls::PageTitle("Settings");
             Extensions::drawExtensionPermissionMenu();
             break;
 
         case 2:
-            ImGui::Text("Usage");
-            ImGui::Separator();
+            Controls::PageTitle("Usage");
 
             Stats::Draw();
 
