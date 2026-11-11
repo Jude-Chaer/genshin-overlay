@@ -1,6 +1,7 @@
 #include "settings.hpp"
 #include "files.hpp"
 #include "helpers.hpp"
+#include <algorithm>
 #include <iostream>
 #include <nlohmann/json.hpp>
 
@@ -16,6 +17,10 @@ namespace Settings {
     bool shrinkOnGpu = true;
     bool findSmallFirst = true;
     bool downloadItems = true;
+    std::string look = "Windows 11";
+    std::string lightDark = "Follow Windows";
+    int size = 100;
+    const std::vector<int> Sizes = { 80, 90, 100, 110, 125, 150 };
 
     std::filesystem::path file;
 
@@ -83,6 +88,15 @@ namespace Settings {
         shrinkOnGpu = settings.value("shrinkOnGpu", true);
         findSmallFirst = settings.value("findSmallFirst", true);
         downloadItems = settings.value("downloadItems", true);
+        look = settings.value("look", std::string("Windows 11"));
+        lightDark = settings.value("lightDark", std::string("Follow Windows"));
+        // a size that isn't one of the choices, hand edited, is 100
+        auto savedSize = settings.find("size");
+        size = 100;
+        if (savedSize != settings.end() && savedSize->is_number_integer()) {
+            int saved = savedSize->get<int>();
+            if (std::find(Sizes.begin(), Sizes.end(), saved) != Sizes.end()) size = saved;
+        }
     }
 
     // extension settings are in the same file, don't wipe them
@@ -98,6 +112,9 @@ namespace Settings {
         settings["shrinkOnGpu"] = shrinkOnGpu;
         settings["findSmallFirst"] = findSmallFirst;
         settings["downloadItems"] = downloadItems;
+        settings["look"] = look;
+        settings["lightDark"] = lightDark;
+        settings["size"] = size;
         write(settings);
     }
 

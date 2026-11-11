@@ -64,6 +64,7 @@
     </Link>
     <PostBuildEvent>
       <Command>xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\extensions" "$(OutDir)extensions" &gt;nul
+xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\fonts" "$(OutDir)fonts" &gt;nul
 xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\LICENSE" "$(OutDir)licenses\material-color-utilities\" &gt;nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>

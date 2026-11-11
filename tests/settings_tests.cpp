@@ -18,6 +18,9 @@ static void defaults() {
     Settings::followOnThread = true;
     Settings::shrinkOnGpu = true;
     Settings::findSmallFirst = true;
+    Settings::look = "Windows 11";
+    Settings::lightDark = "Follow Windows";
+    Settings::size = 100;
 }
 
 TEST_CASE("settings come back after Save and Load") {
@@ -26,6 +29,9 @@ TEST_CASE("settings come back after Save and Load") {
     Settings::hideOnMapClose = true;
     Settings::ignoreSea = false;
     Settings::findSmallFirst = false;
+    Settings::look = "Game";
+    Settings::lightDark = "Light";
+    Settings::size = 125;
     Settings::Save();
 
     defaults();
@@ -33,6 +39,9 @@ TEST_CASE("settings come back after Save and Load") {
     CHECK(Settings::hideOnMapClose == true);
     CHECK(Settings::ignoreSea == false);
     CHECK(Settings::findSmallFirst == false);
+    CHECK(Settings::look == "Game");
+    CHECK(Settings::lightDark == "Light");
+    CHECK(Settings::size == 125);
     // the ones that weren't changed
     CHECK(Settings::lineUpWithMap == true);
     CHECK(Settings::guessAhead == true);
@@ -46,6 +55,20 @@ TEST_CASE("a setting that isn't in the file gets its default") {
     Settings::Load();
     CHECK(Settings::ignoreSea == false);
     CHECK(Settings::guessAhead == true);
+    defaults();
+}
+
+TEST_CASE("a saved size that isn't one of the choices is 100") {
+    for (const char* file : { R"({ "size": 300 })", R"({ "size": "big" })", R"({ "size": 112.5 })" }) {
+        std::ofstream(Settings::file, std::ios::trunc) << file;
+        defaults();
+        Settings::size = 150;
+        Settings::Load();
+        CHECK(Settings::size == 100);
+    }
+    std::ofstream(Settings::file, std::ios::trunc) << R"({ "size": 80 })";
+    Settings::Load();
+    CHECK(Settings::size == 80);
     defaults();
 }
 

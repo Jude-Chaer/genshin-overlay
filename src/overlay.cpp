@@ -34,6 +34,99 @@ namespace Overlay {
     static std::string iniPath;
     static double startTime = 0.0;
 
+    static const std::vector<std::string> lookNames = { Controls::LookName(Controls::Look::Windows),
+        Controls::LookName(Controls::Look::Material), Controls::LookName(Controls::Look::Game),
+        Controls::LookName(Controls::Look::Apple) };
+    static const std::vector<std::string> lightDarkNames = { "Follow Windows", "Dark", "Light" };
+    static double lookCheckedAt = -1.0;
+    // the look or size picked in the menu, put on before the next frame
+    static bool lookPicked = false;
+    // ImGui's sizes before any scaling, and Windows' scale for the screen
+    static ImGuiStyle unscaled;
+    static float screenScale = 1.0f;
+
+    // The look and light or dark from the settings. With Follow Windows,
+    // Windows is asked again once a second. The accent is read again when
+    // Windows says it changed.
+    static void updateLook(bool now) {
+        double time = glfwGetTime();
+        bool accentChanged = Helpers::accentChanged();
+        if (accentChanged) Controls::SetAccent(Helpers::accentShades());
+        bool follow = Settings::lightDark != "Dark" && Settings::lightDark != "Light";
+        if (!now && !accentChanged && (!follow || time - lookCheckedAt < 1.0)) return;
+        lookCheckedAt = time;
+        Controls::Look look = Controls::LookNamed(Settings::look).value_or(Controls::Look::Windows);
+        bool dark = follow ? Helpers::systemDark() : Settings::lightDark == "Dark";
+        Controls::Theme was = Controls::GetTheme();
+        if (!now && !accentChanged && was.look == look && was.dark == dark) return;
+        Controls::SetLook(look, dark);
+        // Windows' scale times the player's size, from the unscaled sizes so
+        // picking sizes in turn doesn't round them off
+        float scale = screenScale * Settings::size / 100.0f;
+        ImGuiStyle& style = ImGui::GetStyle();
+        if (style.FontScaleDpi != scale) {
+            style = unscaled;
+            style.ScaleAllSizes(scale);
+            style.FontScaleDpi = scale;
+        }
+        Controls::ApplyStyle(scale);
+    }
+
+    // Segoe UI Variable (ImGui's own font without it), Material You's Roboto
+    // and Apple's Inter, each loaded the first time its look is picked.
+    // Apple's text is macOS's 13 px, its page names bold; Material's labels
+    // and heads are Roboto's medium.
+    static ImFont* menuFont = nullptr;
+    struct LookFont {
+        Controls::Look look;
+        const char* folder;
+        const char* file;
+        const char* name;
+        float size;
+        const char* boldFile = nullptr;
+        ImFont* font = nullptr;
+        ImFont* bold = nullptr;
+        bool tried = false;
+    };
+    static LookFont lookFonts[] = {
+        { Controls::Look::Material, "roboto", "Roboto[wdth,wght].ttf", "Roboto", 14.0f, "Roboto-Medium.ttf" },
+        { Controls::Look::Apple, "inter", "Inter[opsz,wght].ttf", "Inter", 13.0f, "Inter-Bold.ttf" },
+    };
+
+    // the look's font, between frames so the frame drawn has one font
+    static void updateFont() {
+        Controls::Look look = Controls::GetTheme().look;
+        ImFont* font = menuFont;
+        ImFont* bold = nullptr;
+        float size = unscaled.FontSizeBase;
+        for (LookFont& entry : lookFonts) {
+            if (entry.look != look) continue;
+            if (!entry.tried) {
+                entry.tried = true;
+                std::filesystem::path folder = Helpers::exeDirectory() / "fonts" / entry.folder;
+                std::error_code ec;
+                if (std::filesystem::exists(folder / entry.file, ec))
+                    entry.font = Overlay::IO->Fonts->AddFontFromFileTTF(Helpers::utf8(folder / entry.file).c_str(), entry.size);
+                if (!entry.font) std::cerr << entry.name << " is missing from fonts/" << entry.folder << ", " << Controls::LookName(look) << " uses the menu's font" << std::endl;
+                else if (entry.boldFile && std::filesystem::exists(folder / entry.boldFile, ec))
+                    entry.bold = Overlay::IO->Fonts->AddFontFromFileTTF(Helpers::utf8(folder / entry.boldFile).c_str(), entry.size);
+            }
+            if (entry.font) {
+                font = entry.font;
+                bold = entry.bold;
+                size = entry.size;
+            }
+        }
+        Overlay::IO->FontDefault = font;
+        ImGui::GetStyle().FontSizeBase = size;
+        Controls::SetTitleFont(bold);
+    }
+
+    static int indexOf(const std::vector<std::string>& names, const std::string& name) {
+        auto it = std::find(names.begin(), names.end(), name);
+        return it == names.end() ? 0 : (int)(it - names.begin());
+    }
+
     bool Init() {
         Overlay::mainMonitor = glfwGetPrimaryMonitor();
         Overlay::monitorVideoMode = glfwGetVideoMode(Overlay::mainMonitor);
@@ -86,12 +179,18 @@ namespace Overlay {
         iniPath = (Helpers::exeDirectory() / "imgui.ini").string();
         Overlay::IO->IniFilename = iniPath.c_str();
 
+        // Segoe UI Variable at Windows' 14 px, ImGui's own font without it
+        std::filesystem::path font = Helpers::systemFont();
+        if (!font.empty()) menuFont = Overlay::IO->Fonts->AddFontFromFileTTF(Helpers::utf8(font).c_str(), 14.0f);
+        if (menuFont) ImGui::GetStyle().FontSizeBase = 14.0f;
+        else menuFont = Overlay::IO->Fonts->AddFontDefault();
+
         // scale the UI for high DPI screens
-        float scaleX = 1.0f, scaleY = 1.0f;
-        glfwGetMonitorContentScale(Overlay::mainMonitor, &scaleX, &scaleY);
-        ImGui::GetStyle().ScaleAllSizes(scaleX);
-        ImGui::GetStyle().FontScaleDpi = scaleX;
-        Controls::ApplyStyle(scaleX);
+        float scaleY = 1.0f;
+        glfwGetMonitorContentScale(Overlay::mainMonitor, &screenScale, &scaleY);
+        unscaled = ImGui::GetStyle();
+        ImGui::GetStyle().FontScaleDpi = 0.0f;
+        updateLook(true);
 
         ImGui_ImplGlfw_InitForOpenGL(Overlay::Window, true);
         ImGui_ImplOpenGL3_Init(glsl_version);
@@ -784,6 +883,31 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
+            if (Controls::BeginSection("Appearance")) {
+                int look = indexOf(lookNames, Settings::look);
+                if (Controls::Choice("Theme", look, lookNames)) {
+                    Settings::look = lookNames[look];
+                    Settings::Save();
+                    lookPicked = true;
+                }
+                int lightDark = indexOf(lightDarkNames, Settings::lightDark);
+                if (Controls::Choice("Light or dark", lightDark, lightDarkNames)) {
+                    Settings::lightDark = lightDarkNames[lightDark];
+                    Settings::Save();
+                    lookPicked = true;
+                }
+                static std::vector<std::string> sizeNames;
+                if (sizeNames.empty())
+                    for (int size : Settings::Sizes) sizeNames.push_back(std::to_string(size) + "%");
+                int size = (int)(std::find(Settings::Sizes.begin(), Settings::Sizes.end(), Settings::size) - Settings::Sizes.begin());
+                if (Controls::Choice("Size", size, sizeNames)) {
+                    Settings::size = Settings::Sizes[size];
+                    Settings::Save();
+                    lookPicked = true;
+                }
+                Controls::EndSection();
+            }
+
             if (Controls::BeginSection("Advanced")) {
                 ImGui::TextDisabled("How the map is followed while it moves");
 
@@ -885,6 +1009,9 @@ namespace Overlay {
             // sends the tracker a new screenshot when it's ready for one
             MapTracking::Tick(glfwGetWin32Window(Overlay::Window));
             Stats::Update();
+            updateLook(lookPicked);
+            lookPicked = false;
+            updateFont();
 
             // map and menu closed: nothing to show, so don't draw at all
             bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;

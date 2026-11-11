@@ -421,4 +421,64 @@ namespace Helpers {
         }
         return "";
     }
+
+    bool systemDark() {
+        DWORD light = 1, size = sizeof(light);
+        LSTATUS status = RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+        return status == ERROR_SUCCESS && light == 0;
+    }
+
+    static const wchar_t* accentKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent";
+
+    std::optional<std::array<unsigned int, 7>> accentShades() {
+        // 8 colours of 4 bytes, red, green, blue and one unused; the 8th isn't a shade
+        BYTE palette[32] = {};
+        DWORD size = sizeof(palette);
+        LSTATUS status = RegGetValueW(HKEY_CURRENT_USER, accentKey, L"AccentPalette", RRF_RT_REG_BINARY, nullptr, palette, &size);
+        if (status != ERROR_SUCCESS || size < 28) return std::nullopt;
+        std::array<unsigned int, 7> shades{};
+        for (int i = 0; i < 7; i++) {
+            const BYTE* colour = palette + i * 4;
+            shades[i] = ((unsigned int)colour[0] << 24) | ((unsigned int)colour[1] << 16) | ((unsigned int)colour[2] << 8) | 0xFF;
+        }
+        return shades;
+    }
+
+    bool accentChanged() {
+        // Windows sets the event when anything under the key is written, once
+        // per RegNotifyChangeKeyValue, so it's asked again after each change
+        // A key that isn't there yet (no accent ever picked) is tried again every
+        // 2 s, and counts as a change once it opens.
+        static HKEY key = nullptr;
+        static HANDLE written = nullptr;
+        static bool asked = false;
+        static ULONGLONG tried = 0;
+        if (!written) written = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        bool changed = !asked;
+        asked = true;
+        if (!written) return changed;
+        if (!key) {
+            ULONGLONG now = GetTickCount64();
+            if (tried && now - tried < 2000) return changed;
+            tried = now;
+            if (RegOpenKeyExW(HKEY_CURRENT_USER, accentKey, 0, KEY_NOTIFY | KEY_READ, &key) != ERROR_SUCCESS) {
+                key = nullptr;
+                return changed;
+            }
+            changed = true;
+        }
+        else if (WaitForSingleObject(written, 0) == WAIT_OBJECT_0) changed = true;
+        if (changed) RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET, written, TRUE);
+        return changed;
+    }
+
+    std::filesystem::path systemFont() {
+        wchar_t windows[MAX_PATH];
+        UINT length = GetWindowsDirectoryW(windows, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) return {};
+        std::filesystem::path font = std::filesystem::path(windows) / "Fonts" / "SegUIVar.ttf";
+        std::error_code ec;
+        return std::filesystem::exists(font, ec) ? font : std::filesystem::path();
+    }
 }

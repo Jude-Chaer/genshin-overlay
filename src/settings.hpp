@@ -32,6 +32,14 @@ namespace Settings {
     // the map items are downloaded from the release when there's a newer pack (the menu's "Download map items")
     extern bool downloadItems;
 
+    // the menu's look by its shown name (Controls::LookName), and Follow Windows, Dark or Light
+    extern std::string look;
+    extern std::string lightDark;
+    // the overlay's size in percent of what Windows' scale gives, one of Sizes:
+    // the menu and everything else drawn with its font (map labels, extensions)
+    extern int size;
+    extern const std::vector<int> Sizes;
+
     // The file the settings are in. Empty means settings.json next to the exe,
     // the tests point it somewhere else.
     extern std::filesystem::path file;
