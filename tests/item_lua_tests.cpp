@@ -8,6 +8,7 @@
 #include "item_catalog.hpp"
 #include "item_files.hpp"
 #include "item_icons.hpp"
+#include "extensions.hpp"
 #include "lua_functions.hpp"
 
 // What extensions see of the map items, on the test pack (answers in
@@ -24,17 +25,25 @@ namespace {
         return ItemCatalog::load(raw);
     }
 
-    // a Lua state with every function an extension gets, and the test pack published and
-    // taken for the frame
+    // a Lua state with every function an extension gets, run as an extension with the
+    // default permissions, and the test pack published and taken for the frame
     struct Lua {
         sol::state lua;
+        Extensions::Extension ext;
+        Extensions::Extension* previous = Extensions::currentExtension;
         Lua() {
+            ext.name = "item tests";
+            ext.extensionPermissions = Extensions::defaultPermissions;
+            Extensions::currentExtension = &ext;
             lua.open_libraries(sol::lib::base, sol::lib::table);
             LuaFunctions::registerLuaFunctions(lua);
             auto catalog = loadFolder();
             REQUIRE(catalog);
             ItemCatalog::publish(catalog);
             LuaFunctions::Items::beginFrame();
+        }
+        ~Lua() {
+            Extensions::currentExtension = previous;
         }
         template <typename T> T run(const std::string& code) {
             auto result = lua.safe_script("return " + code, sol::script_pass_on_error);

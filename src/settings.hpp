@@ -1,7 +1,8 @@
 #pragma once
 #include <nlohmann/json.hpp>
-#include <unordered_set>
-#include "extensions.hpp"
+#include <filesystem>
+#include <string>
+#include <vector>
 // The app's own settings, saved in settings.json next to the exe. A
 // settings.json that can't be read is kept as settings.json.broken, and
 // everything starts from the defaults.
@@ -51,6 +52,15 @@ namespace Settings {
     extern nlohmann::json LoadExtensions();
     extern void SaveExtensions(const nlohmann::json& extensions);
 
-    extern void SaveExtensionPermissions(std::string extensionHash, std::unordered_set<Extensions::ExtensionPermissionTypes> permissions);
-    extern std::unordered_set<Extensions::ExtensionPermissionTypes> LoadExtensionPermissions(std::string extensionHash);
+    // What the player allowed an extension, kept per extension folder: the
+    // permissions by name and the hash its files had then.
+    struct Grants {
+        bool saved = false;
+        std::string hash;
+        std::vector<std::string> names;
+    };
+    // Lists saved the old way (permission numbers under the files' hash) are
+    // moved to the folder the first time that hash loads.
+    extern Grants LoadGrants(const std::string& folder, const std::string& hash);
+    extern void SaveGrants(const std::string& folder, const Grants& grants);
 }

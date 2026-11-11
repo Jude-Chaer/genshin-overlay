@@ -164,6 +164,7 @@
     <ClCompile Include="src\typing.cpp" />
     <ClCompile Include="tests\controls_tests.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
+    <ClCompile Include="tests\extension_tests.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
     <ClCompile Include="tests\item_catalog_tests.cpp" />
@@ -172,6 +173,7 @@
     <ClCompile Include="tests\net_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\layer_choice_tests.cpp" />
+    <ClCompile Include="tests\lua_functions_tests.cpp" />
     <ClCompile Include="tests\lit_floor_tests.cpp" />
     <ClCompile Include="tests\locator_tests.cpp" />
     <ClCompile Include="tests\main.cpp" />
@@ -181,6 +183,7 @@
     <ClCompile Include="tests\overlay_tests.cpp" />
     <ClCompile Include="tests\typing_tests.cpp" />
     <ClCompile Include="tests\settings_tests.cpp" />
+    <ClCompile Include="tests\test_extension.cpp" />
     <ClCompile Include="tests\test_map.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -214,6 +217,7 @@
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
     <ClInclude Include="src\typing.hpp" />
+    <ClInclude Include="tests\test_extension.hpp" />
     <ClInclude Include="tests\test_map.hpp" />
     <ClInclude Include="tests\map_screen.hpp" />
   </ItemGroup>

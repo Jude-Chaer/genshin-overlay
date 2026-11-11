@@ -22,69 +22,163 @@
 #include <chrono>
 #include <algorithm>
 
-#define CHECK_PERMISSIONS() \
-    if (!LuaFunctions::checkPermissions(__FUNCTION__)) \
-        throw std::runtime_error("Extension does not have permission")
-
-
 namespace LuaFunctions {
+	using Permission = Extensions::ExtensionPermissionTypes;
 
-	static void callLua(const sol::protected_function& function) {
+	std::vector<LuaInterval> intervals;
+	static int nextIntervalId = 1;
+
+	// what is the kind of callback, for the log: "button", "key", "interval"
+	static void callLua(const sol::protected_function& function, const char* what) {
 		auto result = function();
 		if (!result.valid()) {
 			sol::error err = result;
-			std::cerr << "Lua Runtime Error: " << err.what() << std::endl;
+			Extensions::Extension* ext = Extensions::currentExtension;
+			std::cerr << "[" << (ext ? ext->name : std::string("no extension")) << "] " << what << ": " << err.what() << std::endl;
 		}
 	}
 
-	// everything an extension can call
+	// what a C++ function gave, as Lua values (a tuple gives one each)
+	template <typename T>
+	static void push(sol::variadic_results& results, sol::this_state state, T&& value) {
+		using V = std::decay_t<T>;
+		if constexpr (sol::meta::is_tuple<V>::value) {
+			std::apply([&](auto&&... each) { (push(results, state, each), ...); }, value);
+		}
+		else if constexpr (std::is_same_v<V, sol::variadic_results>) {
+			for (auto& each : value) results.push_back(each);
+		}
+		else if constexpr (sol::meta::is_optional<V>::value) {
+			if (value) push(results, state, *value);
+			else results.push_back(sol::make_object(state, sol::lua_nil));
+		}
+		else {
+			results.push_back(sol::make_object(state, std::forward<T>(value)));
+		}
+	}
+
+	static std::vector<Bound>& bound() {
+		static std::vector<Bound> list;
+		return list;
+	}
+
+	const std::vector<Bound>& boundFunctions() {
+		return bound();
+	}
+
+	// fn wrapped so the permission is checked before every call
+	template <typename R, typename... Args>
+	static auto guarded(std::string name, Permission permission, R(*fn)(Args...)) {
+		return [name, permission, fn](sol::this_state state, Args... args) -> sol::variadic_results {
+			sol::variadic_results results;
+			if (!Extensions::allowed(name.c_str(), permission)) {
+				if constexpr (std::is_same_v<R, bool>) results.push_back(sol::make_object(state, false));
+				else if constexpr (!std::is_void_v<R>) results.push_back(sol::make_object(state, sol::lua_nil));
+				return results;
+			}
+			if constexpr (std::is_void_v<R>) fn(std::forward<Args>(args)...);
+			else push(results, state, fn(std::forward<Args>(args)...));
+			return results;
+		};
+	}
+
+	// the one way a function reaches Lua: into target (the globals or a usertype)
+	// under name, and into the registry table the tests check the globals against
+	template <typename Target, typename R, typename... Args>
+	static void bindFunction(sol::state& lua, Target& target, const std::string& prefix, const char* name, Permission permission, R(*fn)(Args...)) {
+		std::string fullName = prefix + name;
+		// made once, so the copies sol keeps for a usertype are the same function
+		sol::table maker = lua.create_table();
+		maker.set_function("function", guarded(fullName, permission, fn));
+		sol::object function = maker["function"];
+		target.set(name, function);
+
+		sol::table registry = lua.registry();
+		sol::object list = registry[BOUND_TABLE];
+		if (!list.is<sol::table>()) registry[BOUND_TABLE] = lua.create_table();
+		sol::table table = registry[BOUND_TABLE];
+		table[fullName] = function;
+
+		auto& all = bound();
+		bool known = std::any_of(all.begin(), all.end(), [&](const Bound& b) { return b.name == fullName; });
+		if (!known) all.push_back({ fullName, permission });
+	}
+
+	// everything an extension can call, and what each one needs
 	void registerLuaFunctions(sol::state& luaState) {
-		luaState.set_function("ImGUI_Text", ImGUI_Text);
-		luaState.set_function("ImGUI_Button", ImGUI_Button);
-		luaState.set_function("ImGUI_Image", ImGUI_Image);
-		luaState.set_function("ImGUI_Checkbox", ImGUI_Checkbox);
-		luaState.set_function("ImGUI_SliderFloat", ImGUI_SliderFloat);
-		luaState.set_function("ImGUI_SliderInt", ImGUI_SliderInt);
-		luaState.set_function("ImGUI_InputText", ImGUI_InputText);
-		luaState.set_function("ImGUI_SameLine", ImGUI_SameLine);
-		luaState.set_function("ImGUI_Tooltip", ImGUI_Tooltip);
-		luaState.set_function("ImGUI_Separator", ImGUI_Separator);
-		luaState.set_function("IsProgramHidden", IsProgramHidden);
-		luaState.set_function("RegisterKeybind", RegisterKeybind);
-		luaState.set_function("DeleteKeybind", DeleteKeybind);
-		luaState.set_function("DefineExtensionSetting", DefineExtensionSetting);
-		luaState.set_function("GetSetting", GetExtensionSetting);
-		luaState.set_function("LoadTexture", LoadTextureFromFileLua);
-		luaState.set_function("GetItemsVersion", GetItemsVersion);
-		luaState.set_function("GetItemsState", GetItemsState);
-		luaState.set_function("GetItemTypes", GetItemTypes);
-		luaState.set_function("GetItemPositions", GetItemPositions);
-		luaState.set_function("GetItemRegions", GetItemRegions);
-		luaState.set_function("GetItemIcon", GetItemIcon);
-		luaState.set_function("CompareImages", CompareImages);
-		luaState.set_function("GetMapView", GetMapView);
-		luaState.set_function("FollowMapWhileMoving", FollowMapWhileMoving);
-		luaState.set_function("GetPlayerPosition", GetPlayerPosition);
-		luaState.set_function("GetMapGrid", GetMapGrid);
-		luaState.set_function("GetMapTile", GetMapTile);
-		luaState.set_function("GetMapFloor", GetMapFloor);
-		luaState.set_function("DrawImage", DrawImage);
-		luaState.set_function("DrawText", GDrawText);
-		luaState.set_function("PushClipRect", PushClipRect);
-		luaState.set_function("PopClipRect", PopClipRect);
-		luaState.set_function("Net_Get", NetGet);
-		luaState.set_function("Net_Post", NetPost);
-		luaState.set_function("JSON_Encode", JSONEncode);
-		luaState.set_function("JSON_Decode", JSONDecode);
-		luaState.set_function("ReadFile", ReadFile);
-		luaState.set_function("WriteFile", WriteFile);
-		luaState.set_function("AppendFile", AppendFile);
-		luaState.set_function("FileExists", FileExists);
-		luaState.set_function("ListDirectory", ListDirectory);
-		luaState.set_function("SetInterval", SetInterval);
-		luaState.set_function("ClearInterval", ClearInterval);
-		luaState.set_function("GetOSTimeMS", GetOSTimeMS);
-		luaState.set_function("GetMousePosition", GetMousePosition);
+		auto global = [&](const char* name, Permission permission, auto fn) {
+			bindFunction(luaState, luaState, "", name, permission, fn);
+		};
+		const Permission None = Permission::None;
+		const Permission DisplayOverlay = Permission::DisplayOverlay;
+		const Permission DisplayRead = Permission::DisplayRead;
+		const Permission Keybinds = Permission::Keybinds;
+		const Permission InternalRead = Permission::InternalReadfile;
+		const Permission InternalWrite = Permission::InternalWritefile;
+		const Permission Network = Permission::NetworkAccess;
+
+		// the extension's own page in the menu
+		global("ImGUI_Text", None, ImGUI_Text);
+		global("ImGUI_Button", None, ImGUI_Button);
+		global("ImGUI_Image", None, ImGUI_Image);
+		global("ImGUI_Checkbox", None, ImGUI_Checkbox);
+		global("ImGUI_SliderFloat", None, ImGUI_SliderFloat);
+		global("ImGUI_SliderInt", None, ImGUI_SliderInt);
+		global("ImGUI_Number", None, ImGUI_Number);
+		global("ImGUI_Toggle", None, ImGUI_Toggle);
+		global("ImGUI_InputText", None, ImGUI_InputText);
+		global("ImGUI_SameLine", None, ImGUI_SameLine);
+		global("ImGUI_Tooltip", None, ImGUI_Tooltip);
+		global("ImGUI_Waiting", None, ImGUI_Waiting);
+		global("ImGUI_Empty", None, ImGUI_Empty);
+		global("ImGUI_Progress", None, ImGUI_Progress);
+		global("ImGUI_Separator", None, ImGUI_Separator);
+		global("IsProgramHidden", None, IsProgramHidden);
+		global("DefineExtensionSetting", None, DefineExtensionSetting);
+		global("GetSetting", None, GetExtensionSetting);
+		global("JSON_Encode", None, JSONEncode);
+		global("JSON_Decode", None, JSONDecode);
+		global("SetInterval", None, SetInterval);
+		global("ClearInterval", None, ClearInterval);
+		global("GetOSTimeMS", None, GetOSTimeMS);
+
+		global("RegisterKeybind", Keybinds, RegisterKeybind);
+		global("DeleteKeybind", Keybinds, DeleteKeybind);
+
+		// drawing on the overlay
+		global("DrawImage", DisplayOverlay, DrawImage);
+		global("DrawText", DisplayOverlay, GDrawText);
+		global("GetTheme", None, GetTheme);
+		global("PushClipRect", DisplayOverlay, PushClipRect);
+		global("PopClipRect", DisplayOverlay, PopClipRect);
+
+		// what's on the screen and the map
+		global("GetMapView", DisplayRead, GetMapView);
+		global("FollowMapWhileMoving", DisplayRead, FollowMapWhileMoving);
+		global("GetPlayerPosition", DisplayRead, GetPlayerPosition);
+		global("GetMapGrid", DisplayRead, GetMapGrid);
+		global("GetMapTile", DisplayRead, GetMapTile);
+		global("GetMapFloor", DisplayRead, GetMapFloor);
+		global("GetMousePosition", DisplayRead, GetMousePosition);
+		global("CompareImages", DisplayRead, CompareImages);
+		global("GetItemsVersion", DisplayRead, GetItemsVersion);
+		global("GetItemsState", DisplayRead, GetItemsState);
+		global("GetItemTypes", DisplayRead, GetItemTypes);
+		global("GetItemPositions", DisplayRead, GetItemPositions);
+		global("GetItemRegions", DisplayRead, GetItemRegions);
+		global("GetItemIcon", DisplayRead, GetItemIcon);
+
+		// files, only in the extension's own folder (pathFor)
+		global("LoadTexture", InternalRead, LoadTextureFromFileLua);
+		global("ReadFile", InternalRead, ReadFile);
+		global("FileExists", InternalRead, FileExists);
+		global("ListDirectory", InternalRead, ListDirectory);
+		global("WriteFile", InternalWrite, WriteFile);
+		global("AppendFile", InternalWrite, AppendFile);
+
+		global("Net_Get", Network, NetGet);
+		global("Net_Post", Network, NetPost);
+
 		luaState["KeybindFlags"] = luaState.create_table_with(
 			"None", Keybindings::KeybindFlags_None,
 			"ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
@@ -97,12 +191,16 @@ namespace LuaFunctions {
 		);
 
 		auto websocket = luaState.new_usertype<Net::WebSocket>("WebSocket", sol::constructors<Net::WebSocket()>());
-		websocket.set_function("connect", WebSocketConnect);
-		websocket.set_function("send", WebSocketSend);
-		websocket.set_function("poll", WebSocketPoll);
-		websocket.set_function("pollAll", WebSocketPollAll);
-		websocket.set_function("isConnected", WebSocketIsConnected);
-		websocket.set_function("close", WebSocketClose);
+		auto method = [&](const char* name, Permission permission, auto fn) {
+			bindFunction(luaState, websocket, "WebSocket.", name, permission, fn);
+		};
+		method("connect", Network, WebSocketConnect);
+		method("send", Network, WebSocketSend);
+		method("poll", Network, WebSocketPoll);
+		method("pollAll", Network, WebSocketPollAll);
+		method("isConnected", Network, WebSocketIsConnected);
+		// closing only ends what it could do, so it works without the permission too
+		method("close", None, WebSocketClose);
 
 		// key names for RegisterKeybind, like Keys.F5 or Keys.Grave
 		sol::table keys = luaState.create_table();
@@ -128,9 +226,23 @@ namespace LuaFunctions {
 		ImGui::Text("%s", str.c_str());
 	}
 
-	void ImGUI_Button(const std::string& label, sol::protected_function callback) {
-		if (ImGui::Button(label.c_str())) {
-			callLua(callback);
+	// ImGUI_Button(label, onPress, options), options is optional:
+	// { look = "main" or "risky", busy = true or the text to show while busy }
+	void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> table) {
+		Controls::ButtonOptions options;
+		if (table) {
+			std::string look = table->get_or<std::string>("look", "");
+			if (look == "main") options.look = Controls::ButtonOptions::Look::Main;
+			else if (look == "risky") options.look = Controls::ButtonOptions::Look::Risky;
+			sol::object busy = (*table)["busy"];
+			if (busy.is<std::string>()) {
+				options.busy = true;
+				options.busyLabel = busy.as<std::string>();
+			}
+			else if (busy.is<bool>()) options.busy = busy.as<bool>();
+		}
+		if (Controls::Button(label.c_str(), options)) {
+			callLua(callback, "button");
 		}
 	}
 
@@ -141,31 +253,89 @@ namespace LuaFunctions {
 	bool ImGUI_Checkbox(const std::string& label, bool currentValue)
 	{
 		bool value = currentValue;
-		ImGui::Checkbox(label.c_str(), &value);
+		Controls::Toggle(label.c_str(), &value);
+		return value;
+	}
+
+	// a texture the calling extension loaded itself
+	static bool ownsTexture(GLuint texture) {
+		auto* ext = Extensions::currentExtension;
+		return ext && std::find(ext->textures.begin(), ext->textures.end(), texture) != ext->textures.end();
+	}
+
+	// ImGUI_Toggle(label, value, options), options is optional:
+	// { look = "checkbox", size = "small", icon = a texture from LoadTexture }
+	bool ImGUI_Toggle(const std::string& label, bool currentValue, sol::optional<sol::table> table)
+	{
+		bool value = currentValue;
+		Controls::ToggleOptions options;
+		if (table) {
+			options.checkbox = table->get_or<std::string>("look", "") == "checkbox";
+			options.compact = table->get_or<std::string>("size", "") == "small";
+			GLuint icon = table->get_or<GLuint>("icon", 0);
+			if (icon && ownsTexture(icon)) options.icon = (ImTextureID)(intptr_t)icon;
+		}
+		Controls::Toggle(label.c_str(), &value, options);
+		return value;
+	}
+
+	// the number piece, as every number in the menu
+	static double drawnNumber(const std::string& label, double value, const Controls::NumberOptions& options) {
+		value = Controls::Fit(value, options);
+		Controls::Number(label.c_str(), value, options);
 		return value;
 	}
 
 	float ImGUI_SliderFloat(const std::string& label, float currentValue, float minValue, float maxValue)
 	{
-		float value = currentValue;
-		ImGui::SliderFloat(label.c_str(), &value, minValue, maxValue);
-		return value;
+		Controls::NumberOptions options;
+		if (minValue < maxValue) { options.min = minValue; options.max = maxValue; }
+		return static_cast<float>(drawnNumber(label, currentValue, options));
 	}
 
 	int ImGUI_SliderInt(const std::string& label, int currentValue, int minValue, int maxValue)
 	{
-		int value = currentValue;
-		ImGui::SliderInt(label.c_str(), &value, minValue, maxValue);
-		return value;
+		Controls::NumberOptions options;
+		if (minValue < maxValue) { options.min = minValue; options.max = maxValue; }
+		options.whole = true;
+		return static_cast<int>(drawnNumber(label, currentValue, options));
 	}
-	// ImGUI_InputText(label, text, options), options is optional:
-	// { backToGame = false } keeps the focus after Enter or Esc, for the next box
-	std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options)
+
+	// ImGUI_Number(label, value, options), options is optional:
+	// { min, max, step, default (shows Reset), field = true (no slider), whole = true }
+	double ImGUI_Number(const std::string& label, double currentValue, sol::optional<sol::table> table)
+	{
+		Controls::NumberOptions options;
+		if (table) {
+			auto min = table->get<sol::optional<double>>("min");
+			auto max = table->get<sol::optional<double>>("max");
+			if (min && max && std::isfinite(*min) && std::isfinite(*max) && *min < *max) { options.min = *min; options.max = *max; }
+			auto step = table->get<sol::optional<double>>("step");
+			if (step && *step > 0 && std::isfinite(*step)) options.step = *step;
+			auto fallback = table->get<sol::optional<double>>("default");
+			if (fallback && std::isfinite(*fallback)) options.defaultValue = *fallback;
+			options.field = table->get_or("field", false);
+			options.whole = table->get_or("whole", false);
+		}
+		return drawnNumber(label, currentValue, options);
+	}
+
+	// ImGUI_InputText(label, text, options), options is optional: { hint, default (shows
+	// Reset), clear = true (an x), confirm = true (counts once sent), taken = true (sent
+	// text greyed), backToGame = false (keeps the focus after Enter or Esc, for the next box) }
+	std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table)
 	{
 		std::string value = currentText;
-		bool backToGame = true;
-		if (options) backToGame = options->get_or("backToGame", true);
-		Typing::InputText(label.c_str(), value, 4096, backToGame);
+		Controls::TextOptions options;
+		if (table) {
+			options.backToGame = table->get_or("backToGame", true);
+			options.hint = table->get_or<std::string>("hint", "");
+			if (auto fallback = table->get<sol::optional<std::string>>("default")) options.defaultValue = *fallback;
+			options.clear = table->get_or("clear", false);
+			options.confirm = table->get_or("confirm", false);
+			options.taken = table->get_or("taken", false);
+		}
+		Controls::Text(label.c_str(), value, options);
 		return value;
 	}
 
@@ -176,8 +346,23 @@ namespace LuaFunctions {
 
 	void ImGUI_Tooltip(const std::string& text)
 	{
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("%s", text.c_str());
+		Controls::Tooltip(text.c_str());
+	}
+
+	void ImGUI_Waiting(const std::string& text)
+	{
+		Controls::Waiting(text.c_str());
+	}
+
+	void ImGUI_Empty(const std::string& text)
+	{
+		Controls::Empty(text.c_str());
+	}
+
+	void ImGUI_Progress(const std::string& text, sol::optional<float> fraction)
+	{
+		float shown = fraction && std::isfinite(*fraction) ? std::max(0.0f, *fraction) : -1.0f;
+		Controls::Progress(text.c_str(), shown);
 	}
 
 	void ImGUI_Separator()
@@ -191,18 +376,33 @@ namespace LuaFunctions {
 	}
 
 	// RegisterKeybind(key, function, flags, modifiers), modifiers is optional, like KeybindModifiers.Alt
+	// Empty when the key can't be bound, the log says why. The keybind belongs to
+	// the extension and goes with it (Extensions::unload).
 	std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers) {
 		// remember which extension made it, so GetSetting works inside the callback
 		Extensions::Extension* owner = Extensions::currentExtension;
-		return Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
+		if (!owner) return "";
+		std::string whyNot;
+		std::string id = Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
 			Extensions::runForExtension(owner, [&callbackFunction]() {
-				callLua(callbackFunction);
+				callLua(callbackFunction, "key");
 				});
-			}, flags, modifiers.value_or(Keybindings::KeybindModifiers_None));
+			}, flags, modifiers.value_or(Keybindings::KeybindModifiers_None), &whyNot);
+		if (id.empty()) {
+			std::cerr << "[" << owner->name << "] RegisterKeybind: " << whyNot << std::endl;
+			return "";
+		}
+		owner->keybinds.push_back(id);
+		return id;
 	}
 
+	// only the extension's own keybinds
 	bool DeleteKeybind(const std::string& uuid) {
-
+		Extensions::Extension* owner = Extensions::currentExtension;
+		if (!owner) return false;
+		auto it = std::find(owner->keybinds.begin(), owner->keybinds.end(), uuid);
+		if (it == owner->keybinds.end()) return false;
+		owner->keybinds.erase(it);
 		return Keybindings::DeleteKeybind(uuid);
 	}
 
@@ -210,7 +410,7 @@ namespace LuaFunctions {
 		const std::string& label,
 		const std::string& type,
 		sol::object defaultValue,
-		sol::optional<float> min,
+		sol::object minOrOptions,
 		sol::optional<float> max)
 	{
 		auto extPtr = Extensions::currentExtension;
@@ -247,7 +447,18 @@ namespace LuaFunctions {
 			return;
 		}
 
-		if (min && max) {
+		// the range as two numbers, or { min, max, step, field }
+		std::optional<float> min;
+		if (minOrOptions.is<sol::table>()) {
+			sol::table options = minOrOptions.as<sol::table>();
+			if (auto v = options.get<sol::optional<float>>("min")) min = *v;
+			if (auto v = options.get<sol::optional<float>>("max")) max = *v;
+			auto step = options.get<sol::optional<float>>("step");
+			if (step && *step > 0 && std::isfinite(*step)) s.step = *step;
+			s.field = options.get_or("field", false);
+		}
+		else if (minOrOptions.is<float>()) min = minOrOptions.as<float>();
+		if (min && max && std::isfinite(*min) && std::isfinite(*max) && *min < *max) {
 			s.min = *min;
 			s.max = *max;
 		}
@@ -268,37 +479,25 @@ namespace LuaFunctions {
 			}, it->second.value);
 	}
 
-	std::tuple<GLuint, int, int> LoadTextureFromFileLua(const std::string& path) {
-		std::filesystem::path root = std::filesystem::weakly_canonical(
-			Extensions::currentExtension->folder
-		);
-
-		std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
-
-		std::string rootStr = root.string();
-		std::string filePathStr = filePath.string();
-		std::string rootWithSep = rootStr;
-		if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
-			rootWithSep += std::filesystem::path::preferred_separator;
-		}
-		if (filePath != root &&
-			filePathStr.find(rootWithSep) != 0)
-		{
-			if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalReadfile) ==
-				Extensions::currentExtension->extensionPermissions.end())
-			{
-				throw std::runtime_error("Extension does not have permission to read external files");
-			}
+	// texture, width, height; nil when it can't be read
+	sol::variadic_results LoadTextureFromFileLua(const std::string& path, sol::this_state state) {
+		sol::variadic_results results;
+		auto file = Extensions::pathFor(path, Extensions::Access::Read);
+		if (!file) {
+			results.push_back(sol::make_object(state, sol::lua_nil));
+			return results;
 		}
 		int width = 0, height = 0;
-		GLuint tex = Helpers::loadTextureFromFile(filePath, width, height);
-		return { tex, width, height };
+		GLuint tex = Helpers::loadTextureFromFile(*file, width, height);
+		if (tex != 0 && Extensions::currentExtension) Extensions::currentExtension->textures.push_back(tex);
+		results.push_back(sol::make_object(state, tex));
+		results.push_back(sol::make_object(state, width));
+		results.push_back(sol::make_object(state, height));
+		return results;
 	}
 
 	sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab)
 	{
-		CHECK_PERMISSIONS();
-
 		sol::state_view lua(state);
 		Net::Response response;
 
@@ -314,7 +513,6 @@ namespace LuaFunctions {
 
 	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab)
 	{
-		CHECK_PERMISSIONS();
 		sol::state_view lua(state);
 		Net::Response response;
 
@@ -332,7 +530,7 @@ namespace LuaFunctions {
 	// in overlay pixels, the same ones DrawImage uses. lat/lng is the map
 	// position at centerX, centerY. moving is true while the map moves, and
 	// after it stops until it's lined up exactly. groupId and floorId are the
-	// layer shown, layerFrom says who chose it: "game" (its layer buttons),
+	// layer shown, layerFrom says who chose it: "game" (read off the game's screen),
 	// "picked" (the overlay's floor picker) or "guess" (from the map's picture). ui is the game's
 	// own UI as boxes to keep off, and the overlay's floor picker while it's
 	// there. panelLeft is where a panel on the right starts, only while one is open.
@@ -380,7 +578,8 @@ namespace LuaFunctions {
 			"ui", ui
 		);
 		if (view.panel.seen == GameUi::Seen::Read && view.panel.left >= 0) result["panelLeft"] = left + view.panel.left;
-		return sol::make_object(state, result);
+		if (view.noMapFloor) result["noMapFloor"] = true;
+		return sol::make_object(lua, result);
 	}
 
 	// Call every Update if you draw while the map moves. Otherwise GetMapView
@@ -476,7 +675,6 @@ namespace LuaFunctions {
 
 	// draws behind every ImGui window, straight onto the overlay
 	void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
-		CHECK_PERMISSIONS();
 		if (textureID == 0) return;
 		int a = (int)(alpha.value_or(1.0f) * 255.0f);
 		ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)textureID, ImVec2(x0, y0), ImVec2(x1, y1),
@@ -645,139 +843,42 @@ namespace LuaFunctions {
 		}
 	}
 
-	bool checkPermissions(const std::string& functionName) {
-		if (!Extensions::currentExtension)
-			return false;
+	sol::optional<std::string> ReadFile(const std::string& path) {
+		auto file = Extensions::pathFor(path, Extensions::Access::Read);
+		if (!file) return sol::nullopt;
 
-		auto it = functionPermissions.find(functionName);
-
-		if (it == functionPermissions.end()) {
-			return false;
-		}
-
-		for (auto permission : it->second) {
-
-			if (Extensions::currentExtension->extensionPermissions.find(permission) ==
-				Extensions::currentExtension->extensionPermissions.end())
-			{
-				return false;
-			}
-		}
-
-		return true;
-	}
-
-	std::string ReadFile(const std::string& path) {
-		CHECK_PERMISSIONS();
-
-		std::filesystem::path root = std::filesystem::weakly_canonical(
-			Extensions::currentExtension->folder
-		);
-
-		std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
-
-		std::string rootStr = root.string();
-		std::string filePathStr = filePath.string();
-		std::string rootWithSep = rootStr;
-		if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
-			rootWithSep += std::filesystem::path::preferred_separator;
-		}
-		if (filePath != root &&
-			filePathStr.find(rootWithSep) != 0)
-		{
-			if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalReadfile) ==
-				Extensions::currentExtension->extensionPermissions.end())
-			{
-				throw std::runtime_error("Extension does not have permission to read external files");
-			}
-		}
-
-		std::ifstream file(filePath, std::ios::binary);
-
-		if (!file)
+		std::ifstream stream(*file, std::ios::binary);
+		if (!stream)
 			throw std::runtime_error("Failed to open file");
 
 		return std::string(
-			std::istreambuf_iterator<char>(file),
+			std::istreambuf_iterator<char>(stream),
 			std::istreambuf_iterator<char>()
 		);
 	}
 
 	bool FileExists(const std::string& path) {
-		CHECK_PERMISSIONS();
-
-		std::filesystem::path root = std::filesystem::weakly_canonical(
-			Extensions::currentExtension->folder
-		);
-
-		std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
-
-		std::string rootStr = root.string();
-		std::string filePathStr = filePath.string();
-		std::string rootWithSep = rootStr;
-		if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator) {
-			rootWithSep += std::filesystem::path::preferred_separator;
-		}
-		if (filePath != root &&
-			filePathStr.find(rootWithSep) != 0)
-		{
-			if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalReadfile) ==
-				Extensions::currentExtension->extensionPermissions.end())
-			{
-				throw std::runtime_error("Extension does not have permission to read external files");
-			}
-		}
-		return std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath);
+		auto file = Extensions::pathFor(path, Extensions::Access::Read);
+		if (!file) return false;
+		std::error_code ec;
+		return std::filesystem::is_regular_file(*file, ec);
 	}
 
-	sol::table ListDirectory(const std::string& path, sol::this_state state)
+	// the names in the folder, nil when it may not look there
+	sol::object ListDirectory(const std::string& path, sol::this_state state)
 	{
-		CHECK_PERMISSIONS();
+		auto directory = Extensions::pathFor(path, Extensions::Access::Read);
+		if (!directory) return sol::lua_nil;
 
 		sol::state_view lua(state);
 		sol::table result = lua.create_table();
-
-		std::filesystem::path root = std::filesystem::weakly_canonical(
-			Extensions::currentExtension->folder
-		);
-
-		std::filesystem::path directoryPath = Helpers::resolveRelativePath(
-			Extensions::currentExtension->folder,
-			path
-		);
-
-		std::string rootStr = root.string();
-		std::string directoryPathStr = directoryPath.string();
-		std::string rootWithSep = rootStr;
-
-		if (!rootWithSep.empty() &&
-			rootWithSep.back() != std::filesystem::path::preferred_separator)
-		{
-			rootWithSep += std::filesystem::path::preferred_separator;
-		}
-
-		if (directoryPath != root &&
-			directoryPathStr.find(rootWithSep) != 0)
-		{
-			if (Extensions::currentExtension->extensionPermissions.find(
-				Extensions::ExtensionPermissionTypes::ExternalReadfile) ==
-				Extensions::currentExtension->extensionPermissions.end())
-			{
-				throw std::runtime_error("Extension does not have permission to read external files");
-			}
-		}
-
-		if (!std::filesystem::exists(directoryPath) ||
-			!std::filesystem::is_directory(directoryPath))
-		{
-			return result;
-		}
+		std::error_code ec;
+		if (!std::filesystem::is_directory(*directory, ec)) return result;
 
 		int index = 1;
-
-		for (const auto& entry : std::filesystem::directory_iterator(directoryPath))
+		for (const auto& entry : std::filesystem::directory_iterator(*directory, ec))
 		{
-			result[index++] = entry.path().filename().string();
+			result[index++] = Helpers::utf8(entry.path().filename());
 		}
 
 		return result;
@@ -801,84 +902,40 @@ namespace LuaFunctions {
 	}
 
 	bool WriteFile(const std::string& path, const std::string& data) {
-		CHECK_PERMISSIONS();
+		auto file = Extensions::pathFor(path, Extensions::Access::Write);
+		if (!file) return false;
 
-		std::filesystem::path root = std::filesystem::weakly_canonical(
-			Extensions::currentExtension->folder
-		);
+		std::ofstream stream(*file, std::ios::binary | std::ios::trunc);
 
-		std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
-
-		std::string rootStr = root.string();
-		std::string filePathStr = filePath.string();
-		std::string rootWithSep = rootStr;
-
-		if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator)
-			rootWithSep += std::filesystem::path::preferred_separator;
-
-		if (filePath != root && filePathStr.find(rootWithSep) != 0) {
-			if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalWritefile) ==
-				Extensions::currentExtension->extensionPermissions.end()) {
-				throw std::runtime_error("Extension does not have permission to write external files");
-			}
-		}
-
-		std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
-
-		if (!file)
+		if (!stream)
 			throw std::runtime_error("Failed to open file");
 
-		writeExtensionData(file, data);
+		writeExtensionData(stream, data);
 
 		return true;
 	}
 
 	bool AppendFile(const std::string& path, const std::string& data) {
-		CHECK_PERMISSIONS();
+		auto file = Extensions::pathFor(path, Extensions::Access::Write);
+		if (!file) return false;
 
-		std::filesystem::path root = std::filesystem::weakly_canonical(
-			Extensions::currentExtension->folder
-		);
+		std::ofstream stream(*file, std::ios::binary | std::ios::app);
 
-		std::filesystem::path filePath = Helpers::resolveRelativePath(Extensions::currentExtension->folder, path);
-
-		std::string rootStr = root.string();
-		std::string filePathStr = filePath.string();
-		std::string rootWithSep = rootStr;
-
-		if (!rootWithSep.empty() && rootWithSep.back() != std::filesystem::path::preferred_separator)
-			rootWithSep += std::filesystem::path::preferred_separator;
-
-		if (filePath != root && filePathStr.find(rootWithSep) != 0) {
-			if (Extensions::currentExtension->extensionPermissions.find(Extensions::ExtensionPermissionTypes::ExternalWritefile) ==
-				Extensions::currentExtension->extensionPermissions.end()) {
-				throw std::runtime_error("Extension does not have permission to write external files");
-			}
-		}
-
-		std::ofstream file(filePath, std::ios::binary | std::ios::app);
-
-		if (!file)
+		if (!stream)
 			throw std::runtime_error("Failed to open file");
 
-		writeExtensionData(file, data);
+		writeExtensionData(stream, data);
 
 		return true;
 	}
 
 	bool WebSocketConnect(Net::WebSocket& socket, const std::string& url, sol::optional<bool> hoyolab)
 	{
-		if (!checkPermissions("LuaFunctions::WebSocketConnect"))
-			throw std::runtime_error("Extension does not have permission");
-
 		return socket.connect(url, hoyolab.value_or(false));
 	}
 
 	bool WebSocketSend(Net::WebSocket& socket, const std::string& message)
 	{
-		if (!checkPermissions("LuaFunctions::WebSocketSend"))
-			throw std::runtime_error("Extension does not have permission");
-
 		return socket.send(message);
 	}
 
@@ -959,6 +1016,12 @@ namespace LuaFunctions {
 
 		intervals.erase(it);
 	}
+
+	void forgetIntervals(Extensions::Extension* owner)
+	{
+		intervals.erase(std::remove_if(intervals.begin(), intervals.end(),
+			[owner](const LuaInterval& interval) { return interval.owner == owner; }), intervals.end());
+	}
 	void UpdateIntervals()
 	{
 		double now = GetOSTimeMS();
@@ -990,7 +1053,7 @@ namespace LuaFunctions {
 			sol::protected_function callback = it->callback;
 
 			Extensions::runForExtension(owner, [&callback]() {
-				callLua(callback);
+				callLua(callback, "interval");
 				});
 		}
 	}
@@ -1002,9 +1065,29 @@ namespace LuaFunctions {
 
 		return { point.x, point.y };
 	}
+	sol::table GetTheme(sol::this_state state) {
+		return themeTable(Controls::GetTheme(), state);
+	}
+
+	sol::table themeTable(const Controls::Theme& theme, sol::state_view lua) {
+		sol::table table = lua.create_table_with(
+			"look", Controls::LookName(theme.look), "dark", theme.dark,
+			"text", theme.text, "muted", theme.muted, "faint", theme.faint,
+			"panel", theme.panel, "page", theme.page, "inside", theme.inside, "cardLine", theme.cardLine,
+			"line", theme.line, "picked", theme.picked, "button", theme.button, "buttonLine", theme.buttonLine,
+			"gold", theme.gold, "accent", theme.accent, "onAccent", theme.onAccent, "badgeFill", theme.badgeFill,
+			"warning", theme.warning, "risky", theme.risky, "success", theme.success, "done", theme.done,
+			"shadow", theme.shadow, "switchOff", theme.switchOff);
+		table["faded"] = theme.faded;
+		table["font"] = theme.font;
+		table["gap"] = theme.gap;
+		table["rounding"] = theme.rounding;
+		table["badge"] = theme.badge;
+		return table;
+	}
+
 	void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color)
 	{
-		CHECK_PERMISSIONS();
 		if (text.empty())
 			return;
 

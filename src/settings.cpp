@@ -131,32 +131,69 @@ namespace Settings {
         write(settings);
     }
 
-    void SaveExtensionPermissions(std::string extensionHash, std::unordered_set<Extensions::ExtensionPermissionTypes> permissions) {
-        nlohmann::json settings = read();
-        nlohmann::json& extPermissions = settings["extensionPermissions"][extensionHash];
-        extPermissions = nlohmann::json::array();
-        for (const auto& permission : permissions) {
-            extPermissions.push_back(static_cast<int>(permission));
+    // the numbers the old lists used, which were the order of the permission enum then
+    static const char* oldPermissionName(int number) {
+        switch (number) {
+        case 1: return "external_read";
+        case 2: return "internal_read";
+        case 3: return "external_write";
+        case 4: return "internal_write";
+        case 5: return "network";
+        case 6: return "display_overlay";
+        case 7: return "display_read";
+        case 8: return "keybinds";
+        default: return nullptr;
         }
-        write(settings);
-	}
-    std::unordered_set<Extensions::ExtensionPermissionTypes> LoadExtensionPermissions(std::string extensionHash) {
-        nlohmann::json settings = read();
-        std::unordered_set<Extensions::ExtensionPermissionTypes> permissions;
-        auto it = settings.find("extensionPermissions");
-        if (it == settings.end() || !it->is_object() || !it->contains(extensionHash)) {
-			return Extensions::defaultPermissions;
-        }
-        if (it != settings.end() && it->is_object()) {
-            auto extIt = it->find(extensionHash);
-            if (extIt != it->end() && extIt->is_array()) {
-                for (const auto& perm : *extIt) {
-                    if (perm.is_number_integer()) {
-                        permissions.insert(static_cast<Extensions::ExtensionPermissionTypes>(perm.get<int>()));
-                    }
-                }
+    }
+
+    static Grants grantsFrom(const nlohmann::json& saved) {
+        Grants grants;
+        if (!saved.is_object()) return grants;
+        grants.saved = true;
+        grants.hash = Files::stringField(saved, "hash");
+        auto names = saved.find("granted");
+        if (names != saved.end() && names->is_array()) {
+            for (const auto& name : *names) {
+                if (name.is_string()) grants.names.push_back(name.get<std::string>());
             }
         }
-        return permissions;
-	}
+        return grants;
+    }
+
+    static nlohmann::json toJson(const Grants& grants) {
+        return { { "hash", grants.hash }, { "granted", grants.names } };
+    }
+
+    Grants LoadGrants(const std::string& folder, const std::string& hash) {
+        nlohmann::json settings = read();
+        auto all = settings.find("extensionGrants");
+        if (all != settings.end() && all->is_object() && all->contains(folder)) {
+            return grantsFrom((*all)[folder]);
+        }
+
+        auto old = settings.find("extensionPermissions");
+        if (old == settings.end() || !old->is_object()) return {};
+        auto list = old->find(hash);
+        if (list == old->end() || !list->is_array()) return {};
+
+        Grants grants;
+        grants.saved = true;
+        grants.hash = hash;
+        for (const auto& number : *list) {
+            const char* name = number.is_number_integer() ? oldPermissionName(number.get<int>()) : nullptr;
+            if (name) grants.names.push_back(name);
+        }
+        old->erase(hash);
+        if (old->empty()) settings.erase("extensionPermissions");
+        settings["extensionGrants"][folder] = toJson(grants);
+        write(settings);
+        std::cout << "[settings] moved the old permission list of " << folder << " to its folder" << std::endl;
+        return grants;
+    }
+
+    void SaveGrants(const std::string& folder, const Grants& grants) {
+        nlohmann::json settings = read();
+        settings["extensionGrants"][folder] = toJson(grants);
+        write(settings);
+    }
 }

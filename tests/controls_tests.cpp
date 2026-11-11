@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "controls.hpp"
+#include "extensions.hpp"
 #include <climits>
 #include <cmath>
 
@@ -234,6 +235,25 @@ TEST_CASE("text that isn't a number leaves the number as it was") {
     ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false);
     frames.number(value, options);
     CHECK(value == 0.4);
+}
+
+TEST_CASE("a saved number outside its setting's range comes back inside it") {
+    Extensions::ExtensionSetting setting;
+    setting.type = Extensions::ExtensionSettingTypes::Float;
+    setting.defaultValue = 0.5f;
+    setting.value = 3.0f;
+    setting.min = 0.0f;
+    setting.max = 1.0f;
+    Extensions::fitToRange(setting);
+    CHECK(std::get<float>(setting.value) == 1.0f);
+
+    setting.type = Extensions::ExtensionSettingTypes::Int;
+    setting.defaultValue = 5;
+    setting.value = -4;
+    setting.min = 1.0f;
+    setting.max = 10.0f;
+    Extensions::fitToRange(setting);
+    CHECK(std::get<int>(setting.value) == 1);
 }
 
 namespace {
@@ -584,6 +604,45 @@ TEST_CASE("the x empties the box") {
     t.clickAt(t.tick);
     CHECK(t.value.empty());
     CHECK(t.changed);
+}
+
+TEST_CASE("a text setting is saved once the box is left, not on each letter") {
+    Frames frames;
+    Extensions::ExtensionSetting setting;
+    setting.label = "Server";
+    setting.type = Extensions::ExtensionSettingTypes::String;
+    setting.defaultValue = std::string("");
+    setting.value = std::string("");
+    bool done = false;
+    ImVec2 box;
+    auto draw = [&] {
+        frame(700, [&] {
+            // the box at the row's end, after the label
+            ImVec2 start = ImGui::GetCursorScreenPos();
+            float right = start.x + ImGui::GetContentRegionAvail().x;
+            box = ImVec2(right - ImGui::GetFrameHeight() * 4, start.y + ImGui::GetFrameHeight() / 2);
+            done |= Extensions::drawSetting(setting);
+        });
+    };
+    auto clickAt = [&](ImVec2 at) {
+        ImGui::GetIO().AddMousePosEvent(at.x, at.y);
+        draw();
+        ImGui::GetIO().AddMouseButtonEvent(0, true);
+        draw();
+        ImGui::GetIO().AddMouseButtonEvent(0, false);
+        draw();
+        draw();
+    };
+    draw();
+    clickAt(box);
+    REQUIRE(ImGui::GetActiveID() != 0);
+    ImGui::GetIO().AddInputCharactersUTF8("eu");
+    draw();
+    draw();
+    CHECK(std::get<std::string>(setting.value) == "eu");
+    CHECK_FALSE(done);
+    clickAt(ImVec2(600, 300));
+    CHECK(done);
 }
 
 namespace {

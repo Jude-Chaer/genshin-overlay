@@ -1045,6 +1045,12 @@ namespace Overlay {
             DrawFloorPicker(MapTracking::GetView());
             updateClickThrough(true);
 
+            // extension folders added while it runs
+            static double lookedForExtensions = glfwGetTime();
+            if (glfwGetTime() - lookedForExtensions >= 2.0) {
+                lookedForExtensions = glfwGetTime();
+                Extensions::findNewExtensions(Helpers::exeDirectory() / "extensions", std::chrono::seconds(2));
+            }
             Extensions::frameUpdateExtensions();
             DrawStartupHint();
 

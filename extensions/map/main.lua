@@ -47,6 +47,9 @@ function Update()
     local size = tileSizeFor(tile / unitsPerPixel)
     local opacity = GetSetting("opacity")
 
+    -- a floor the game shows that HoYoLAB has no map for
+    if view.noMapFloor then return end
+
     -- underground the game dims the surface, so we do too
     local underground = view.groupId ~= 0
     local surfaceOpacity = opacity
