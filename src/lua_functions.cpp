@@ -10,6 +10,7 @@
 #include "item_icons.hpp"
 #include "item_catalog.hpp"
 #include "item_files.hpp"
+#include "typing.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -157,16 +158,14 @@ namespace LuaFunctions {
 		ImGui::SliderInt(label.c_str(), &value, minValue, maxValue);
 		return value;
 	}
-	std::string ImGUI_InputText(const std::string& label, const std::string& currentText)
+	// ImGUI_InputText(label, text, options), options is optional:
+	// { backToGame = false } keeps the focus after Enter or Esc, for the next box
+	std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options)
 	{
 		std::string value = currentText;
-		char buffer[4096]{};
-
-		strncpy_s(buffer, sizeof(buffer), value.c_str(), _TRUNCATE);
-
-		if (ImGui::InputText(label.c_str(), buffer, sizeof(buffer)))
-			value = buffer;
-
+		bool backToGame = true;
+		if (options) backToGame = options->get_or("backToGame", true);
+		Typing::InputText(label.c_str(), value, 4096, backToGame);
 		return value;
 	}
 
@@ -188,7 +187,7 @@ namespace LuaFunctions {
 
 	// hidden means the menu is closed
 	bool IsProgramHidden() {
-		return !Overlay::menuOpen;
+		return !Overlay::MenuOpen();
 	}
 
 	// RegisterKeybind(key, function, flags, modifiers), modifiers is optional, like KeybindModifiers.Alt

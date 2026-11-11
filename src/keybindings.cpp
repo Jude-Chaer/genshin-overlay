@@ -132,7 +132,7 @@ namespace Keybindings {
         if (!hotkeyWindow) return;
 
         for (auto& keybind : keybinds) {
-            bool wanted = enabled && gameInFront && (Overlay::menuOpen || keybind->HasFlag(KeybindFlags_ProcessWhileHidden));
+            bool wanted = enabled && gameInFront && (Overlay::MenuOpen() || keybind->HasFlag(KeybindFlags_ProcessWhileHidden));
             if (wanted == keybind->IsRegistered()) continue;
 
             if (wanted) {

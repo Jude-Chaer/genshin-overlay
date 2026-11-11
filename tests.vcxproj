@@ -107,8 +107,10 @@
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="src\typing.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
@@ -124,6 +126,8 @@
     <ClCompile Include="tests\map_check_tests.cpp" />
     <ClCompile Include="tests\map_follow_tests.cpp" />
     <ClCompile Include="tests\minimap_tests.cpp" />
+    <ClCompile Include="tests\overlay_tests.cpp" />
+    <ClCompile Include="tests\typing_tests.cpp" />
     <ClCompile Include="tests\settings_tests.cpp" />
     <ClCompile Include="tests\test_map.cpp" />
   </ItemGroup>
@@ -153,8 +157,10 @@
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
+    <ClInclude Include="src\typing.hpp" />
     <ClInclude Include="tests\test_map.hpp" />
     <ClInclude Include="tests\map_screen.hpp" />
   </ItemGroup>

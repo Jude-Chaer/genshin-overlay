@@ -54,7 +54,7 @@ namespace LuaFunctions {
     bool ImGUI_Checkbox(const std::string& label, bool currentValue);
     float ImGUI_SliderFloat(const std::string& label, float currentValue, float minValue, float maxValue);
     int ImGUI_SliderInt(const std::string& label, int currentValue, int minValue, int maxValue);
-    std::string ImGUI_InputText(const std::string& label, const std::string& currentText);
+    std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options);
     void ImGUI_SameLine();
     void ImGUI_Tooltip(const std::string& text);
     void ImGUI_Separator();

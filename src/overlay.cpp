@@ -12,6 +12,7 @@
 #include "stats.hpp"
 #include "settings.hpp"
 #include "capture.hpp"
+#include "typing.hpp"
 #include <imgui_internal.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -27,8 +28,8 @@ namespace Overlay {
     ImGuiIO* IO = nullptr;
     GLFWmonitor* mainMonitor = nullptr;
     const GLFWvidmode* monitorVideoMode = nullptr;
-    bool menuOpen = false;
 
+    static bool menuOpen = false;
     static std::string iniPath;
     static double startTime = 0.0;
 
@@ -101,8 +102,12 @@ namespace Overlay {
         // be clicked right away.
         Keybindings::Init(Overlay::Window);
         Keybindings::CreateKeybind(GLFW_KEY_GRAVE_ACCENT, []() {
-            Overlay::SetMenuOpen(!Overlay::menuOpen);
+            Overlay::SetMenuOpen(!menuOpen);
         }, Keybindings::KeybindFlags_ProcessWhileHidden, Keybindings::KeybindModifiers_Alt);
+
+        // the menu key only works with the game in front, so without the game the
+        // menu opens by itself, the settings can be changed without it
+        if (!Capture::findRunningGame()) SetMenuOpen(true);
 
         startTime = glfwGetTime();
         return true;
@@ -121,11 +126,20 @@ namespace Overlay {
 
     static void keepOnTop(bool force);
 
+    bool MenuOpen() {
+        return menuOpen;
+    }
+
     void SetMenuOpen(bool open) {
-        Overlay::menuOpen = open;
+        if (open == menuOpen) return;
+        menuOpen = open;
         keepOnTop(true);
         // extension keybinds only hold their keys while the menu is open
         Keybindings::RefreshRegistrations();
+    }
+
+    void MenuFollowsMap(bool mapOpen) {
+        if (Settings::hideOnMapClose) SetMenuOpen(mapOpen);
     }
 
     // The window never has focus and is usually click-through, so it can't see
@@ -159,16 +173,33 @@ namespace Overlay {
         SetWindowPos(glfwGetWin32Window(Overlay::Window), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
-    // Only take the mouse while it's over the menu, everywhere else clicks go to the game.
-    // The window covers the whole screen, so without this an open menu would swallow
-    // every click. WantCaptureMouse is ImGui saying the cursor is over one of its windows.
+    void MouseClaims::claim(float left, float top, float right, float bottom) {
+        boxes.push_back(ImVec4(left, top, right, bottom));
+    }
+
+    bool MouseClaims::takesMouse(ImVec2 at, const Screens::Up& up, bool overMenu) {
+        bool overBox = false;
+        for (const ImVec4& r : boxes) {
+            if (at.x >= r.x && at.x < r.z && at.y >= r.y && at.y < r.w) overBox = true;
+        }
+        boxes.clear();
+        if (!up.any()) return false;
+        return (up[Screens::Screen::Menu] && overMenu) || overBox;
+    }
+
+    static MouseClaims claims;
+
+    void ClaimMouse(float left, float top, float right, float bottom) {
+        claims.claim(left, top, right, bottom);
+    }
+
+    // Only take the mouse while it's over the menu or a claimed box, everywhere
+    // else clicks go to the game. The window covers the whole screen, so without
+    // this an open menu would swallow every click. WantCaptureMouse is ImGui
+    // saying the cursor is over one of its windows.
     static bool mouseCaptured = false;
     // where the floor picker is drawn this frame, overlay pixels, empty with none
     static RECT pickerBox = {};
-    static bool cursorOnPicker() {
-        ImVec2 at = Overlay::IO->MousePos;
-        return at.x >= pickerBox.left && at.x < pickerBox.right && at.y >= pickerBox.top && at.y < pickerBox.bottom;
-    }
 
     bool PickerBox(RECT& out) {
         if (IsRectEmpty(&pickerBox)) return false;
@@ -176,16 +207,86 @@ namespace Overlay {
         return true;
     }
 
-    // The picker takes the mouse with the menu closed too, only while the
-    // cursor is over it. Windows only sees the change once the frame is
-    // done, so a click right as the cursor gets there can still go to the game.
-    static void updateClickThrough() {
-        bool capture = (Overlay::menuOpen && Overlay::IO->WantCaptureMouse) || cursorOnPicker();
+    // The boxes are the ones claimed since the last call: the extensions' from
+    // the frame before, the picker's from this one. Windows only sees the change
+    // once the frame is done, so a click right as the cursor gets there can
+    // still go to the game.
+    // Not drawing: nothing is on screen, so no box counts.
+    static void updateClickThrough(bool drawing) {
+        bool capture = claims.takesMouse(Overlay::IO->MousePos, drawing ? Screens::now() : Screens::Up{},
+            Overlay::IO->WantCaptureMouse);
         if (capture == mouseCaptured) return;
         mouseCaptured = capture;
         glfwSetWindowAttrib(Overlay::Window, GLFW_MOUSE_PASSTHROUGH, capture ? GLFW_FALSE : GLFW_TRUE);
         // changing the window style can drop it below the game
         keepOnTop(true);
+    }
+
+    static void giveFocus(HWND to) {
+        HWND hwnd = glfwGetWin32Window(Overlay::Window);
+        LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE);
+        // A fullscreen game minimizes once it loses the focus, and we can't
+        // restore it without admin. Bringing it to the front is allowed
+        // though, and it restores itself then. SwitchToThisWindow in case
+        // it didn't come.
+        if (to) {
+            SetForegroundWindow(to);
+            if (GetForegroundWindow() != to) SwitchToThisWindow(to, TRUE);
+        }
+        keepOnTop(true);
+    }
+
+    // Typing (typing.hpp) with the real Windows calls.
+    static Typing::Windows typingWindows() {
+        Typing::Windows windows;
+        windows.overlay = glfwGetWin32Window(Overlay::Window);
+        windows.foreground = []() { return GetForegroundWindow(); };
+        windows.game = []() { return Capture::findRunningGame(); };
+        windows.exists = [](HWND window) { return IsWindow(window) != FALSE; };
+        windows.takeFocus = []() {
+            HWND hwnd = glfwGetWin32Window(Overlay::Window);
+            LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_NOACTIVATE);
+            bool took = SetForegroundWindow(hwnd) != FALSE;
+            keepOnTop(true);
+            return took;
+        };
+        windows.giveFocus = giveFocus;
+        return windows;
+    }
+
+    void GiveFocusToGame() {
+        giveFocus(Capture::findRunningGame());
+    }
+
+    // once a frame after the menu is drawn, drawing false when nothing is
+    static void updateTyping(bool drawing) {
+        static Typing::Windows windows = typingWindows();
+        Typing::Frame frame;
+        frame.menuOpen = menuOpen;
+        if (drawing) {
+            ImGuiContext& g = *ImGui::GetCurrentContext();
+            frame.lastBox = g.InputTextState.ID;
+            frame.mouseHeld = ImGui::IsAnyMouseDown();
+            frame.typing = g.ActiveId != 0 && g.ActiveId == g.InputTextState.ID;
+            // With the focus here the game isn't in front, so every hotkey is
+            // off, the menu key too. ImGui gets the keys now, so it's read here.
+            if (Typing::focus.hasFocus() && ImGui::IsKeyChordPressed(ImGuiMod_Alt | ImGuiKey_GraveAccent)) {
+                SetMenuOpen(false);
+                frame.menuOpen = false;
+            }
+        }
+        switch (Typing::focus.update(frame, windows)) {
+        case Typing::Change::CouldntTake:
+            std::cout << "Couldn't take the focus for typing, the keys still go to the window in front" << std::endl;
+            break;
+        case Typing::Change::Lost:
+            if (drawing) ImGui::ClearActiveID();
+            break;
+        default:
+            break;
+        }
     }
 
     // what the tracker sees right now, mainly for testing until markers are drawn
@@ -499,6 +600,7 @@ namespace Overlay {
 
         ImVec2 min = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
         pickerBox = { (LONG)min.x, (LONG)min.y, (LONG)(min.x + size.x), (LONG)(min.y + size.y) };
+        ClaimMouse(min.x, min.y, min.x + size.x, min.y + size.y);
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(4);
@@ -775,12 +877,13 @@ namespace Overlay {
             Stats::Update();
 
             // map and menu closed: nothing to show, so don't draw at all
-            bool showing = Overlay::menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;
+            bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;
             // an extension that follows the player has things to draw with the map closed too
             bool forPlayer = !showing && MiniMap::Wanted();
             if (!showing && !forPlayer) {
                 pickerBox = {};
-                updateClickThrough();
+                updateClickThrough(false);
+                updateTyping(false);
                 if (drewLastFrame) {
                     // an empty frame so the last one doesn't stay on screen
                     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -803,18 +906,18 @@ namespace Overlay {
             // the picker first: extensions keep off this frame's box, and the
             // click-through goes by where it is now
             DrawFloorPicker(MapTracking::GetView());
-            updateClickThrough();
+            updateClickThrough(true);
 
             Extensions::frameUpdateExtensions();
             DrawStartupHint();
 
-            if (Settings::hideOnMapClose) {
-                Overlay::menuOpen = MapTracking::IsMapOpen();
-            }
+            // without the game there's no map to follow, the menu stays as it is
+            if (Capture::findRunningGame()) MenuFollowsMap(MapTracking::IsMapOpen());
 
-            if (Overlay::menuOpen) {
+            if (menuOpen) {
                 DrawMenu();
             }
+            updateTyping(true);
 
             ImGui::Render();
 

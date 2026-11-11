@@ -112,8 +112,10 @@
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="src\typing.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\appsample.hpp" />
@@ -141,8 +143,10 @@
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
+    <ClInclude Include="src\typing.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extensions\example\main.lua" />
