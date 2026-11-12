@@ -114,10 +114,10 @@ TEST_CASE("searches in a loop count toward the guard's steps") {
         Extensions::Extension* ext = TestExtension::load("search_loops", loop);
         REQUIRE(ext != nullptr);
         auto start = std::chrono::steady_clock::now();
-        Extensions::frameUpdateExtensions();
+        TestExtension::turn();
         CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
         CHECK(!ext->stopReason.empty());
-        Extensions::frameUpdateExtensions();
+        TestExtension::turn();
         CHECK(ext->stopped);
         TestExtension::unloadAll();
     }

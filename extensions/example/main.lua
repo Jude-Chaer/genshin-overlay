@@ -7,7 +7,6 @@ metadata = {
 
 local clicks = 0
 local ws = WebSocket.new()
-local connected = false
 
 
 function RegisterSettings()
@@ -17,36 +16,34 @@ end
 function Init()
     print("Example extension loaded from " .. WORKING_DIR)
     
-    local response = Net_Get("https://example.com")
+    Net_Start("https://example.com", function(response)
+        print("GET response status:", response.status or response.error)
+    end)
 
-    if response then
-        print("GET response status:", response.status)
-    end
-
-    local response = Net_Post(
-        "https://httpbin.org/post",
-        '{"foo":"bar"}'
-    )
-    if response then
-        print("POST response status:", response.status)
-    end
+    Net_Start("https://httpbin.org/post", { method = "POST", body = '{"foo":"bar"}' }, function(response)
+        print("POST response status:", response.status or response.error)
+    end)
 
     print(ReadFile("example.txt"))
     WriteFile("example.txt", "hi?")
     print(ReadFile("example.txt"))
     AppendFile("example.txt", "\nhello")
     print(ReadFile("example.txt"))
-    connected = ws:connect("wss://echo.websocket.org")
+    ws:connect("wss://echo.websocket.org", {
+        onOpen = function()
+            print("WebSocket connected")
+            ws:send("Hello from Genshin Overlay!")
+        end,
+        onMessage = function(message)
+            print("WebSocket received: " .. message)
+        end,
+        onClose = function(reason)
+            print("WebSocket closed: " .. reason)
+        end,
+    })
 
-    if connected then
-        print("WebSocket connected")
-        ws:send("Hello from Genshin Overlay!")
-    else
-        print("WebSocket connection failed")
-    end
-
-    SetInterval(function() 
-        if connected then
+    SetInterval(function()
+        if ws:isConnected() then
             ws:send(string.format("Click count: %d", clicks))
         end
     end, 5000)
@@ -62,18 +59,7 @@ function Menu()
     end
 end
 
-function Update()
-    if not connected then
-        return
-    end
---    ws:send(string.format("Click count: %d", clicks))
-    for _, message in ipairs(ws:pollAll()) do
-        print("WebSocket received: " .. message)
-    end
-end
-
 function Shutdown()
     ws:close()
-    print("WebSocket closed")
 end
 

@@ -3,7 +3,9 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <catch2/catch_test_macros.hpp>
@@ -210,6 +212,42 @@ TEST_CASE("without the network permission nothing is sent") {
     )"));
     sol::state& lua = *ext->luaState;
     CHECK(lua["refused"].get_or(false) == true);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("with the network permission this PC and the home network are still refused") {
+    Extensions::Extension* ext = load("internet_only");
+    REQUIRE(ext != nullptr);
+    ext->extensionPermissions.insert(ExtensionPermissionTypes::NetworkAccess);
+    std::ostringstream log;
+    std::streambuf* before = std::cerr.rdbuf(log.rdbuf());
+    // nothing listens on port 9, and it must not even be tried
+    bool ran = TestExtension::run(ext, R"(
+        local socket = WebSocket.new()
+        refused = Net_Get("http://127.0.0.1:9/") == nil
+            and Net_Get("http://192.168.1.1/") == nil
+            and Net_Get("http://127.0.0.1:9/again") == nil
+            and Net_Post("http://localhost:9/", "data") == nil
+        -- a socket says so a frame later
+        socket:connect("ws://[::1]:9/", { onClose = function(reason) _G.socketClosed = reason end })
+    )");
+    for (int i = 0; i < 200 && (*ext->luaState)["socketClosed"] == sol::lua_nil; i++) {
+        TestExtension::turn();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    std::cerr.rdbuf(before);
+    REQUIRE(ran);
+    CHECK((*ext->luaState)["refused"].get_or(false) == true);
+    CHECK((*ext->luaState)["socketClosed"].get_or(std::string()) == "refused");
+    std::string text = log.str();
+    INFO(text);
+    const std::string why = ": extensions reach only the internet, not this PC or the home network";
+    CHECK(text.find("[internet_only] Net_Get can't reach 127.0.0.1 (127.0.0.1)" + why) != std::string::npos);
+    CHECK(text.find("[internet_only] Net_Get can't reach 192.168.1.1 (192.168.1.1)" + why) != std::string::npos);
+    CHECK(text.find("[internet_only] Net_Post can't reach localhost") != std::string::npos);
+    CHECK(text.find("[internet_only] WebSocket.connect can't reach [::1]") != std::string::npos);
+    // one line per place
+    CHECK(text.find("127.0.0.1 (127.0.0.1)") == text.rfind("127.0.0.1 (127.0.0.1)"));
     TestExtension::unloadAll();
 }
 

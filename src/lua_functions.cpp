@@ -22,6 +22,12 @@
 #include <stdexcept>
 #include <chrono>
 #include <algorithm>
+#include <cmath>
+#include <memory>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 
 namespace LuaFunctions {
 	using Permission = Extensions::ExtensionPermissionTypes;
@@ -179,6 +185,8 @@ namespace LuaFunctions {
 
 		global("Net_Get", Network, NetGet);
 		global("Net_Post", Network, NetPost);
+		global("Net_Start", Network, NetStart);
+		global("Net_Result", Network, NetResult);
 
 		luaState["KeybindFlags"] = luaState.create_table_with(
 			"None", Keybindings::KeybindFlags_None,
@@ -191,7 +199,7 @@ namespace LuaFunctions {
 			"Shift", Keybindings::KeybindModifiers_Shift
 		);
 
-		auto websocket = luaState.new_usertype<Net::WebSocket>("WebSocket", sol::constructors<Net::WebSocket()>());
+		auto websocket = luaState.new_usertype<Socket>("WebSocket", sol::constructors<Socket()>());
 		auto method = [&](const char* name, Permission permission, auto fn) {
 			bindFunction(luaState, websocket, "WebSocket.", name, permission, fn);
 		};
@@ -548,13 +556,36 @@ namespace LuaFunctions {
 		return results;
 	}
 
-	sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab)
+	// an extension reaches the internet only, one log line per place refused
+	static void logRefused(const char* function, const std::string& place) {
+		if (!place.empty())
+			Extensions::logOnce(function, "can't reach " + place + ": extensions reach only the internet, not this PC or the home network");
+	}
+
+	// what an extension's request is held to, waitMs for the whole of it
+	static Net::Limits limitsFor(int waitMs) {
+		Net::Limits limits;
+		limits.publicOnly = true;
+		limits.maxBody = NetMaxBody;
+		limits.deadlineMs = waitMs;
+		return limits;
+	}
+
+	static void logLimits(const char* function, const Net::Response& response) {
+		if (response.tooBig) Extensions::logOnce(function, "got an answer over " + std::to_string(NetMaxBody / (1024 * 1024)) + " MB, it's dropped");
+		if (response.timedOut) Extensions::logOnce(function, "waited too long for an answer");
+	}
+
+	sol::object NetGet(const std::string& url, sol::this_state state)
 	{
 		sol::state_view lua(state);
 		Net::Response response;
 
-		if (!Net::get(url, response, hoyolab.value_or(false)))
+		if (!Net::get(url, response, false, nullptr, nullptr, limitsFor(NetWaitMs))) {
+			logRefused("Net_Get", response.refused);
+			logLimits("Net_Get", response);
 			return sol::nil;
+		}
 
 		sol::table result = lua.create_table();
 		result["status"] = response.status;
@@ -563,19 +594,177 @@ namespace LuaFunctions {
 		return result;
 	}
 
-	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab)
+	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state)
 	{
 		sol::state_view lua(state);
 		Net::Response response;
 
-		if (!Net::post(url, data, response, hoyolab.value_or(false)))
+		if (!Net::post(url, data, response, false, limitsFor(NetWaitMs))) {
+			logRefused("Net_Post", response.refused);
+			logLimits("Net_Post", response);
 			return sol::nil;
+		}
 
 		sol::table result = lua.create_table();
 		result["status"] = response.status;
 		result["body"] = response.body;
 
 		return result;
+	}
+
+	// One Net_Start. The thread writes only into answer, the draw thread reads
+	// it once done is set.
+	struct NetRequest {
+		struct Answer {
+			Net::Stopper stopper;
+			Net::Response response;
+			bool ok = false;
+			std::atomic<bool> done{ false };
+		};
+		int id = 0;
+		Extensions::Extension* owner = nullptr;
+		sol::protected_function onDone;
+		bool hasOnDone = false;
+		std::shared_ptr<Answer> answer = std::make_shared<Answer>();
+		std::thread thread;
+
+		~NetRequest() {
+			answer->stopper.stop();
+			if (thread.joinable()) thread.join();
+		}
+	};
+	static std::vector<std::unique_ptr<NetRequest>> netRequests;
+	static int nextNetId = 1;
+
+	int netRequestsOf(const Extensions::Extension* owner) {
+		return (int)std::count_if(netRequests.begin(), netRequests.end(), [owner](const auto& each) { return each->owner == owner; });
+	}
+
+	static sol::table answerTable(const NetRequest& request, sol::state_view lua) {
+		const Net::Response& response = request.answer->response;
+		sol::table result = lua.create_table();
+		if (request.answer->ok) {
+			result["status"] = response.status;
+			result["body"] = response.body;
+		}
+		else if (response.timedOut) result["error"] = "timeout";
+		else if (response.tooBig) result["error"] = "too_big";
+		else if (!response.refused.empty()) result["error"] = "refused";
+		else result["error"] = "failed";
+		return result;
+	}
+
+	sol::object NetStart(const std::string& url, sol::object options, sol::object onDone, sol::this_state state)
+	{
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return sol::nil;
+		// Net_Start(url, onDone) works too
+		if (options.is<sol::protected_function>() && onDone == sol::lua_nil) std::swap(options, onDone);
+
+		std::string method = "GET";
+		std::string body;
+		if (options.is<sol::table>()) {
+			sol::table table = options;
+			method = table.get_or("method", method);
+			body = table.get_or("body", body);
+		}
+		else if (options != sol::lua_nil) {
+			Extensions::logOnce("Net_Start", "takes a table as options, like { method = \"POST\", body = \"...\" }");
+			return sol::nil;
+		}
+		if (method != "GET" && method != "POST") {
+			Extensions::logOnce("Net_Start", "knows the methods GET and POST, not " + method);
+			return sol::nil;
+		}
+		if (onDone != sol::lua_nil && !onDone.is<sol::protected_function>()) {
+			Extensions::logOnce("Net_Start", "takes a function as onDone");
+			return sol::nil;
+		}
+		if (netRequestsOf(ext) >= NetMaxWaiting) {
+			Extensions::logOnce("Net_Start", "has " + std::to_string(NetMaxWaiting) + " requests waiting or not collected, no more start");
+			return sol::nil;
+		}
+
+		auto request = std::make_unique<NetRequest>();
+		request->id = nextNetId++;
+		request->owner = ext;
+		if (onDone != sol::lua_nil) {
+			request->onDone = onDone.as<sol::protected_function>();
+			request->hasOnDone = true;
+		}
+		std::shared_ptr<NetRequest::Answer> answer = request->answer;
+		Net::Limits limits = limitsFor(NetStartMs);
+		request->thread = std::thread([answer, url, method, body, limits]() {
+			answer->ok = method == "POST"
+				? Net::post(url, body, answer->response, false, limits, &answer->stopper)
+				: Net::get(url, answer->response, false, nullptr, &answer->stopper, limits);
+			answer->done = true;
+		});
+		int id = request->id;
+		netRequests.push_back(std::move(request));
+		return sol::make_object(state, id);
+	}
+
+	// the request is done: its thread is joined and what went wrong logged, as its extension
+	static void collect(NetRequest& request) {
+		request.thread.join();
+		logRefused("Net_Start", request.answer->response.refused);
+		logLimits("Net_Start", request.answer->response);
+	}
+
+	sol::object NetResult(int id, sol::this_state state)
+	{
+		auto it = std::find_if(netRequests.begin(), netRequests.end(), [id](const auto& each) {
+			return each->id == id && each->owner == Extensions::currentExtension;
+		});
+		if (it == netRequests.end() || (*it)->hasOnDone || !(*it)->answer->done) return sol::nil;
+		std::unique_ptr<NetRequest> request = std::move(*it);
+		netRequests.erase(it);
+		collect(*request);
+		return answerTable(*request, sol::state_view(state));
+	}
+
+	void UpdateNetRequests()
+	{
+		std::vector<std::unique_ptr<NetRequest>> due;
+		for (auto it = netRequests.begin(); it != netRequests.end();) {
+			if ((*it)->hasOnDone && (*it)->answer->done) {
+				due.push_back(std::move(*it));
+				it = netRequests.erase(it);
+			}
+			else ++it;
+		}
+		// a callback can start new requests, and its extension can be unloaded
+		for (auto& request : due) {
+			Extensions::Extension* owner = request->owner;
+			Extensions::runForExtension(owner, [&]() {
+				collect(*request);
+				// Network Access switched off while it waited
+				if (!owner->extensionPermissions.count(Permission::NetworkAccess) || !owner->luaState) return;
+				sol::table result;
+				{
+					Extensions::HostAllocations host(owner->memory.get());
+					result = answerTable(*request, sol::state_view(*owner->luaState));
+				}
+				auto called = request->onDone(result);
+				if (!called.valid()) {
+					sol::error err = called;
+					std::cerr << "[" << owner->name << "] Net_Start onDone: " << err.what() << std::endl;
+				}
+			});
+		}
+	}
+
+	void UpdateAnswers()
+	{
+		UpdateNetRequests();
+		UpdateSockets();
+	}
+
+	void forgetNetRequests(Extensions::Extension* owner)
+	{
+		netRequests.erase(std::remove_if(netRequests.begin(), netRequests.end(),
+			[owner](const auto& each) { return each->owner == owner; }), netRequests.end());
 	}
 
 	// Where the in-game map is looking, or nil when it isn't open. Positions are
@@ -1000,32 +1189,176 @@ namespace LuaFunctions {
 		return true;
 	}
 
-	bool WebSocketConnect(Net::WebSocket& socket, const std::string& url, sol::optional<bool> hoyolab)
-	{
-		return socket.connect(url, hoyolab.value_or(false));
+	// What the socket's thread and the draw thread share. The thread connects,
+	// sends what's queued and closes; the draw thread queues and takes.
+	struct SocketLink {
+		Net::WebSocket socket;
+		Net::Stopper stopper;
+		std::mutex mutex;
+		std::condition_variable wake;
+		std::deque<std::string> outgoing;
+		bool stop = false;
+		bool hasOnMessage = false;
+		std::atomic<bool> open{ false };
+		// stays true once it opened, onOpen is called even when it closed before the next frame
+		std::atomic<bool> opened{ false };
+		std::atomic<bool> finished{ false };
+		// set before finished
+		std::string reason;
+
+		void end() {
+			{
+				std::lock_guard<std::mutex> lock(mutex);
+				stop = true;
+			}
+			stopper.stop();
+			wake.notify_all();
+		}
+	};
+
+	struct SocketEntry {
+		std::shared_ptr<SocketLink> link;
+		Extensions::Extension* owner = nullptr;
+		sol::protected_function onOpen, onMessage, onClose;
+		bool openSaid = false;
+		std::thread thread;
+
+		~SocketEntry() {
+			link->end();
+			if (thread.joinable()) thread.join();
+		}
+	};
+	static std::vector<std::unique_ptr<SocketEntry>> sockets;
+
+	Socket::~Socket() {
+		if (link) link->end();
 	}
 
-	bool WebSocketSend(Net::WebSocket& socket, const std::string& message)
-	{
-		return socket.send(message);
+	int socketsOf(const Extensions::Extension* owner) {
+		return (int)std::count_if(sockets.begin(), sockets.end(), [owner](const auto& each) { return each->owner == owner; });
 	}
 
-	sol::object WebSocketPoll(Net::WebSocket& socket, sol::this_state state)
+	static void runSocket(std::shared_ptr<SocketLink> link, std::string url, Net::Limits limits) {
+		Net::WebSocket& socket = link->socket;
+		if (!socket.connect(url, false, limits, &link->stopper)) {
+			if (!socket.refusedPlace().empty()) link->reason = "refused";
+			else if (socket.connectTimedOut()) link->reason = "timeout";
+			else link->reason = "failed";
+			link->finished = true;
+			return;
+		}
+		link->opened = true;
+		link->open = true;
+		for (;;) {
+			std::string message;
+			{
+				std::unique_lock<std::mutex> lock(link->mutex);
+				// also wakes every 100 ms to see if the receive side ended
+				link->wake.wait_for(lock, std::chrono::milliseconds(100), [&]() { return link->stop || !link->outgoing.empty(); });
+				if (link->stop || !socket.isConnected()) break;
+				if (link->outgoing.empty()) continue;
+				message = std::move(link->outgoing.front());
+				link->outgoing.pop_front();
+			}
+			if (!socket.send(message)) break;
+		}
+		link->reason = socket.overflowed() ? "too_many_messages" : "closed";
+		socket.close();
+		link->open = false;
+		link->finished = true;
+	}
+
+	static void callHandler(Extensions::Extension* owner, sol::protected_function& handler, const char* name, sol::object argument = sol::lua_nil) {
+		if (!handler.valid()) return;
+		auto called = argument == sol::lua_nil ? handler() : handler(argument);
+		if (!called.valid()) {
+			sol::error err = called;
+			std::cerr << "[" << owner->name << "] WebSocket " << name << ": " << err.what() << std::endl;
+		}
+	}
+
+	static void dropHandlers(SocketEntry& entry) {
+		entry.onOpen = entry.onMessage = entry.onClose = sol::protected_function();
+		entry.owner = nullptr;
+	}
+
+	bool WebSocketConnect(Socket& socket, const std::string& url, sol::optional<sol::table> handlers)
+	{
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return false;
+		if (url.rfind("ws://", 0) != 0 && url.rfind("wss://", 0) != 0) {
+			Extensions::logOnce("WebSocket.connect", "takes a ws:// or wss:// address");
+			return false;
+		}
+		if (socket.link) {
+			socket.link->end();
+			for (auto& entry : sockets) {
+				if (entry->link == socket.link) dropHandlers(*entry);
+			}
+		}
+		socket.link.reset();
+		if (socketsOf(ext) >= SocketMax) {
+			Extensions::logOnce("WebSocket.connect", "has " + std::to_string(SocketMax) + " sockets open or connecting, no more connect");
+			return false;
+		}
+
+		auto entry = std::make_unique<SocketEntry>();
+		entry->owner = ext;
+		if (handlers) {
+			sol::table table = *handlers;
+			auto take = [&](const char* name, sol::protected_function& into) {
+				sol::object value = table[name];
+				if (value.is<sol::protected_function>()) into = value.as<sol::protected_function>();
+			};
+			take("onOpen", entry->onOpen);
+			take("onMessage", entry->onMessage);
+			take("onClose", entry->onClose);
+		}
+		auto link = std::make_shared<SocketLink>();
+		link->hasOnMessage = entry->onMessage.valid();
+		link->socket.setMaxQueued(SocketMaxQueued);
+		entry->link = link;
+		Net::Limits limits = limitsFor(NetStartMs);
+		limits.maxBody = 0;
+		entry->thread = std::thread(runSocket, link, url, limits);
+		socket.link = link;
+		sockets.push_back(std::move(entry));
+		return true;
+	}
+
+	bool WebSocketSend(Socket& socket, const std::string& message)
+	{
+		if (!socket.link || socket.link->finished) return false;
+		{
+			std::lock_guard<std::mutex> lock(socket.link->mutex);
+			if (socket.link->stop) return false;
+			if (socket.link->outgoing.size() >= SocketMaxQueued) {
+				Extensions::logOnce("WebSocket.send", "has " + std::to_string(SocketMaxQueued) + " messages waiting to go, this one is dropped");
+				return false;
+			}
+			socket.link->outgoing.push_back(message);
+		}
+		socket.link->wake.notify_all();
+		return true;
+	}
+
+	sol::object WebSocketPoll(Socket& socket, sol::this_state state)
 	{
 		std::string message;
 
-		if (!socket.poll(message))
+		if (!socket.link || socket.link->hasOnMessage || !socket.link->socket.poll(message))
 			return sol::nil;
 
 		return sol::make_object(state, message);
 	}
 
-	sol::object WebSocketPollAll(Net::WebSocket& socket, sol::this_state state)
+	sol::object WebSocketPollAll(Socket& socket, sol::this_state state)
 	{
 		sol::state_view lua(state);
 		sol::table result = lua.create_table();
+		if (!socket.link || socket.link->hasOnMessage) return result;
 
-		auto messages = socket.pollAll();
+		auto messages = socket.link->socket.pollAll();
 
 		int index = 1;
 		for (const auto& message : messages)
@@ -1034,14 +1367,80 @@ namespace LuaFunctions {
 		return result;
 	}
 
-	bool WebSocketIsConnected(Net::WebSocket& socket)
+	bool WebSocketIsConnected(Socket& socket)
 	{
-		return socket.isConnected();
+		return socket.link && socket.link->open && socket.link->socket.isConnected();
 	}
 
-	void WebSocketClose(Net::WebSocket& socket)
+	void WebSocketClose(Socket& socket)
 	{
-		socket.close();
+		if (socket.link) socket.link->end();
+	}
+
+	void UpdateSockets()
+	{
+		// by index, a handler may add sockets
+		for (size_t i = 0; i < sockets.size(); i++) {
+			SocketEntry* entry = sockets[i].get();
+			Extensions::Extension* owner = entry->owner;
+			if (!owner) continue;
+			// Network Access switched off
+			if (!owner->extensionPermissions.count(Permission::NetworkAccess) || !owner->luaState) {
+				entry->link->end();
+				dropHandlers(*entry);
+				continue;
+			}
+			bool finished = entry->link->finished;
+			Extensions::runForExtension(owner, [&]() {
+				if (entry->link->opened && !entry->openSaid) {
+					entry->openSaid = true;
+					callHandler(owner, entry->onOpen, "onOpen");
+				}
+				if (entry->onMessage.valid()) {
+					for (const auto& message : entry->link->socket.pollAll()) {
+						sol::object argument;
+						{
+							Extensions::HostAllocations host(owner->memory.get());
+							argument = sol::make_object(*owner->luaState, message);
+						}
+						callHandler(owner, entry->onMessage, "onMessage", argument);
+						if (!entry->owner) return;
+					}
+				}
+				if (finished) {
+					const Net::WebSocket& socket = entry->link->socket;
+					logRefused("WebSocket.connect", socket.refusedPlace());
+					if (entry->link->reason == "too_many_messages")
+						Extensions::logOnce("WebSocket", "had " + std::to_string(SocketMaxQueued) + " messages not polled, the socket is closed");
+					sol::object reason;
+					{
+						Extensions::HostAllocations host(owner->memory.get());
+						reason = sol::make_object(*owner->luaState, entry->link->reason);
+					}
+					callHandler(owner, entry->onClose, "onClose", reason);
+				}
+			});
+			// a handler may have unloaded its extension, which dropped these already
+			if (finished && entry->owner) dropHandlers(*entry);
+		}
+		// ended ones are let go of once their thread is done
+		std::vector<std::unique_ptr<SocketEntry>> ended;
+		for (auto it = sockets.begin(); it != sockets.end();) {
+			if (!(*it)->owner && (*it)->link->finished) {
+				ended.push_back(std::move(*it));
+				it = sockets.erase(it);
+			}
+			else ++it;
+		}
+	}
+
+	void forgetSockets(Extensions::Extension* owner)
+	{
+		for (auto& entry : sockets) {
+			if (entry->owner != owner) continue;
+			entry->link->end();
+			dropHandlers(*entry);
+		}
 	}
 
 	double CompareImages(GLuint textureID1, GLuint textureID2, int accuracy) {

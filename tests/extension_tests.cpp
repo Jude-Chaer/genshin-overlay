@@ -573,8 +573,8 @@ TEST_CASE("an extension loads with its metadata and its functions") {
 
     Extensions::runForExtension(ext, ext->initializeFunction);
     CHECK((*ext->luaState)["started"].get_or(false) == true);
-    Extensions::frameUpdateExtensions();
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
+    TestExtension::turn();
     CHECK((*ext->luaState)["updates"].get_or(0) == 2);
     TestExtension::unloadAll();
 }
@@ -621,7 +621,7 @@ TEST_CASE("an error in an extension's function doesn't get out") {
         function Update() error("every frame") end
     )");
     REQUIRE(ext != nullptr);
-    CHECK_NOTHROW(Extensions::frameUpdateExtensions());
+    CHECK_NOTHROW(TestExtension::turn());
     TestExtension::unloadAll();
 }
 
@@ -969,7 +969,7 @@ TEST_CASE("a call that never ends is stopped, and the extension unloaded at the 
     REQUIRE(LuaFunctions::intervals.size() == 1);
 
     CaptureLog log;
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     CHECK(ext->stopReason == "one call ran more than 50 million Lua steps");
     CHECK(log.count("[Loops] Update: ") == 1);
 
@@ -977,7 +977,7 @@ TEST_CASE("a call that never ends is stopped, and the extension unloaded at the 
     CHECK(!TestExtension::run(ext, "ran = true"));
     CHECK((*ext->luaState)["ran"] == sol::nil);
 
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     CHECK(ext->stopped);
     CHECK(!ext->luaState);
     CHECK(ext->memory->used == 0);
@@ -997,9 +997,9 @@ TEST_CASE("a pcall can't catch the guard") {
         INFO(loop);
         Extensions::Extension* ext = TestExtension::load("pcall_loops", loop);
         REQUIRE(ext != nullptr);
-        Extensions::frameUpdateExtensions();
+        TestExtension::turn();
         CHECK(!ext->stopReason.empty());
-        Extensions::frameUpdateExtensions();
+        TestExtension::turn();
         CHECK(ext->stopped);
         TestExtension::unloadAll();
     }
@@ -1011,7 +1011,7 @@ TEST_CASE("the guard counts each call on its own, and not the time in overlay fu
         function Update() local n = 0 for i = 1, 10000000 do n = n + i end _G.calls = (_G.calls or 0) + 1 end
     )");
     REQUIRE(ext != nullptr);
-    for (int i = 0; i < 3; i++) Extensions::frameUpdateExtensions();
+    for (int i = 0; i < 3; i++) TestExtension::turn();
     CHECK(ext->stopReason.empty());
     CHECK((*ext->luaState)["calls"].get_or(0) == 3);
 
@@ -1048,7 +1048,7 @@ TEST_CASE("main.lua and Init may take more steps than a frame's call") {
     Extensions::runInit(*ext);
     CHECK((*ext->luaState)["started"].get_or(false) == true);
     CHECK(ext->stopReason.empty());
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     CHECK(ext->stopReason == "one call ran more than 50 million Lua steps");
     TestExtension::unloadAll();
 }
@@ -1062,7 +1062,7 @@ TEST_CASE("an extension that holds too much is stopped, garbage doesn't count") 
     )");
     REQUIRE(ext != nullptr);
     ext->memory->limit = limit;
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     CHECK(ext->stopReason.empty());
     CHECK(ext->memory->used < limit);
     TestExtension::unloadAll();
@@ -1077,9 +1077,9 @@ TEST_CASE("an extension that holds too much is stopped, garbage doesn't count") 
         REQUIRE(ext != nullptr);
         ext->memory->limit = limit;
         CaptureLog log;
-        Extensions::frameUpdateExtensions();
+        TestExtension::turn();
         CHECK(ext->stopReason == "it held more than 16 MB");
-        Extensions::frameUpdateExtensions();
+        TestExtension::turn();
         CHECK(ext->stopped);
         CHECK(ext->memory->used == 0);
         TestExtension::unloadAll();
@@ -1170,7 +1170,7 @@ TEST_CASE("Start again loads the extension from its folder again") {
     std::ofstream(TestExtension::folder("starts_again") / "main.lua", std::ios::binary)
         << "function Init() _G.started = (_G.started or 0) + 1 end";
     Extensions::registeredExtensions[0]->startAgain = true;
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     REQUIRE(Extensions::registeredExtensions.size() == 1);
     Extensions::Extension* ext = Extensions::registeredExtensions[0].get();
     CHECK(ext->startError.empty());
@@ -1183,14 +1183,14 @@ TEST_CASE("Start again loads the extension from its folder again") {
     std::ofstream(TestExtension::folder("starts_again") / "main.lua", std::ios::binary)
         << "function Update() while true do end end";
     ext->startAgain = true;
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     ext = Extensions::registeredExtensions[0].get();
     CHECK(ext->stopReason == "one call ran more than 50 million Lua steps");
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     CHECK(ext->luaState == nullptr);
     std::ofstream(TestExtension::folder("starts_again") / "main.lua", std::ios::binary) << "_G.fixed = true";
     ext->startAgain = true;
-    Extensions::frameUpdateExtensions();
+    TestExtension::turn();
     ext = Extensions::registeredExtensions[0].get();
     CHECK(ext->stopReason.empty());
     REQUIRE(ext->luaState != nullptr);
@@ -1208,7 +1208,7 @@ TEST_CASE("an error that repeats every frame is logged once") {
         end
     )");
     REQUIRE(ext != nullptr);
-    for (int i = 0; i < 5; i++) Extensions::frameUpdateExtensions();
+    for (int i = 0; i < 5; i++) TestExtension::turn();
     CHECK((*ext->luaState)["frames"].get_or(0) == 5);
     CHECK(log.count(": same") == 2);
     CHECK(log.count(": other") == 1);

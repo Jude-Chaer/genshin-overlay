@@ -4,6 +4,7 @@
 #include "controls.hpp"
 #include "keybindings.hpp"
 #include "extensions.hpp"
+#include "lua_functions.hpp"
 #include "helpers.hpp"
 #include "item_files.hpp"
 #include "map_tiles.hpp"
@@ -1009,9 +1010,11 @@ namespace Overlay {
             // sends the tracker a new screenshot when it's ready for one
             MapTracking::Tick(glfwGetWin32Window(Overlay::Window));
             Stats::Update();
+            // before the frame is skipped, MapClosed and MenuClosed come on undrawn turns
             updateLook(lookPicked);
             lookPicked = false;
             updateFont();
+            LuaFunctions::UpdateAnswers();
 
             // map and menu closed: nothing to show, so don't draw at all
             bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;

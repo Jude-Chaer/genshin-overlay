@@ -1,6 +1,7 @@
 #include <windows.h>
 #include "test_extension.hpp"
 #include "helpers.hpp"
+#include "lua_functions.hpp"
 #include <fstream>
 
 namespace TestExtension {
@@ -36,6 +37,11 @@ namespace TestExtension {
             ok = extension->luaState->safe_script(lua, sol::script_pass_on_error).valid();
             });
         return ok;
+    }
+
+    void turn() {
+        LuaFunctions::UpdateAnswers();
+        Extensions::frameUpdateExtensions();
     }
 
     // each takes its keybinds and intervals with it, see Extensions::unload

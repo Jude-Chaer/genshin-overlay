@@ -16,6 +16,8 @@ namespace TestExtension {
         const std::map<std::string, std::string>& otherFiles = {});
     // runs Lua as that extension, false if it stopped with an error
     extern bool run(Extensions::Extension* extension, const std::string& lua);
+    // one turn of the overlay's loop with a drawn frame: answers, then Update
+    extern void turn();
     // lets go of every extension and what they registered
     extern void unloadAll();
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <GL/glew.h>
 #include <sol/sol.hpp>
+#include <memory>
 #include <string>
 #include <tuple>
 #include "keybindings.hpp"
@@ -84,8 +85,31 @@ namespace LuaFunctions {
     sol::table themeTable(const Controls::Theme& theme, sol::state_view lua);
     void PushClipRect(float x0, float y0, float x1, float y1);
     void PopClipRect();
-    sol::object NetGet(const std::string& url, sol::this_state state, sol::optional<bool> hoyolab);
-	sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state, sol::optional<bool> hoyolab);
+    // Net_Get and Net_Post wait for the answer, at most 5 s. Net_Start doesn't:
+    // Net_Start(url, options, onDone) gives an id, the request runs on its own
+    // thread. options: method ("GET" or "POST") and body. The answer is
+    // { status, body }, or { error } with "timeout", "too_big", "refused" or
+    // "failed". onDone gets it once, in the frame after it came; without
+    // onDone Net_Result(id) gives nil while it waits, then the answer once.
+    // Each body is 16 MB at most, Net_Start's whole request 30 s.
+    sol::object NetGet(const std::string& url, sol::this_state state);
+    sol::object NetPost(const std::string& url, const std::string& data, sol::this_state state);
+    sol::object NetStart(const std::string& url, sol::object options, sol::object onDone, sol::this_state state);
+    sol::object NetResult(int id, sol::this_state state);
+    inline const size_t NetMaxBody = 16 * 1024 * 1024;
+    inline const int NetWaitMs = 5000;
+    inline const int NetStartMs = 30000;
+    // requests of one extension waiting or not collected yet
+    inline const int NetMaxWaiting = 16;
+    // each turn of the overlay, drawn or not: web requests and
+    // sockets give what came to their handlers
+    void UpdateAnswers();
+    // gives the requests that are done to their onDone, see UpdateAnswers
+    void UpdateNetRequests();
+    // stops the extension's requests and drops their answers, see Extensions::unload
+    void forgetNetRequests(Extensions::Extension* owner);
+    // its requests waiting or not collected, for the tests
+    int netRequestsOf(const Extensions::Extension* owner);
     sol::object JSONEncode(sol::object value, sol::this_state state);
     sol::object JSONDecode(const std::string& json, sol::this_state state);
 	sol::optional<std::string> ReadFile(const std::string& path);
@@ -93,12 +117,36 @@ namespace LuaFunctions {
 	bool AppendFile(const std::string& path, const std::string& contents);
     bool FileExists(const std::string& path);
     sol::object ListDirectory(const std::string& path, sol::this_state state);
-    bool WebSocketConnect(Net::WebSocket& socket, const std::string& url, sol::optional<bool> hoyolab);
-    bool WebSocketSend(Net::WebSocket& socket, const std::string& message);
-    sol::object WebSocketPoll(Net::WebSocket& socket, sol::this_state state);
-    sol::object WebSocketPollAll(Net::WebSocket& socket, sol::this_state state);
-    bool WebSocketIsConnected(Net::WebSocket& socket);
-    void WebSocketClose(Net::WebSocket& socket);
+    // An extension's web socket, WebSocket.new() in Lua. It runs on its own
+    // thread: connect(url, handlers) gives true once it's trying and returns at
+    // once. handlers is optional: onOpen(), onMessage(message) and
+    // onClose(reason), each called in a frame, reason "closed", "refused",
+    // "timeout", "too_many_messages" or "failed". Without onMessage, poll and
+    // pollAll take the messages. send queues, also while connecting; close
+    // asks it to end. Each way holds 1000 messages at most.
+    struct SocketLink;
+    struct Socket {
+        std::shared_ptr<SocketLink> link;
+        Socket() = default;
+        Socket(const Socket&) = delete;
+        Socket& operator=(const Socket&) = delete;
+        ~Socket();
+    };
+    bool WebSocketConnect(Socket& socket, const std::string& url, sol::optional<sol::table> handlers);
+    bool WebSocketSend(Socket& socket, const std::string& message);
+    sol::object WebSocketPoll(Socket& socket, sol::this_state state);
+    sol::object WebSocketPollAll(Socket& socket, sol::this_state state);
+    bool WebSocketIsConnected(Socket& socket);
+    void WebSocketClose(Socket& socket);
+    inline const size_t SocketMaxQueued = 1000;
+    // sockets of one extension open or connecting
+    inline const int SocketMax = 16;
+    // calls the handlers and lets go of ended sockets, see UpdateAnswers
+    void UpdateSockets();
+    // ends the extension's sockets without calling it again, see Extensions::unload
+    void forgetSockets(Extensions::Extension* owner);
+    // its sockets not let go of yet, for the tests
+    int socketsOf(const Extensions::Extension* owner);
 	double CompareImages(GLuint textureID1, GLuint textureID2, int accuracy);
     double GetOSTimeMS(); // Yeah I think we need to expose this because Lua doesn't have a way to get time, since with don't include sol::lib:os
     int SetInterval(sol::protected_function callback, int milliseconds);
