@@ -152,6 +152,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClCompile Include="src\item_catalog.cpp" />
     <ClCompile Include="src\item_icons.cpp" />
     <ClCompile Include="src\item_files.cpp" />
+    <ClCompile Include="src\key_choices.cpp" />
     <ClCompile Include="src\keybindings.cpp" />
     <ClCompile Include="src\layer_choice.cpp" />
     <ClCompile Include="src\locator\lit_floor.cpp" />
@@ -184,6 +185,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClInclude Include="src\item_catalog.hpp" />
     <ClInclude Include="src\item_icons.hpp" />
     <ClInclude Include="src\item_files.hpp" />
+    <ClInclude Include="src\key_choices.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
     <ClInclude Include="src\locator\lit_floor.hpp" />

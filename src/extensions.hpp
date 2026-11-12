@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <map>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -45,7 +46,7 @@ namespace Extensions {
 	inline const std::vector<PermissionInfo> permissionList = {
 		{ExtensionPermissionTypes::DisplayOverlay, "display_overlay", "Display Overlay", "It can draw on the overlay."},
 		{ExtensionPermissionTypes::DisplayRead, "display_read", "Display Read", "It can see where the map is and what it shows."},
-		{ExtensionPermissionTypes::Keybinds, "keybinds", "Keybinds", "It gets these keys while the game is in front, and the game doesn't."},
+		{ExtensionPermissionTypes::Keybinds, "keybinds", "Keybinds", "It takes these keys while you play. The game won't see them."},
 		{ExtensionPermissionTypes::InternalReadfile, "internal_read", "Internal File Reading", "It can read files in its own folder."},
 		{ExtensionPermissionTypes::InternalWritefile, "internal_write", "Internal File Writing", "It can change files in its own folder."},
 		{ExtensionPermissionTypes::NetworkAccess, "network", "Network Access", "It can send and get things from any website."},
@@ -59,7 +60,6 @@ namespace Extensions {
 	inline const std::unordered_set<ExtensionPermissionTypes> defaultPermissions = {
 		ExtensionPermissionTypes::DisplayOverlay,
 		ExtensionPermissionTypes::DisplayRead,
-		ExtensionPermissionTypes::Keybinds,
 		ExtensionPermissionTypes::InternalReadfile,
 		ExtensionPermissionTypes::InternalWritefile
 	};
@@ -238,6 +238,8 @@ namespace Extensions {
 		// ones refused this start
 		std::vector<std::string> allowedKeys;
 		std::unordered_set<std::string> refusedKeys;
+		// the player's own keys by the author's key name, "" for none, saved
+		std::map<std::string, std::string> pickedKeys;
 		// overlay settings it asked for and was refused this start
 		std::unordered_set<std::string> refusedSettings;
 		// the permissions its Lua files call for, and the ones it was refused
@@ -262,8 +264,25 @@ namespace Extensions {
 		int printsThisMinute = 0;
 		// the functions refused for a missing permission, so each is logged once
 		std::unordered_set<std::string> refusalsLogged;
-		// the ids of the keybinds it made, removed with it
-		std::vector<std::string> keybinds;
+		// A key it registered, by the id RegisterKeybind gave. It's bound once
+		// the player allowed Keybinds and this key, until then it waits.
+		struct HeldKey {
+			std::string id;
+			// RegisterKeybind's label for its row on the Keys tab, can be empty
+			std::string label;
+			// the author's key, the default
+			int authorKey = 0;
+			int authorModifiers = 0;
+			std::string authorName;
+			// the key it has now, the author's or the player's, 0 and "" for none
+			std::string name;
+			int key = 0;
+			int modifiers = 0;
+			std::function<void()> callback;
+			// the keybind's id while it's bound
+			std::string bound;
+		};
+		std::vector<HeldKey> keys;
 		// the textures it loaded with LoadTexture, freed with it
 		std::vector<GLuint> textures;
 		std::filesystem::path folder;
@@ -363,6 +382,11 @@ namespace Extensions {
 	// The switch on its Permissions tab, saved. Off stops it now; on loads it
 	// again from its folder at the next frame, as [Start again] does.
 	extern void setRunning(Extension& ext, bool on);
+	// binds its waiting keys the player allowed; one that can't be bound is
+	// dropped with a log line
+	extern void bindAllowedKeys(Extension& ext);
+	// asks for its keys that wait, the ones not refused at this start
+	extern void askWaitingKeys(Extension& ext);
 	extern void loadExtensionPermissions(Extension* ext);
 	// metadata.permissions = { network = { reason = "..." } }: the author's
 	// reasons go in ext.reasons, a name nothing has is logged

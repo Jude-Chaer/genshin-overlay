@@ -13,6 +13,7 @@
 #include "item_files.hpp"
 #include "typing.hpp"
 #include "asks.hpp"
+#include "key_choices.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -120,7 +121,6 @@ namespace LuaFunctions {
 		const Permission None = Permission::None;
 		const Permission DisplayOverlay = Permission::DisplayOverlay;
 		const Permission DisplayRead = Permission::DisplayRead;
-		const Permission Keybinds = Permission::Keybinds;
 		const Permission InternalRead = Permission::InternalReadfile;
 		const Permission InternalWrite = Permission::InternalWritefile;
 		const Permission Network = Permission::NetworkAccess;
@@ -153,8 +153,9 @@ namespace LuaFunctions {
 		global("PermissionState", None, PermissionState);
 		global("AskForPermission", None, AskForPermission);
 
-		global("RegisterKeybind", Keybinds, RegisterKeybind);
-		global("DeleteKeybind", Keybinds, DeleteKeybind);
+		// they ask for Keybinds themselves, a key waits until it's allowed
+		global("RegisterKeybind", None, RegisterKeybind);
+		global("DeleteKeybind", None, DeleteKeybind);
 
 		// drawing on the overlay
 		global("DrawImage", DisplayOverlay, DrawImage);
@@ -192,10 +193,6 @@ namespace LuaFunctions {
 		global("Net_Start", Network, NetStart);
 		global("Net_Result", Network, NetResult);
 
-		luaState["KeybindFlags"] = luaState.create_table_with(
-			"None", Keybindings::KeybindFlags_None,
-			"ProcessWhileHidden", Keybindings::KeybindFlags_ProcessWhileHidden
-		);
 		luaState["KeybindModifiers"] = luaState.create_table_with(
 			"None", Keybindings::KeybindModifiers_None,
 			"Alt", Keybindings::KeybindModifiers_Alt,
@@ -411,40 +408,74 @@ namespace LuaFunctions {
 		return !Overlay::MenuOpen();
 	}
 
-	// RegisterKeybind(key, function, flags, modifiers), modifiers is optional, like KeybindModifiers.Alt
-	// Empty when the key can't be bound, the log says why. The keybind belongs to
-	// the extension and goes with it (Extensions::unload).
-	std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers) {
+	// RegisterKeybind(key, function, modifiers, label), modifiers like
+	// KeybindModifiers.Alt, label names the key's row on the Keys tab.
+	// The key needs Alt or Ctrl in its modifiers, others are refused, and so are
+	// the ones Windows keeps (Alt+Tab, Alt+F4...) and the menu's Alt+`. It works while
+	// the game is in front, with the menu open or closed.
+	// The id for DeleteKeybind. A key the player hasn't allowed waits and is
+	// asked for, and is bound once it's allowed. Empty when the key can't be
+	// bound, the log says why. The keybind belongs to the extension and goes
+	// with it (Extensions::unload). The key is the default, the player can
+	// pick another one. A key another extension already has starts unset here.
+	std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, sol::optional<int> modifiers,
+		sol::optional<std::string> label) {
 		// remember which extension made it, so GetSetting works inside the callback
 		Extensions::Extension* owner = Extensions::currentExtension;
 		if (!owner) return "";
-		if (owner->keybinds.size() >= Extensions::MaxKeys) {
+		Keybindings::KeybindModifiers held = modifiers.value_or(Keybindings::KeybindModifiers_None);
+		std::string name = Keybindings::KeyName(glfwKey, held);
+		std::string whyNot = Keybindings::WhyNotPickable(glfwKey, held);
+		for (const auto& key : owner->keys) {
+			if (key.authorName == name) whyNot = name + " is taken already";
+		}
+		if (owner->keys.size() >= Extensions::MaxKeys) {
 			Extensions::logOnce("RegisterKeybind", "has " + std::to_string(Extensions::MaxKeys) + " keys, no more are bound");
 			return "";
 		}
-		std::string whyNot;
-		std::string id = Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
+		if (!whyNot.empty()) {
+			std::cerr << "[" << owner->name << "] RegisterKeybind: " << whyNot << std::endl;
+			return "";
+		}
+
+		Extensions::Extension::HeldKey key;
+		key.id = Helpers::GenerateUUID();
+		key.label = label.value_or("");
+		key.authorKey = glfwKey;
+		key.authorModifiers = held;
+		key.authorName = name;
+		KeyChoices::start(*owner, key);
+		key.callback = [owner, callbackFunction]() {
 			Extensions::markUsed(*owner, Extensions::ExtensionPermissionTypes::Keybinds);
 			Extensions::runForExtension(owner, [&callbackFunction]() {
 				callLua(callbackFunction, "key");
 				});
-			}, flags, modifiers.value_or(Keybindings::KeybindModifiers_None), &whyNot);
-		if (id.empty()) {
-			std::cerr << "[" << owner->name << "] RegisterKeybind: " << whyNot << std::endl;
-			return "";
+			};
+		std::string id = key.id;
+		owner->keys.push_back(std::move(key));
+		Extensions::bindAllowedKeys(*owner);
+
+		auto it = std::find_if(owner->keys.begin(), owner->keys.end(), [&](const auto& each) { return each.id == id; });
+		if (it == owner->keys.end()) return "";
+		if (it->bound.empty() && it->key != 0) {
+			std::cout << "[" << owner->name << "] " << it->name << " waits until the player allows it" << std::endl;
+			Asks::askKeys(*owner, it->name);
 		}
-		owner->keybinds.push_back(id);
 		return id;
 	}
 
-	// only the extension's own keybinds
-	bool DeleteKeybind(const std::string& uuid) {
+	// only the extension's own keybinds, bound or waiting
+	bool DeleteKeybind(const std::string& id) {
 		Extensions::Extension* owner = Extensions::currentExtension;
 		if (!owner) return false;
-		auto it = std::find(owner->keybinds.begin(), owner->keybinds.end(), uuid);
-		if (it == owner->keybinds.end()) return false;
-		owner->keybinds.erase(it);
-		return Keybindings::DeleteKeybind(uuid);
+		auto it = std::find_if(owner->keys.begin(), owner->keys.end(), [&](const auto& each) { return each.id == id; });
+		if (it == owner->keys.end()) return false;
+		std::string bound = it->bound;
+		std::string name = it->name;
+		owner->keys.erase(it);
+		if (!bound.empty()) Keybindings::DeleteKeybind(bound);
+		else Asks::forgetKey(*owner, name);
+		return true;
 	}
 
 	void DefineExtensionSetting(const std::string& id,

@@ -59,7 +59,8 @@ namespace LuaFunctions {
     void ImGUI_Tooltip(const std::string& text);
     void ImGUI_Separator();
     bool IsProgramHidden();
-    std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, Keybindings::KeybindFlags flags, sol::optional<int> modifiers);
+    std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, sol::optional<int> modifiers,
+        sol::optional<std::string> label);
     bool DeleteKeybind(const std::string& uuid);
     void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue,
         sol::object minOrOptions, sol::optional<float> max);

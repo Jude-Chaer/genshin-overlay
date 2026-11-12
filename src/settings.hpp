@@ -1,6 +1,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 // The app's own settings, saved in settings.json next to the exe. A
@@ -23,6 +24,9 @@ namespace Settings {
     extern bool steadyZoom;
     // SIFT looks again when the map stands still but looks different, as after picking a floor
     extern bool lookAgainStill;
+    // Record also catches keys another program holds as a hotkey, with a
+    // keyboard hook up only while it waits
+    extern bool recordTakenKeys;
     // following runs on its own thread instead of in the draw loop
     extern bool followOnThread;
     // the patches are shrunk on the GPU before they're read back
@@ -32,6 +36,9 @@ namespace Settings {
 
     // the map items are downloaded from the release when there's a newer pack (the menu's "Download map items")
     extern bool downloadItems;
+
+    // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
+    extern std::string menuKey;
 
     // the menu's look by its shown name (Controls::LookName), and Follow Windows, Dark or Light
     extern std::string look;
@@ -65,15 +72,18 @@ namespace Settings {
     // What the player allowed an extension, kept per extension folder: the
     // permissions by name and the hash its files had then. never and off are
     // permission names too ("Never ask again", switched off on its Permissions
-    // tab), keys the keys it may take by their shown name (Ctrl+F5). These and
+    // tab), keys the keys it may take by their shown name (Ctrl+F5), picked
+    // the player's own keys by the author's key name ("" for none). These and
     // enabled stay when its files change.
     struct Grants {
+        // the player answered for it, false when only picked keys are saved
         bool saved = false;
         std::string hash;
         std::vector<std::string> names;
         std::vector<std::string> never;
         std::vector<std::string> off;
         std::vector<std::string> keys;
+        std::map<std::string, std::string> picked;
         bool enabled = true;
     };
     // Lists saved the old way (permission numbers under the files' hash) are

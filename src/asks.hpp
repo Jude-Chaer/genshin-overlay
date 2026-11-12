@@ -55,6 +55,8 @@ namespace Asks {
 	// its questions leave the queue, when it stops or unloads
 	void forget(const Extensions::Extension& ext);
 	void forget(const Extensions::Extension& ext, Kind kind);
+	// a key it deleted leaves its question, and a question with nothing left goes
+	void forgetKey(const Extensions::Extension& ext, const std::string& key);
 	const std::deque<Ask>& queue();
 	void clear();
 
@@ -64,8 +66,6 @@ namespace Asks {
 	enum class Answer { Allow, DontAllow, Never, NotNow };
 	// answers the question showing, saves it, and the next one comes up
 	void answer(Answer answer);
-	// called when keys were allowed, so the extension's waiting keys get bound
-	extern std::function<void(Extensions::Extension&)> keysAllowed;
 
 	// the window, drawn over the menu
 	void draw(bool mapOpen, bool menuOpen);

@@ -5,7 +5,9 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #include <algorithm>
+#include <cstring>
 #include <iostream>
+#include <unordered_set>
 
 // Keys go through RegisterHotKey instead of glfwGetKey, since the overlay never
 // has focus. Windows hands a registered key to us even while the game has focus,
@@ -24,6 +26,8 @@ namespace Keybindings {
     // the last, so one bound and deleted over and over never runs out; 0 for none.
     // Not the one just freed: a press of the old key can still be waiting in the queue.
     static int lastHotkeyId = 0;
+    // keys that failed to register, logged once each
+    static std::unordered_set<int> failedIds;
     static int freeHotkeyId() {
         std::vector<bool> used(LAST_HOTKEY_ID + 1, false);
         for (const auto& keybind : keybinds) {
@@ -139,9 +143,12 @@ namespace Keybindings {
                 UINT virtualKey = GlfwKeyToVirtualKey(keybind->GetKey());
                 UINT modifiers = windowsModifiers(keybind->GetModifiers());
                 if (virtualKey == 0 || !RegisterHotKey(hotkeyWindow, keybind->GetId(), modifiers, virtualKey)) {
-                    std::cerr << "Could not register key " << KeyName(keybind->GetKey(), keybind->GetModifiers()) << std::endl;
+                    // tried again at every refresh, another app may let go of it
+                    if (failedIds.insert(keybind->GetId()).second)
+                        std::cerr << "Could not register key " << KeyName(keybind->GetKey(), keybind->GetModifiers()) << std::endl;
                     continue;
                 }
+                failedIds.erase(keybind->GetId());
                 keybind->SetRegistered(true);
             }
             else {
@@ -149,6 +156,19 @@ namespace Keybindings {
                 keybind->SetRegistered(false);
             }
         }
+    }
+
+    bool OtherProgramHas(int glfwKey, KeybindModifiers modifiers) {
+        Keybind* ours = DoesKeybindExist(glfwKey, modifiers);
+        if (ours && ours->IsRegistered()) return false;
+        UINT virtualKey = GlfwKeyToVirtualKey(glfwKey);
+        if (virtualKey == 0) return false;
+        // a free key is held for a moment on this thread and let go
+        if (RegisterHotKey(nullptr, LAST_HOTKEY_ID, windowsModifiers(modifiers), virtualKey)) {
+            UnregisterHotKey(nullptr, LAST_HOTKEY_ID);
+            return false;
+        }
+        return GetLastError() == ERROR_HOTKEY_ALREADY_REGISTERED;
     }
 
     void SetEnabled(bool on) {
@@ -237,6 +257,7 @@ namespace Keybindings {
             if ((*it)->IsRegistered()) {
                 UnregisterHotKey(hotkeyWindow, (*it)->GetId());
             }
+            failedIds.erase((*it)->GetId());
 
             keybinds.erase(it);
 
@@ -301,5 +322,139 @@ namespace Keybindings {
         std::string plain = plainName(glfwKey);
         if (plain.empty()) return name + "key " + std::to_string(glfwKey);
         return name + plain;
+    }
+
+    bool ParseKeyName(const std::string& name, int& glfwKey, KeybindModifiers& modifiers) {
+        std::string rest = name;
+        KeybindModifiers held = KeybindModifiers_None;
+        const std::pair<const char*, KeybindModifiers> prefixes[] = {
+            { "Ctrl+", KeybindModifiers_Ctrl }, { "Alt+", KeybindModifiers_Alt }, { "Shift+", KeybindModifiers_Shift },
+        };
+        for (const auto& [prefix, modifier] : prefixes) {
+            size_t length = strlen(prefix);
+            if (rest.size() > length && rest.compare(0, length, prefix) == 0) {
+                rest = rest.substr(length);
+                held |= modifier;
+            }
+        }
+        int key = 0;
+        if (rest.rfind("key ", 0) == 0) {
+            try { key = std::stoi(rest.substr(4)); }
+            catch (...) { return false; }
+        }
+        else {
+            for (int each = GLFW_KEY_SPACE; each <= GLFW_KEY_LAST; each++) {
+                if (plainName(each) == rest) {
+                    key = each;
+                    break;
+                }
+            }
+        }
+        if (key <= 0 || KeyName(key, held) != name) return false;
+        glfwKey = key;
+        modifiers = held;
+        return true;
+    }
+
+    ImGuiKey ImGuiKeyFor(int glfwKey) {
+        if (glfwKey >= GLFW_KEY_A && glfwKey <= GLFW_KEY_Z) return (ImGuiKey)(ImGuiKey_A + (glfwKey - GLFW_KEY_A));
+        if (glfwKey >= GLFW_KEY_0 && glfwKey <= GLFW_KEY_9) return (ImGuiKey)(ImGuiKey_0 + (glfwKey - GLFW_KEY_0));
+        if (glfwKey >= GLFW_KEY_F1 && glfwKey <= GLFW_KEY_F12) return (ImGuiKey)(ImGuiKey_F1 + (glfwKey - GLFW_KEY_F1));
+        if (glfwKey >= GLFW_KEY_KP_0 && glfwKey <= GLFW_KEY_KP_9) return (ImGuiKey)(ImGuiKey_Keypad0 + (glfwKey - GLFW_KEY_KP_0));
+        switch (glfwKey) {
+        case GLFW_KEY_GRAVE_ACCENT: return ImGuiKey_GraveAccent;
+        case GLFW_KEY_MINUS: return ImGuiKey_Minus;
+        case GLFW_KEY_EQUAL: return ImGuiKey_Equal;
+        case GLFW_KEY_LEFT_BRACKET: return ImGuiKey_LeftBracket;
+        case GLFW_KEY_RIGHT_BRACKET: return ImGuiKey_RightBracket;
+        case GLFW_KEY_BACKSLASH: return ImGuiKey_Backslash;
+        case GLFW_KEY_SEMICOLON: return ImGuiKey_Semicolon;
+        case GLFW_KEY_APOSTROPHE: return ImGuiKey_Apostrophe;
+        case GLFW_KEY_COMMA: return ImGuiKey_Comma;
+        case GLFW_KEY_PERIOD: return ImGuiKey_Period;
+        case GLFW_KEY_SLASH: return ImGuiKey_Slash;
+        case GLFW_KEY_SPACE: return ImGuiKey_Space;
+        case GLFW_KEY_INSERT: return ImGuiKey_Insert;
+        case GLFW_KEY_DELETE: return ImGuiKey_Delete;
+        case GLFW_KEY_HOME: return ImGuiKey_Home;
+        case GLFW_KEY_END: return ImGuiKey_End;
+        case GLFW_KEY_PAGE_UP: return ImGuiKey_PageUp;
+        case GLFW_KEY_PAGE_DOWN: return ImGuiKey_PageDown;
+        case GLFW_KEY_LEFT: return ImGuiKey_LeftArrow;
+        case GLFW_KEY_RIGHT: return ImGuiKey_RightArrow;
+        case GLFW_KEY_UP: return ImGuiKey_UpArrow;
+        case GLFW_KEY_DOWN: return ImGuiKey_DownArrow;
+        default: return ImGuiKey_None;
+        }
+    }
+
+    ImGuiKeyChord ImGuiChordFor(int glfwKey, KeybindModifiers modifiers) {
+        ImGuiKeyChord chord = ImGuiKeyFor(glfwKey);
+        if (modifiers & KeybindModifiers_Ctrl) chord |= ImGuiMod_Ctrl;
+        if (modifiers & KeybindModifiers_Alt) chord |= ImGuiMod_Alt;
+        if (modifiers & KeybindModifiers_Shift) chord |= ImGuiMod_Shift;
+        return chord;
+    }
+
+    int PickableKeyFor(unsigned int virtualKey) {
+        if (virtualKey == 0) return 0;
+        for (int key : PickableKeys())
+            if (GlfwKeyToVirtualKey(key) == virtualKey) return key;
+        return 0;
+    }
+
+    const std::vector<int>& PickableKeys() {
+        static const std::vector<int> keys = [] {
+            std::vector<int> all;
+            for (int key = GLFW_KEY_A; key <= GLFW_KEY_Z; key++) all.push_back(key);
+            for (int key = GLFW_KEY_0; key <= GLFW_KEY_9; key++) all.push_back(key);
+            for (int key = GLFW_KEY_F1; key <= GLFW_KEY_F12; key++) all.push_back(key);
+            for (int key : { GLFW_KEY_GRAVE_ACCENT, GLFW_KEY_MINUS, GLFW_KEY_EQUAL, GLFW_KEY_LEFT_BRACKET,
+                GLFW_KEY_RIGHT_BRACKET, GLFW_KEY_BACKSLASH, GLFW_KEY_SEMICOLON, GLFW_KEY_APOSTROPHE, GLFW_KEY_COMMA,
+                GLFW_KEY_PERIOD, GLFW_KEY_SLASH, GLFW_KEY_SPACE, GLFW_KEY_INSERT, GLFW_KEY_DELETE, GLFW_KEY_HOME,
+                GLFW_KEY_END, GLFW_KEY_PAGE_UP, GLFW_KEY_PAGE_DOWN, GLFW_KEY_LEFT, GLFW_KEY_RIGHT, GLFW_KEY_UP,
+                GLFW_KEY_DOWN }) {
+                all.push_back(key);
+            }
+            for (int key = GLFW_KEY_KP_0; key <= GLFW_KEY_KP_9; key++) all.push_back(key);
+            return all;
+        }();
+        return keys;
+    }
+
+    bool IsProtected(int glfwKey, KeybindModifiers modifiers) {
+        bool alt = modifiers & KeybindModifiers_Alt, ctrl = modifiers & KeybindModifiers_Ctrl;
+        // with Alt or Ctrl held, other modifiers too: Alt+Shift+Tab, Ctrl+Alt+Tab
+        switch (glfwKey) {
+        case GLFW_KEY_TAB:
+        case GLFW_KEY_F4:
+        case GLFW_KEY_SPACE:
+            return alt;
+        case GLFW_KEY_ESCAPE:
+            return alt || ctrl;
+        case GLFW_KEY_ENTER:
+        case GLFW_KEY_GRAVE_ACCENT:
+            return modifiers == KeybindModifiers_Alt;
+        default:
+            return false;
+        }
+    }
+
+    std::string WhyNotPickable(int glfwKey, KeybindModifiers modifiers, bool menuKey) {
+        std::string name = KeyName(glfwKey, modifiers);
+        if (GlfwKeyToVirtualKey(glfwKey) == 0) return name + " can't be bound";
+        const KeybindModifiers allModifiers = KeybindModifiers_Alt | KeybindModifiers_Ctrl | KeybindModifiers_Shift;
+        if ((modifiers & ~allModifiers) != 0) return "modifiers " + std::to_string(modifiers) + " aren't only Alt, Ctrl and Shift";
+        // without admin, only keys with Alt or Ctrl reach us while the game is in front
+        if (!(modifiers & (KeybindModifiers_Alt | KeybindModifiers_Ctrl))) {
+            return name + " needs Alt or Ctrl, without them the key doesn't reach the overlay while the game is in front";
+        }
+        bool menuKeyItself = glfwKey == GLFW_KEY_GRAVE_ACCENT && modifiers == KeybindModifiers_Alt;
+        if (menuKeyItself && !menuKey) return name + " is kept for the overlay's menu";
+        if (IsProtected(glfwKey, modifiers) && !menuKeyItself) return name + " is kept for Windows";
+        // the lists' keys only, ImGui reads no others for the menu key
+        const std::vector<int>& pickable = PickableKeys();
+        if (std::find(pickable.begin(), pickable.end(), glfwKey) == pickable.end()) return name + " can't be bound";
+        return "";
     }
 }

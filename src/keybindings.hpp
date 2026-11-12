@@ -1,5 +1,6 @@
 #pragma once
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 #include <functional>
 #include <vector>
 #include <memory>
@@ -74,9 +75,30 @@ namespace Keybindings {
     extern void SetEnabled(bool enabled);
     // the Windows key for a GLFW one, 0 for a key that can't be bound
     extern unsigned int GlfwKeyToVirtualKey(int key);
+    // the pickable GLFW key for a Windows one, 0 for none
+    extern int PickableKeyFor(unsigned int virtualKey);
+    // Another program holds the key as a Windows hotkey, so the overlay can't
+    // have it until that one lets go. Programs that read keys some other way
+    // aren't seen.
+    extern bool OtherProgramHas(int glfwKey, KeybindModifiers modifiers);
     extern Keybind* DoesKeybindExist(int glfwKey, KeybindModifiers modifiers = KeybindModifiers_None);
     // the key as a player reads it, like Ctrl+F5
     extern std::string KeyName(int glfwKey, KeybindModifiers modifiers);
+    // ImGui's key for a GLFW one, ImGuiKey_None for a key PickableKeys doesn't have
+    extern ImGuiKey ImGuiKeyFor(int glfwKey);
+    // the key with its modifiers, for ImGui::IsKeyChordPressed
+    extern ImGuiKeyChord ImGuiChordFor(int glfwKey, KeybindModifiers modifiers);
+    // KeyName backwards, false for a name it doesn't make
+    extern bool ParseKeyName(const std::string& name, int& glfwKey, KeybindModifiers& modifiers);
+    // the keys a player can pick from, in the order the list shows them
+    extern const std::vector<int>& PickableKeys();
+    // keys Windows or the game window need, no extension or pick may take them.
+    // Alt+` is the menu's own.
+    extern bool IsProtected(int glfwKey, KeybindModifiers modifiers);
+    // Why an extension's or the player's key can't be used, empty when it can:
+    // it needs Alt or Ctrl, isn't protected and Windows can hold it. menuKey for
+    // the menu's own key, which may be Alt+`. Doesn't look at who holds it.
+    extern std::string WhyNotPickable(int glfwKey, KeybindModifiers modifiers, bool menuKey = false);
     extern bool DeleteKeybind(const std::string& uuid);
 
 }

@@ -13,10 +13,12 @@ namespace Settings {
     bool steadyZoom = true;
     bool guessAhead = true;
     bool lookAgainStill = true;
+    bool recordTakenKeys = false;
     bool followOnThread = true;
     bool shrinkOnGpu = true;
     bool findSmallFirst = true;
     bool downloadItems = true;
+    std::string menuKey = "Alt+`";
     std::string look = "Windows 11";
     std::string lightDark = "Follow Windows";
     int size = 100;
@@ -84,10 +86,12 @@ namespace Settings {
         steadyZoom = settings.value("steadyZoom", true);
         guessAhead = settings.value("guessAhead", true);
         lookAgainStill = settings.value("lookAgainStill", true);
+        recordTakenKeys = settings.value("recordTakenKeys", false);
         followOnThread = settings.value("followOnThread", true);
         shrinkOnGpu = settings.value("shrinkOnGpu", true);
         findSmallFirst = settings.value("findSmallFirst", true);
         downloadItems = settings.value("downloadItems", true);
+        menuKey = settings.value("menuKey", std::string("Alt+`"));
         look = settings.value("look", std::string("Windows 11"));
         lightDark = settings.value("lightDark", std::string("Follow Windows"));
         // a size that isn't one of the choices, hand edited, is 100
@@ -108,10 +112,12 @@ namespace Settings {
         settings["steadyZoom"] = steadyZoom;
         settings["guessAhead"] = guessAhead;
         settings["lookAgainStill"] = lookAgainStill;
+        settings["recordTakenKeys"] = recordTakenKeys;
         settings["followOnThread"] = followOnThread;
         settings["shrinkOnGpu"] = shrinkOnGpu;
         settings["findSmallFirst"] = findSmallFirst;
         settings["downloadItems"] = downloadItems;
+        settings["menuKey"] = menuKey;
         settings["look"] = look;
         settings["lightDark"] = lightDark;
         settings["size"] = size;
@@ -207,22 +213,31 @@ namespace Settings {
     static Grants grantsFrom(const nlohmann::json& saved) {
         Grants grants;
         if (!saved.is_object()) return grants;
-        grants.saved = true;
+        // only picked keys: nothing answered yet
+        grants.saved = saved.contains("granted");
         grants.hash = Files::stringField(saved, "hash");
         grants.names = names(saved, "granted");
         grants.never = names(saved, "never");
         grants.off = names(saved, "off");
         grants.keys = names(saved, "keys");
+        auto picked = saved.find("picked");
+        if (picked != saved.end() && picked->is_object()) {
+            for (const auto& [author, name] : picked->items()) {
+                if (name.is_string()) grants.picked[author] = name.get<std::string>();
+            }
+        }
         auto enabled = saved.find("enabled");
         if (enabled != saved.end() && enabled->is_boolean()) grants.enabled = enabled->get<bool>();
         return grants;
     }
 
     static nlohmann::json toJson(const Grants& grants) {
+        if (!grants.saved) return { { "picked", grants.picked } };
         nlohmann::json saved = { { "hash", grants.hash }, { "granted", grants.names } };
         if (!grants.never.empty()) saved["never"] = grants.never;
         if (!grants.off.empty()) saved["off"] = grants.off;
         if (!grants.keys.empty()) saved["keys"] = grants.keys;
+        if (!grants.picked.empty()) saved["picked"] = grants.picked;
         if (!grants.enabled) saved["enabled"] = false;
         return saved;
     }

@@ -1,6 +1,8 @@
 #include <windows.h>
 #include <GLFW/glfw3.h>
 #include <catch2/catch_test_macros.hpp>
+#include <future>
+#include <thread>
 #include "keybindings.hpp"
 
 using Keybindings::GlfwKeyToVirtualKey;
@@ -33,6 +35,16 @@ TEST_CASE("GLFW keys turn into the Windows ones") {
     // keys that can't be bound
     CHECK(GlfwKeyToVirtualKey(GLFW_KEY_LEFT_SHIFT) == 0);
     CHECK(GlfwKeyToVirtualKey(GLFW_KEY_UNKNOWN) == 0);
+}
+
+TEST_CASE("every pickable key comes back from its Windows key") {
+    for (int key : Keybindings::PickableKeys()) {
+        INFO(key);
+        CHECK(Keybindings::PickableKeyFor(Keybindings::GlfwKeyToVirtualKey(key)) == key);
+    }
+    // modifiers and nothing aren't picked
+    CHECK(Keybindings::PickableKeyFor(VK_MENU) == 0);
+    CHECK(Keybindings::PickableKeyFor(0) == 0);
 }
 
 TEST_CASE("a pressed key runs its function once") {
@@ -163,4 +175,90 @@ TEST_CASE("a key bound and deleted again and again never runs out of ids") {
     CHECK(onSecond == 0);
     CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F6)->GetId() == secondId);
     Keybindings::keybinds.clear();
+}
+
+TEST_CASE("every key the player can pick has a name that reads back") {
+    using namespace Keybindings;
+    const KeybindModifiers all[] = { KeybindModifiers_Alt, KeybindModifiers_Ctrl, KeybindModifiers_Alt | KeybindModifiers_Shift,
+        KeybindModifiers_Ctrl | KeybindModifiers_Shift, KeybindModifiers_Ctrl | KeybindModifiers_Alt };
+    for (int key : PickableKeys()) {
+        CHECK(GlfwKeyToVirtualKey(key) != 0);
+        for (KeybindModifiers modifiers : all) {
+            std::string name = KeyName(key, modifiers);
+            INFO(name);
+            CHECK(name.find("key ") == std::string::npos);
+            int back = 0;
+            KeybindModifiers backModifiers = 0;
+            REQUIRE(ParseKeyName(name, back, backModifiers));
+            CHECK(back == key);
+            CHECK(backModifiers == modifiers);
+        }
+    }
+    int key = 0;
+    KeybindModifiers modifiers = 0;
+    CHECK(KeyName(GLFW_KEY_EQUAL, KeybindModifiers_Alt) == "Alt+=");
+    CHECK(KeyName(GLFW_KEY_KP_3, KeybindModifiers_Ctrl) == "Ctrl+Numpad 3");
+    CHECK_FALSE(ParseKeyName("", key, modifiers));
+    CHECK_FALSE(ParseKeyName("Alt+", key, modifiers));
+    CHECK_FALSE(ParseKeyName("Alt+Nothing", key, modifiers));
+    // KeyName puts Ctrl first, another order isn't one of its names
+    CHECK_FALSE(ParseKeyName("Alt+Ctrl+M", key, modifiers));
+}
+
+TEST_CASE("a picked key needs Alt or Ctrl and isn't one Windows or the menu keeps") {
+    using namespace Keybindings;
+    CHECK(WhyNotPickable(GLFW_KEY_M, KeybindModifiers_Alt).empty());
+    CHECK(WhyNotPickable(GLFW_KEY_M, KeybindModifiers_Ctrl | KeybindModifiers_Shift).empty());
+    CHECK(WhyNotPickable(GLFW_KEY_M, KeybindModifiers_None) ==
+        "M needs Alt or Ctrl, without them the key doesn't reach the overlay while the game is in front");
+    CHECK(WhyNotPickable(GLFW_KEY_M, KeybindModifiers_Shift) ==
+        "Shift+M needs Alt or Ctrl, without them the key doesn't reach the overlay while the game is in front");
+    const std::pair<int, KeybindModifiers> windows[] = {
+        { GLFW_KEY_TAB, KeybindModifiers_Alt }, { GLFW_KEY_F4, KeybindModifiers_Alt }, { GLFW_KEY_ESCAPE, KeybindModifiers_Alt },
+        { GLFW_KEY_SPACE, KeybindModifiers_Alt }, { GLFW_KEY_ENTER, KeybindModifiers_Alt }, { GLFW_KEY_ESCAPE, KeybindModifiers_Ctrl },
+        { GLFW_KEY_ESCAPE, KeybindModifiers_Ctrl | KeybindModifiers_Shift },
+        { GLFW_KEY_TAB, KeybindModifiers_Alt | KeybindModifiers_Shift }, { GLFW_KEY_TAB, KeybindModifiers_Ctrl | KeybindModifiers_Alt },
+        { GLFW_KEY_ESCAPE, KeybindModifiers_Alt | KeybindModifiers_Shift },
+    };
+    for (const auto& [key, modifiers] : windows) {
+        CHECK(WhyNotPickable(key, modifiers) == KeyName(key, modifiers) + " is kept for Windows");
+        CHECK(WhyNotPickable(key, modifiers, true) == KeyName(key, modifiers) + " is kept for Windows");
+    }
+    // Ctrl with Space or F4 is fine, Alt+Shift+` too
+    CHECK(WhyNotPickable(GLFW_KEY_SPACE, KeybindModifiers_Ctrl).empty());
+    CHECK(WhyNotPickable(GLFW_KEY_F4, KeybindModifiers_Ctrl).empty());
+    CHECK(WhyNotPickable(GLFW_KEY_GRAVE_ACCENT, KeybindModifiers_Alt) == "Alt+` is kept for the overlay's menu");
+    CHECK(WhyNotPickable(GLFW_KEY_GRAVE_ACCENT, KeybindModifiers_Alt, true).empty());
+    CHECK(WhyNotPickable(GLFW_KEY_GRAVE_ACCENT, KeybindModifiers_Ctrl).empty());
+    CHECK(WhyNotPickable(GLFW_KEY_GRAVE_ACCENT, KeybindModifiers_Alt | KeybindModifiers_Shift).empty());
+    // a key with no row in the lists, ImGui can't read it for the menu key
+    CHECK(WhyNotPickable(GLFW_KEY_F13, KeybindModifiers_Ctrl) == "Ctrl+F13 can't be bound");
+    CHECK(WhyNotPickable(GLFW_KEY_LEFT_SHIFT, KeybindModifiers_Alt) == "Alt+key 340 can't be bound");
+}
+
+TEST_CASE("a key another program holds as a hotkey is seen, a free one isn't") {
+    using namespace Keybindings;
+    const KeybindModifiers held = KeybindModifiers_Ctrl | KeybindModifiers_Alt | KeybindModifiers_Shift;
+    const UINT windowsHeld = MOD_CONTROL | MOD_ALT | MOD_SHIFT;
+    if (OtherProgramHas(GLFW_KEY_F24, held)) SKIP("something on this PC has Ctrl+Alt+Shift+F24");
+    // a free key stays free after the look
+    CHECK_FALSE(OtherProgramHas(GLFW_KEY_F24, held));
+
+    // the other program: a thread of its own holding the key
+    std::promise<bool> registered;
+    std::promise<void> letGo;
+    std::thread other([&]() {
+        bool ok = RegisterHotKey(nullptr, 1, windowsHeld, VK_F24) != FALSE;
+        registered.set_value(ok);
+        letGo.get_future().wait();
+        if (ok) UnregisterHotKey(nullptr, 1);
+    });
+    bool ok = registered.get_future().get();
+    CHECK(ok);
+    CHECK(OtherProgramHas(GLFW_KEY_F24, held));
+    // the same key without Shift is another hotkey
+    CHECK_FALSE(OtherProgramHas(GLFW_KEY_F24, KeybindModifiers_Ctrl | KeybindModifiers_Alt));
+    letGo.set_value();
+    other.join();
+    CHECK_FALSE(OtherProgramHas(GLFW_KEY_F24, held));
 }

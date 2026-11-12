@@ -7,6 +7,7 @@
 #include "lua_functions.hpp"
 #include "lua_patterns.hpp"
 #include "settings.hpp"
+#include "key_choices.hpp"
 #include "typing.hpp"
 #include "controls.hpp"
 #include <imgui.h>
@@ -523,10 +524,10 @@ namespace Extensions {
 
 	void unload(Extension& ext) {
 		Asks::forget(ext);
-		for (const std::string& id : ext.keybinds) {
-			Keybindings::DeleteKeybind(id);
+		for (const Extension::HeldKey& held : ext.keys) {
+			if (!held.bound.empty()) Keybindings::DeleteKeybind(held.bound);
 		}
-		ext.keybinds.clear();
+		ext.keys.clear();
 		LuaFunctions::forgetIntervals(&ext);
 		LuaFunctions::forgetNetRequests(&ext);
 		LuaFunctions::forgetSockets(&ext);
@@ -708,6 +709,7 @@ namespace Extensions {
 		ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.3f));
 
 		std::vector<std::string> tabs = { "General" };
+		if (!ext->keys.empty()) tabs.push_back("Keys");
 		tabs.push_back("Permissions");
 		tabs.push_back("About");
 		const std::string& tab = tabs[Controls::Tabs("##extensionTabs", tabs)];
@@ -736,6 +738,7 @@ namespace Extensions {
 					runForExtension(ext.get(), ext->menuFunction);
 				}
 			}
+			else if (tab == "Keys") KeyChoices::drawKeysTab(*ext);
 			else if (tab == "Permissions") drawPermissionsTab(*ext);
 			else drawAboutTab(*ext);
 		}
@@ -1287,8 +1290,10 @@ namespace Extensions {
 	}
 
 	// whether the Permissions tab has a row for it: it has it, may have it
-	// without asking, its code calls for it, main.lua lists it, or it asked
+	// without asking, its code calls for it, main.lua lists it, it asked, or
+	// it's Keybinds and it has keys
 	static bool shownOnTab(const Extension& ext, const PermissionInfo& permission) {
+		if (permission.type == ExtensionPermissionTypes::Keybinds && !ext.keys.empty()) return true;
 		return ext.extensionPermissions.count(permission.type) || defaultPermissions.count(permission.type) ||
 			ext.uses.count(permission.type) ||
 			ext.reasons.count(permission.type) || ext.refused.count(permission.type) ||
@@ -1411,6 +1416,7 @@ namespace Extensions {
 		ext->switchedOff = { grants.off.begin(), grants.off.end() };
 		ext->refused.clear();
 		ext->allowedKeys = grants.keys;
+		ext->pickedKeys = grants.picked;
 		ext->refusedKeys.clear();
 		ext->refusedSettings.clear();
 		for (const auto& [name, time] : Settings::LoadLastUsed(ext->folderKey)) {
@@ -1470,6 +1476,7 @@ namespace Extensions {
 		grants.never = sorted(ext.neverAsk);
 		grants.off = sorted(ext.switchedOff);
 		grants.keys = ext.allowedKeys;
+		grants.picked = ext.pickedKeys;
 		grants.enabled = ext.enabled;
 		Settings::SaveGrants(ext.folderKey, grants);
 	}
@@ -1503,6 +1510,23 @@ namespace Extensions {
 		if (never) ext.neverAsk.insert(info->name);
 	}
 
+	void askWaitingKeys(Extension& ext) {
+		for (const Extension::HeldKey& held : ext.keys) {
+			if (held.bound.empty() && held.key != 0) Asks::askKeys(ext, held.name);
+		}
+	}
+
+	void bindAllowedKeys(Extension& ext) {
+		if (ext.stopped || !ext.extensionPermissions.count(ExtensionPermissionTypes::Keybinds)) return;
+		for (Extension::HeldKey& held : ext.keys) {
+			bool allowedKey = std::find(ext.allowedKeys.begin(), ext.allowedKeys.end(), held.name) != ext.allowedKeys.end();
+			if (!held.bound.empty() || held.key == 0 || !allowedKey) continue;
+			std::string whyNot;
+			held.bound = Keybindings::CreateKeybind(held.key, held.callback, Keybindings::KeybindFlags_ProcessWhileHidden, held.modifiers, &whyNot);
+			if (held.bound.empty()) std::cerr << "[" << ext.name << "] RegisterKeybind: " << whyNot << std::endl;
+		}
+	}
+
 	void switchPermission(Extension& ext, ExtensionPermissionTypes permission, bool on) {
 		const PermissionInfo* info = findPermission(permission);
 		if (!info) return;
@@ -1512,6 +1536,20 @@ namespace Extensions {
 		else {
 			ext.extensionPermissions.erase(permission);
 			ext.switchedOff.insert(info->name);
+		}
+		if (permission != ExtensionPermissionTypes::Keybinds) return;
+		if (on) {
+			// switched on by the player: the keys said no to are asked again
+			ext.refusedKeys.clear();
+			bindAllowedKeys(ext);
+			askWaitingKeys(ext);
+		}
+		else {
+			// they wait again, and come back with the switch
+			for (Extension::HeldKey& held : ext.keys) {
+				if (!held.bound.empty()) Keybindings::DeleteKeybind(held.bound);
+				held.bound.clear();
+			}
 		}
 	}
 

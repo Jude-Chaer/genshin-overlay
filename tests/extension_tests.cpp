@@ -166,7 +166,7 @@ TEST_CASE("every function an extension gets goes through the permission check") 
     CHECK(needs("Net_Get") == Permission::NetworkAccess);
     CHECK(needs("WebSocket.connect") == Permission::NetworkAccess);
     CHECK(needs("WebSocket.close") == Permission::None);
-    CHECK(needs("RegisterKeybind") == Permission::Keybinds);
+    CHECK(needs("RegisterKeybind") == Permission::None);
     CHECK(needs("DrawText") == Permission::DisplayOverlay);
     CHECK(needs("GetItemTypes") == Permission::DisplayRead);
     CHECK(needs("ReadFile") == Permission::InternalReadfile);
@@ -186,7 +186,7 @@ TEST_CASE("a call without its permission gives nil or false, and is logged once"
         got = Net_Get("http://127.0.0.1:9/")
         again = Net_Get("http://127.0.0.1:9/")
         exists = FileExists("main.lua")
-        key = RegisterKeybind(Keys.F9, function() end, KeybindFlags.None)
+        key = RegisterKeybind(Keys.F9, function() end, KeybindModifiers.Alt)
         DrawText("hi", 0, 0)
         local socket = WebSocket.new()
         connected = socket:isConnected()
@@ -195,14 +195,15 @@ TEST_CASE("a call without its permission gives nil or false, and is logged once"
     )");
     CHECK(lua->script("return got == nil and again == nil").get<bool>());
     CHECK((*lua)["exists"].get<bool>() == false);
-    CHECK(lua->script("return key == nil").get<bool>());
+    // a key isn't refused, it waits for the player
+    CHECK(lua->script("return key ~= nil").get<bool>());
     CHECK((*lua)["connected"].get<bool>() == false);
     CHECK((*lua)["done"].get<bool>());
-    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9) == nullptr);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9, Keybindings::KeybindModifiers_Alt) == nullptr);
 
     CHECK(log.count("[nothing allowed] Net_Get needs Network Access, which it isn't allowed") == 1);
     CHECK(log.count("WebSocket.isConnected needs Network Access") == 1);
-    CHECK(log.count("RegisterKeybind needs Keybinds") == 1);
+    CHECK(log.count("RegisterKeybind needs") == 0);
     CHECK(log.count("DrawText needs Display Overlay") == 1);
     CHECK(log.count("FileExists needs Internal File Reading") == 1);
     CHECK(log.count("close") == 0);
@@ -215,24 +216,27 @@ TEST_CASE("an extension can only delete its own keybinds") {
     first.name = "first";
     second.name = "second";
     first.extensionPermissions = second.extensionPermissions = Extensions::defaultPermissions;
+    Extensions::allow(first, Permission::Keybinds);
+    first.allowedKeys = { "Alt+F9" };
 
     std::string id;
     {
         RunAs runAs(first);
-        id = lua->script("return RegisterKeybind(Keys.F9, function() end, KeybindFlags.None)").get<std::string>();
+        id = lua->script("return RegisterKeybind(Keys.F9, function() end, KeybindModifiers.Alt)").get<std::string>();
     }
     REQUIRE_FALSE(id.empty());
-    CHECK(first.keybinds == std::vector<std::string>{ id });
+    REQUIRE(first.keys.size() == 1);
+    CHECK(first.keys[0].id == id);
     {
         RunAs runAs(second);
         sol::function deleteKeybind = (*lua)["DeleteKeybind"];
         CHECK(deleteKeybind(id).get<bool>() == false);
     }
-    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9) != nullptr);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9, Keybindings::KeybindModifiers_Alt) != nullptr);
 
     // and it goes when its extension does
     Extensions::unload(first);
-    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9) == nullptr);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9, Keybindings::KeybindModifiers_Alt) == nullptr);
 }
 
 TEST_CASE("an extension that fails while loading leaves only its error behind") {
@@ -268,10 +272,12 @@ TEST_CASE("an extension that shuts down leaves nothing behind") {
     REQUIRE(Extensions::registeredExtensions.size() == 1);
     Extensions::Extension* ext = Extensions::registeredExtensions[0].get();
     CHECK(ext->name == "registers in init");
+    Extensions::allow(*ext, Permission::Keybinds);
+    ext->allowedKeys = { "Alt+F8" };
     Extensions::runForExtension(ext, ext->initializeFunction);
 
     // what Init made is there
-    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F8) != nullptr);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F8, Keybindings::KeybindModifiers_Alt) != nullptr);
     REQUIRE(LuaFunctions::intervals.size() == 1);
     CHECK(LuaFunctions::intervals[0].owner == ext);
 
@@ -294,7 +300,7 @@ TEST_CASE("what a finalizer asks for while the extension closes is refused") {
     sol::table meta = lua.create_table();
     meta["__gc"] = lua.load(R"(
         SetInterval(function() end, 10)
-        RegisterKeybind(Keys.F10, function() end, KeybindFlags.None)
+        RegisterKeybind(Keys.F10, function() end, KeybindModifiers.Alt)
         DefineExtensionSetting("late", "Late", "int", 1)
     )").get<sol::protected_function>();
     sol::table kept = lua.create_table();
@@ -381,7 +387,7 @@ TEST_CASE("a default the old list didn't have stays off") {
     ext.name = ext.folderKey = "example";
     ext.extensionHash = "h1";
     Extensions::loadExtensionPermissions(&ext);
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::Keybinds, Permission::DisplayOverlay, Permission::NetworkAccess,
+    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay, Permission::NetworkAccess,
         Permission::InternalReadfile });
     CHECK(readSettings()["extensionGrants"]["example"]["off"] == std::vector<std::string>{ "display_read", "internal_write" });
 }
@@ -410,8 +416,8 @@ TEST_CASE("an extension whose files changed runs with the defaults it still had"
     ext.extensionHash = "h2";
     Extensions::loadExtensionPermissions(&ext);
 
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::Keybinds,
-        Permission::DisplayOverlay, Permission::DisplayRead, Permission::InternalReadfile });
+    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay, Permission::DisplayRead,
+        Permission::InternalReadfile });
     CHECK(ext.grantsBeforeChange == std::vector<std::string>{ "keybinds", "network",
         "display_overlay", "display_read", "internal_read" });
     CHECK(ext.hashBeforeChange == "h1");
@@ -671,16 +677,18 @@ TEST_CASE("an error in a key or interval callback names its extension") {
         metadata = { name = "Breaks" }
         function Init()
             SetInterval(function() error("interval broke") end, 1)
-            RegisterKeybind(Keys.F7, function() error("key broke") end, KeybindFlags.None)
+            RegisterKeybind(Keys.F7, function() error("key broke") end, KeybindModifiers.Alt)
         end
     )");
     REQUIRE(ext != nullptr);
+    Extensions::allow(*ext, Permission::Keybinds);
+    ext->allowedKeys = { "Alt+F7" };
     Extensions::runForExtension(ext, ext->initializeFunction);
 
     CaptureLog log;
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     LuaFunctions::UpdateIntervals();
-    Keybindings::Keybind* f7 = Keybindings::DoesKeybindExist(GLFW_KEY_F7);
+    Keybindings::Keybind* f7 = Keybindings::DoesKeybindExist(GLFW_KEY_F7, Keybindings::KeybindModifiers_Alt);
     REQUIRE(f7 != nullptr);
     f7->Press();
     Keybindings::ProcessKeybindings();
@@ -1307,19 +1315,19 @@ TEST_CASE("an extension has so many intervals, textures and settings at most") {
 
 TEST_CASE("an extension has so many keys at most") {
     CaptureLog log;
-    // 33: F1 to F11, each alone, with Ctrl and with Alt
+    // 35: F1 to F12, each with Ctrl, with Alt and with both, but not Alt+F4
     Extensions::Extension* ext = TestExtension::load("many_keys", R"(
         _G.keys = 0
-        local mods = { KeybindModifiers.None, KeybindModifiers.Ctrl, KeybindModifiers.Alt }
+        local mods = { KeybindModifiers.Ctrl, KeybindModifiers.Alt, KeybindModifiers.Ctrl + KeybindModifiers.Alt }
         for _, mod in ipairs(mods) do
-            for _, key in ipairs({ Keys.F1, Keys.F2, Keys.F3, Keys.F4, Keys.F5, Keys.F6, Keys.F7, Keys.F8, Keys.F9, Keys.F10, Keys.F11 }) do
-                if RegisterKeybind(key, function() end, KeybindFlags.None, mod) ~= "" then _G.keys = _G.keys + 1 end
+            for _, key in ipairs({ Keys.F1, Keys.F2, Keys.F3, Keys.F4, Keys.F5, Keys.F6, Keys.F7, Keys.F8, Keys.F9, Keys.F10, Keys.F11, Keys.F12 }) do
+                if RegisterKeybind(key, function() end, mod) ~= "" then _G.keys = _G.keys + 1 end
             end
         end
     )");
     REQUIRE(ext != nullptr);
     CHECK((*ext->luaState)["keys"].get_or(0) == (int)Extensions::MaxKeys);
-    CHECK(ext->keybinds.size() == Extensions::MaxKeys);
+    CHECK(ext->keys.size() == Extensions::MaxKeys);
     CHECK(log.count("has 32 keys, no more are bound") == 1);
     TestExtension::unloadAll();
 }

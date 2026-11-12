@@ -295,16 +295,19 @@ TEST_CASE("a key bound from Lua runs its function as that extension") {
     Keybindings::keybinds.clear();
     Extensions::Extension* ext = load("keys");
     REQUIRE(ext != nullptr);
+    Extensions::allow(*ext, Extensions::ExtensionPermissionTypes::Keybinds);
+    ext->allowedKeys = { "Alt+F5", "Ctrl+Shift+G" };
     REQUIRE(TestExtension::run(ext, R"(
         DefineExtensionSetting("count", "Count", "int", 5)
-        f5 = RegisterKeybind(Keys.F5, function() pressed = GetSetting("count") end, KeybindFlags.None)
-        RegisterKeybind(Keys.G, function() end, KeybindFlags.ProcessWhileHidden, KeybindModifiers.Ctrl + KeybindModifiers.Shift)
+        f5 = RegisterKeybind(Keys.F5, function() pressed = GetSetting("count") end, KeybindModifiers.Alt)
+        RegisterKeybind(Keys.G, function() end, KeybindModifiers.Ctrl + KeybindModifiers.Shift)
     )"));
 
-    Keybindings::Keybind* f5 = Keybindings::DoesKeybindExist(GLFW_KEY_F5);
+    Keybindings::Keybind* f5 = Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Alt);
     REQUIRE(f5 != nullptr);
-    CHECK(!f5->HasFlag(Keybindings::KeybindFlags_ProcessWhileHidden));
-    CHECK(f5->GetModifiers() == Keybindings::KeybindModifiers_None);
+    // an extension's key works with the menu closed too
+    CHECK(f5->HasFlag(Keybindings::KeybindFlags_ProcessWhileHidden));
+    CHECK(f5->GetModifiers() == Keybindings::KeybindModifiers_Alt);
     f5->Press();
     Keybindings::ProcessKeybindings();
     CHECK((*ext->luaState)["pressed"].get_or(0) == 5);
@@ -318,7 +321,7 @@ TEST_CASE("a key bound from Lua runs its function as that extension") {
     CHECK(g->GetModifiers() == (Keybindings::KeybindModifiers_Ctrl | Keybindings::KeybindModifiers_Shift));
 
     REQUIRE(TestExtension::run(ext, "DeleteKeybind(f5)"));
-    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5) == nullptr);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Alt) == nullptr);
     TestExtension::unloadAll();
 }
 

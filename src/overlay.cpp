@@ -15,6 +15,7 @@
 #include "stats.hpp"
 #include "settings.hpp"
 #include "capture.hpp"
+#include "key_choices.hpp"
 #include "typing.hpp"
 #include <imgui_internal.h>
 #include <imgui_impl_glfw.h>
@@ -199,14 +200,14 @@ namespace Overlay {
         ImGui_ImplGlfw_InitForOpenGL(Overlay::Window, true);
         ImGui_ImplOpenGL3_Init(glsl_version);
 
-        // Alt+` toggles the menu, so it has to work while the menu is closed too.
-        // A plain ` didn't reach us while the game had focus (without admin),
-        // Alt+` does. Holding Alt also frees the cursor in game, so the menu can
-        // be clicked right away.
+        // The menu key (Alt+` unless the player picked another) toggles the
+        // menu, so it has to work while the menu is closed too. A plain ` didn't
+        // reach us while the game had focus (without admin), Alt+` does. Holding
+        // Alt also frees the cursor in game, so the menu can be clicked right away.
         Keybindings::Init(Overlay::Window);
-        Keybindings::CreateKeybind(GLFW_KEY_GRAVE_ACCENT, []() {
+        KeyChoices::startMenuKey([]() {
             Overlay::SetMenuOpen(!menuOpen);
-        }, Keybindings::KeybindFlags_ProcessWhileHidden, Keybindings::KeybindModifiers_Alt);
+        });
 
         // the menu key only works with the game in front, so without the game the
         // menu opens by itself, the settings can be changed without it
@@ -372,20 +373,26 @@ namespace Overlay {
             ImGuiContext& g = *ImGui::GetCurrentContext();
             frame.lastBox = g.InputTextState.ID;
             frame.mouseHeld = ImGui::IsAnyMouseDown();
-            frame.typing = g.ActiveId != 0 && g.ActiveId == g.InputTextState.ID;
+            frame.typing = (g.ActiveId != 0 && g.ActiveId == g.InputTextState.ID) || KeyChoices::recording();
             // With the focus here the game isn't in front, so every hotkey is
             // off, the menu key too. ImGui gets the keys now, so it's read here.
-            if (Typing::focus.hasFocus() && ImGui::IsKeyChordPressed(ImGuiMod_Alt | ImGuiKey_GraveAccent)) {
+            ImGuiKeyChord menuKey = Keybindings::ImGuiChordFor(KeyChoices::menuKey(), KeyChoices::menuModifiers());
+            // in a text box a Ctrl menu key is left to the box, like Ctrl+V
+            bool inTextBox = g.ActiveId != 0 && g.ActiveId == g.InputTextState.ID;
+            bool forTheBox = inTextBox && !(KeyChoices::menuModifiers() & Keybindings::KeybindModifiers_Alt);
+            if (Typing::focus.hasFocus() && !KeyChoices::recording() && !forTheBox && ImGui::IsKeyChordPressed(menuKey)) {
                 SetMenuOpen(false);
                 frame.menuOpen = false;
             }
         }
+        if (!frame.menuOpen) KeyChoices::stopRecording();
         switch (Typing::focus.update(frame, windows)) {
         case Typing::Change::CouldntTake:
             std::cout << "Couldn't take the focus for typing, the keys still go to the window in front" << std::endl;
             break;
         case Typing::Change::Lost:
             if (drawing) ImGui::ClearActiveID();
+            KeyChoices::stopRecording();
             break;
         default:
             break;
@@ -721,7 +728,7 @@ namespace Overlay {
         ImGui::SetNextWindowBgAlpha(0.8f * alpha);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
         ImGui::Begin("##startup", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
-        ImGui::Text("Genshin Overlay is running. Press Alt+` for the menu.");
+        ImGui::Text("Genshin Overlay is running. Press %s for the menu.", KeyChoices::menuKeyName().c_str());
         ImGui::End();
         ImGui::PopStyleVar();
     }
@@ -859,7 +866,7 @@ namespace Overlay {
                 ImVec2 top = ImGui::GetCursorPos();
                 Controls::PageTitle("Home");
                 float titleHeight = ImGui::GetCursorPosY() - top.y;
-                ImGui::TextDisabled("Press Alt+` to hide");
+                ImGui::TextDisabled("Press %s to hide", KeyChoices::menuKeyName().c_str());
                 ImVec2 below = ImGui::GetCursorPos();
                 ImVec2 quit = Controls::ButtonSize("Shutdown");
                 float quitHeight = quit.y;
@@ -905,7 +912,18 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
+            if (Controls::BeginSection("Keys")) {
+                KeyChoices::drawMenuKeyRow();
+                Controls::EndSection();
+            }
+
             if (Controls::BeginSection("Advanced")) {
+                Controls::ToggleOptions takenKeys;
+                takenKeys.lines = { { "Lets Record catch a key another program has taken. Some antivirus programs dislike this." } };
+                if (Controls::Toggle("Record taken keys", &Settings::recordTakenKeys, takenKeys)) {
+                    Settings::Save();
+                }
+
                 ImGui::TextDisabled("How the map is followed while it moves");
 
                 if (Controls::Toggle(

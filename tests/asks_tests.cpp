@@ -7,6 +7,7 @@
 #include "asks.hpp"
 #include "extensions.hpp"
 #include "files.hpp"
+#include "keybindings.hpp"
 #include "settings.hpp"
 #include "test_extension.hpp"
 
@@ -355,6 +356,184 @@ TEST_CASE("forgetting one kind of question keeps the others") {
     Asks::forget(a.ext, Kind::Permissions);
     REQUIRE(Asks::queue().size() == 1);
     CHECK(Asks::queue()[0].kind == Kind::Setting);
+}
+
+TEST_CASE("a key waits until the player allows it, and a new key asks again") {
+    Fresh fresh;
+    Keybindings::keybinds.clear();
+    Extensions::Extension* ext = TestExtension::load("keys", "function Init() end");
+    REQUIRE(ext != nullptr);
+    CHECK(Extensions::permissionState(*ext, Permission::Keybinds) == "not_asked");
+    REQUIRE(TestExtension::run(ext, "f5 = RegisterKeybind(Keys.F5, function() end, KeybindModifiers.Ctrl)"));
+    CHECK((*ext->luaState)["f5"] != sol::nil);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Ctrl) == nullptr);
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].permissions == std::vector<Permission>{ Permission::Keybinds });
+    CHECK(Asks::queue()[0].keys == std::vector<std::string>{ "Ctrl+F5" });
+
+    Asks::answer(Answer::Allow);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Ctrl) != nullptr);
+    CHECK(savedFor("keys")["keys"] == std::vector<std::string>{ "Ctrl+F5" });
+
+    // only the new one is asked for
+    REQUIRE(TestExtension::run(ext, "ins = RegisterKeybind(Keys.Insert, function() end, KeybindModifiers.Alt)"));
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].permissions.empty());
+    CHECK(Asks::queue()[0].keys == std::vector<std::string>{ "Alt+Insert" });
+    // a waiting key can be deleted, and leaves the question
+    REQUIRE(TestExtension::run(ext, "deleted = DeleteKeybind(ins)"));
+    CHECK((*ext->luaState)["deleted"].get<bool>());
+    CHECK(ext->keys.size() == 1);
+    CHECK(Asks::queue().empty());
+
+    // switched off on the tab, the key is let go; switched on, it's back
+    Extensions::switchPermission(*ext, Permission::Keybinds, false);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Ctrl) == nullptr);
+    Extensions::switchPermission(*ext, Permission::Keybinds, true);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Ctrl) != nullptr);
+    TestExtension::unloadAll();
+    CHECK(Keybindings::keybinds.empty());
+}
+
+// without admin, only keys with Alt or Ctrl reach the overlay while the game is in front
+TEST_CASE("a key needs Alt or Ctrl") {
+    Fresh fresh;
+    Keybindings::keybinds.clear();
+    Extensions::Extension* ext = TestExtension::load("keys_plain", "function Init() end");
+    REQUIRE(ext != nullptr);
+    CaptureLog log;
+    REQUIRE(TestExtension::run(ext, R"(
+        plain = RegisterKeybind(Keys.J, function() end)
+        shift = RegisterKeybind(Keys.J, function() end, KeybindModifiers.Shift)
+        f6 = RegisterKeybind(Keys.F6, function() end)
+        alt = RegisterKeybind(Keys.J, function() end, KeybindModifiers.Alt)
+        ctrl = RegisterKeybind(Keys.F6, function() end, KeybindModifiers.Ctrl + KeybindModifiers.Shift)
+    )"));
+    sol::state& lua = *ext->luaState;
+    CHECK(lua["plain"].get<std::string>().empty());
+    CHECK(lua["shift"].get<std::string>().empty());
+    CHECK(lua["f6"].get<std::string>().empty());
+    CHECK(log.has("J needs Alt or Ctrl"));
+    CHECK(log.has("Shift+J needs Alt or Ctrl"));
+    CHECK(log.has("F6 needs Alt or Ctrl"));
+    CHECK_FALSE(lua["alt"].get<std::string>().empty());
+    CHECK_FALSE(lua["ctrl"].get<std::string>().empty());
+    // only the two that can work are asked for
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].keys == std::vector<std::string>{ "Alt+J", "Ctrl+Shift+F6" });
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("an extension can't take a key Windows or the menu keeps") {
+    Fresh fresh;
+    Keybindings::keybinds.clear();
+    Extensions::Extension* ext = TestExtension::load("keys_kept", "function Init() end");
+    REQUIRE(ext != nullptr);
+    CaptureLog log;
+    REQUIRE(TestExtension::run(ext, R"(
+        menu = RegisterKeybind(Keys.Grave, function() end, KeybindModifiers.Alt)
+        space = RegisterKeybind(Keys.Space, function() end, KeybindModifiers.Alt)
+        ctrlSpace = RegisterKeybind(Keys.Space, function() end, KeybindModifiers.Ctrl)
+    )"));
+    sol::state& lua = *ext->luaState;
+    CHECK(lua["menu"].get<std::string>().empty());
+    CHECK(lua["space"].get<std::string>().empty());
+    CHECK(log.has("Alt+` is kept for the overlay's menu"));
+    CHECK(log.has("Alt+Space is kept for Windows"));
+    CHECK_FALSE(lua["ctrlSpace"].get<std::string>().empty());
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].keys == std::vector<std::string>{ "Ctrl+Space" });
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("Keybinds switched on on the tab asks again for keys said no to") {
+    Fresh fresh;
+    Keybindings::keybinds.clear();
+    Extensions::Extension* ext = TestExtension::load("keys_no", "function Init() end");
+    REQUIRE(ext != nullptr);
+    REQUIRE(TestExtension::run(ext, "RegisterKeybind(Keys.F5, function() end, KeybindModifiers.Alt)"));
+    Asks::answer(Answer::DontAllow);
+    CHECK(Asks::queue().empty());
+
+    Extensions::switchPermission(*ext, Permission::Keybinds, true);
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].keys == std::vector<std::string>{ "Alt+F5" });
+    Asks::answer(Answer::Allow);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Alt) != nullptr);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("keys of a changed extension wait for the same again") {
+    Fresh fresh;
+    Keybindings::keybinds.clear();
+    {
+        Bare a("a");
+        Extensions::allow(a.ext, Permission::Keybinds);
+        a.ext.allowedKeys = { "F5" };
+        Extensions::saveExtensionPermissions(a.ext);
+    }
+    Bare a("a", "h2");
+    Asks::askChanged(a.ext);
+    // F5 was allowed before, F6 is new: neither is asked while the same again waits
+    Asks::askKeys(a.ext, "F6");
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].kind == Kind::Changed);
+
+    Asks::answer(Answer::Allow);
+    CHECK(a.ext.extensionPermissions.count(Permission::Keybinds) == 1);
+}
+
+TEST_CASE("after the same again, the allowed keys are bound and only the new one is asked") {
+    Fresh fresh;
+    Keybindings::keybinds.clear();
+    Extensions::Extension* ext = TestExtension::load("same_keys",
+        "function Init() RegisterKeybind(Keys.F5, function() end, KeybindModifiers.Alt) end");
+    REQUIRE(ext != nullptr);
+    Extensions::runForExtension(ext, ext->initializeFunction);
+    Asks::answer(Answer::Allow);
+    TestExtension::unloadAll();
+
+    // its files changed, and it takes one more key
+    ext = TestExtension::load("same_keys", R"(
+        function Init()
+            RegisterKeybind(Keys.F5, function() end, KeybindModifiers.Alt)
+            RegisterKeybind(Keys.F6, function() end, KeybindModifiers.Alt)
+        end
+    )");
+    REQUIRE(ext != nullptr);
+    Extensions::runForExtension(ext, ext->initializeFunction);
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].kind == Kind::Changed);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Alt) == nullptr);
+
+    Asks::answer(Answer::Allow);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F5, Keybindings::KeybindModifiers_Alt) != nullptr);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F6, Keybindings::KeybindModifiers_Alt) == nullptr);
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].kind == Kind::Permissions);
+    CHECK(Asks::queue()[0].keys == std::vector<std::string>{ "Alt+F6" });
+
+    Asks::answer(Answer::Allow);
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F6, Keybindings::KeybindModifiers_Alt) != nullptr);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("an allowed key is bound at the next start without asking") {
+    Fresh fresh;
+    Keybindings::keybinds.clear();
+    const std::string code = "function Init() RegisterKeybind(Keys.F6, function() end, KeybindModifiers.Alt) end";
+    Extensions::Extension* ext = TestExtension::load("keys_again", code);
+    REQUIRE(ext != nullptr);
+    Extensions::runForExtension(ext, ext->initializeFunction);
+    Asks::answer(Answer::Allow);
+    TestExtension::unloadAll();
+
+    ext = TestExtension::load("keys_again", code);
+    REQUIRE(ext != nullptr);
+    Extensions::runForExtension(ext, ext->initializeFunction);
+    CHECK(Asks::queue().empty());
+    CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F6, Keybindings::KeybindModifiers_Alt) != nullptr);
+    TestExtension::unloadAll();
 }
 
 TEST_CASE("what main.lua lists is asked for at the first start, with the author's reasons") {

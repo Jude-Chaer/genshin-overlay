@@ -12,7 +12,6 @@ namespace Asks {
 
 	static std::deque<Ask> waiting;
 	static std::vector<OverlaySetting> settings;
-	std::function<void(Extension&)> keysAllowed;
 
 	void addSetting(const OverlaySetting& setting) {
 		auto same = [&](const OverlaySetting& s) { return s.name == setting.name; };
@@ -71,13 +70,15 @@ namespace Asks {
 		if (ext.stopped || ext.refusedKeys.count(key)) return;
 		if (std::find(ext.allowedKeys.begin(), ext.allowedKeys.end(), key) != ext.allowedKeys.end()) return;
 		bool hasKeybinds = ext.extensionPermissions.count(Permission::Keybinds) > 0;
+		// it had keys before its files changed: they wait for "Allow the same"
+		if (!hasKeybinds && hadBeforeChange(ext, Permission::Keybinds)) return;
 		if (!hasKeybinds && !Extensions::mayAsk(ext, Permission::Keybinds)) return;
 		// after Never ask again it asks for no more keys either
 		const Extensions::PermissionInfo* keybinds = Extensions::findPermission(Permission::Keybinds);
 		if (hasKeybinds && ext.neverAsk.count(keybinds->name)) return;
 
 		Ask& ask = questionFor(ext, Kind::Permissions);
-		if (!hasKeybinds && !hadBeforeChange(ext, Permission::Keybinds)) add(ask.permissions, Permission::Keybinds);
+		if (!hasKeybinds) add(ask.permissions, Permission::Keybinds);
 		if (std::find(ask.keys.begin(), ask.keys.end(), key) == ask.keys.end()) ask.keys.push_back(key);
 	}
 
@@ -124,6 +125,18 @@ namespace Asks {
 		waiting.erase(std::remove_if(waiting.begin(), waiting.end(), [&](const Ask& ask) { return ask.ext == &ext && ask.kind == kind; }), waiting.end());
 	}
 
+	void forgetKey(const Extension& ext, const std::string& key) {
+		Ask* ask = queued(ext, Kind::Permissions);
+		if (!ask) return;
+		ask->keys.erase(std::remove(ask->keys.begin(), ask->keys.end(), key), ask->keys.end());
+		// Keybinds asked for only for this key
+		if (ask->keys.empty()) {
+			auto& list = ask->permissions;
+			list.erase(std::remove(list.begin(), list.end(), Permission::Keybinds), list.end());
+		}
+		if (ask->permissions.empty() && ask->keys.empty()) forget(ext, Kind::Permissions);
+	}
+
 	const std::deque<Ask>& queue() {
 		return waiting;
 	}
@@ -168,7 +181,7 @@ namespace Asks {
 			if (answer == Answer::Allow) {
 				for (const std::string& name : ext.grantsBeforeChange) {
 					const Extensions::PermissionInfo* info = Extensions::findPermission(name);
-					if (info && !ext.switchedOff.count(name)) ext.extensionPermissions.insert(info->type);
+					if (info && !ext.switchedOff.count(name) && !ext.neverAsk.count(name)) ext.extensionPermissions.insert(info->type);
 				}
 				ext.grantsBeforeChange.clear();
 				ext.hashBeforeChange.clear();
@@ -186,7 +199,10 @@ namespace Asks {
 		}
 
 		if (ask.kind != Kind::Setting || answer == Answer::Never) Extensions::saveExtensionPermissions(ext);
-		if (answer == Answer::Allow && !ask.keys.empty() && keysAllowed) keysAllowed(ext);
+		if (answer == Answer::Allow) {
+			Extensions::bindAllowedKeys(ext);
+			Extensions::askWaitingKeys(ext);
+		}
 		if (answer == Answer::Allow) std::cout << "[" << ext.name << "] allowed what it asked for" << std::endl;
 	}
 
