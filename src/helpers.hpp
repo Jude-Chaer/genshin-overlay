@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 #include <opencv2/opencv.hpp>
 
 namespace Helpers {
@@ -13,6 +14,8 @@ namespace Helpers {
     extern std::string utf8(const std::filesystem::path& path);
     extern std::filesystem::path fromUtf8(const std::string& text);
     extern std::filesystem::path exeDirectory();
+    // "a, b, c"
+    extern std::string joined(const std::vector<std::string>& list);
     extern bool isElevated();
     // Windows set to dark for apps (Settings, Personalization, Colors)
     extern bool systemDark();

@@ -152,6 +152,15 @@ namespace LuaFunctions {
     int SetInterval(sol::protected_function callback, int milliseconds);
     void ClearInterval(int id);
     void UpdateIntervals();
+    // By a permission's fixed name ("network") or an overlay setting's name.
+    // PermissionState gives "allowed", "not_asked", "refused" (this start),
+    // "never" (Never ask again) or "off" (switched off on its Permissions
+    // tab), nil for a name nothing has. AskForPermission queues the question,
+    // it shows while the map or menu is open.
+    bool HasPermission(const std::string& name);
+    sol::object PermissionState(const std::string& name, sol::this_state state);
+    void AskForPermission(const std::string& name);
+
     // The cursor in overlay pixels. Without Mouse anywhere only over the game
     // window, nil anywhere else.
     sol::variadic_results GetMousePosition(sol::this_state state);

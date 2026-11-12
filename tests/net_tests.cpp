@@ -631,7 +631,7 @@ namespace {
     Extensions::Extension* netExtension(const std::string& name, const std::string& lua) {
         Extensions::Extension* ext = TestExtension::load(name, lua);
         if (!ext) return nullptr;
-        ext->extensionPermissions.insert(Permission::NetworkAccess);
+        Extensions::allow(*ext, Permission::NetworkAccess);
         Extensions::runInit(*ext);
         return ext;
     }
@@ -755,7 +755,7 @@ TEST_CASE("an extension's requests stop with it, and with its Network Access") {
 
     Extensions::Extension* ext = netExtension("net_off", lua);
     REQUIRE(ext != nullptr);
-    ext->extensionPermissions.erase(Permission::NetworkAccess);
+    Extensions::switchPermission(*ext, Permission::NetworkAccess, false);
     std::this_thread::sleep_for(std::chrono::milliseconds(800));
     for (int i = 0; i < 3; i++) TestExtension::turn();
     CHECK((*ext->luaState)["called"] == sol::lua_nil);
@@ -887,7 +887,7 @@ TEST_CASE("an extension's web socket ends with it, and with its Network Access")
 
     Extensions::Extension* ext = netExtension("socket_off", lua);
     REQUIRE(ext != nullptr);
-    ext->extensionPermissions.erase(Permission::NetworkAccess);
+    Extensions::switchPermission(*ext, Permission::NetworkAccess, false);
     for (int i = 0; i < 3; i++) TestExtension::turn();
     CHECK(LuaFunctions::socketsOf(ext) == 0);
     CHECK(framesUntil([&]() { return LuaFunctions::socketsOf(nullptr) == 0; }));

@@ -15,7 +15,8 @@ namespace Overlay {
     bool Init();
     void Shutdown();
     void MainLoop();
-    // the menu only opens and closes through SetMenuOpen
+    // the menu only opens and closes through SetMenuOpen, it also takes or
+    // gives back the extensions' keys
     bool MenuOpen();
     void SetMenuOpen(bool open);
     // the game in front again, restored if it minimized, e.g. after a file window

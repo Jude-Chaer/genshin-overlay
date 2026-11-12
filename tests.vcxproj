@@ -137,6 +137,7 @@
   <ItemGroup>
     <ClCompile Include="src\appsample.cpp" />
     <ClCompile Include="src\capture.cpp" />
+    <ClCompile Include="src\asks.cpp" />
     <ClCompile Include="src\controls.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
@@ -163,6 +164,7 @@
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
     <ClCompile Include="src\typing.cpp" />
+    <ClCompile Include="tests\asks_tests.cpp" />
     <ClCompile Include="tests\controls_tests.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
@@ -191,6 +193,7 @@
   <ItemGroup>
     <ClInclude Include="src\appsample.hpp" />
     <ClInclude Include="src\capture.hpp" />
+    <ClInclude Include="src\asks.hpp" />
     <ClInclude Include="src\controls.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\game_ui.hpp" />

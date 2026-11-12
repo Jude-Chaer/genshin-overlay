@@ -32,22 +32,24 @@ namespace Extensions {
 		MouseAnywhere
 	};
 
-	// Saved in settings.json by name, shown to the player by label. A wording
-	// change or a new permission anywhere in the list leaves saved grants alone.
+	// Saved in settings.json and named in Lua by name, shown to the player by
+	// label with the reason line under it. A wording change or a new permission
+	// anywhere in the list leaves saved grants alone.
 	struct PermissionInfo {
 		ExtensionPermissionTypes type;
 		const char* name;
 		const char* label;
+		const char* reason;
 	};
 
 	inline const std::vector<PermissionInfo> permissionList = {
-		{ExtensionPermissionTypes::DisplayOverlay, "display_overlay", "Display Overlay"},
-		{ExtensionPermissionTypes::DisplayRead, "display_read", "Display Read"},
-		{ExtensionPermissionTypes::Keybinds, "keybinds", "Keybinds"},
-		{ExtensionPermissionTypes::InternalReadfile, "internal_read", "Internal File Reading"},
-		{ExtensionPermissionTypes::InternalWritefile, "internal_write", "Internal File Writing"},
-		{ExtensionPermissionTypes::NetworkAccess, "network", "Network Access"},
-		{ExtensionPermissionTypes::MouseAnywhere, "mouse_anywhere", "Mouse anywhere"},
+		{ExtensionPermissionTypes::DisplayOverlay, "display_overlay", "Display Overlay", "It can draw on the overlay."},
+		{ExtensionPermissionTypes::DisplayRead, "display_read", "Display Read", "It can see where the map is and what it shows."},
+		{ExtensionPermissionTypes::Keybinds, "keybinds", "Keybinds", "It gets these keys while the game is in front, and the game doesn't."},
+		{ExtensionPermissionTypes::InternalReadfile, "internal_read", "Internal File Reading", "It can read files in its own folder."},
+		{ExtensionPermissionTypes::InternalWritefile, "internal_write", "Internal File Writing", "It can change files in its own folder."},
+		{ExtensionPermissionTypes::NetworkAccess, "network", "Network Access", "It can send and get things from any website."},
+		{ExtensionPermissionTypes::MouseAnywhere, "mouse_anywhere", "Mouse anywhere", "It can see where your mouse is, even outside the game."},
 	};
 
 	// saved names of permissions that no longer exist, dropped when grants are loaded
@@ -62,6 +64,8 @@ namespace Extensions {
 		ExtensionPermissionTypes::InternalWritefile
 	};
 
+	inline const int PermissionCount = (int)ExtensionPermissionTypes::MouseAnywhere + 1;
+
 	// nullptr for None and for a name this overlay doesn't know
 	const PermissionInfo* findPermission(ExtensionPermissionTypes type);
 	const PermissionInfo* findPermission(const std::string& name);
@@ -74,6 +78,9 @@ namespace Extensions {
 	inline const long long LuaStepLimit = 50'000'000;
 	inline const long long LuaStartStepLimit = 500'000'000;
 	inline const int LuaStepCheck = 10000;
+	// metadata.description and metadata.about are cut past this many letters
+	inline const size_t DescriptionLetters = 150;
+	inline const size_t AboutLetters = 4000;
 	inline const size_t LuaMemoryLimit = (size_t)256 * 1024 * 1024;
 
 	// what an extension's Lua holds, counted by its allocator
@@ -111,6 +118,36 @@ namespace Extensions {
 	inline const int MaxPrintsPerMinute = 200;
 
 	inline const int ExtensionWriteLimit = 1024 * 1024 * 512; // 512MB. Write limits will be enforced only on every load, so restarting the program will reset the limit.  This is simply so that extensions don't write a ton of data to disk at once as a security measure.
+
+	// What an extension's calls take, overlay functions inside them too (a
+	// blocking Net_Get counts). Added up per second of the overlay's turns,
+	// drawn frames and the turns with nothing drawn alike: keys and triggers
+	// run in both.
+	inline const double SlowMsPerFrame = 2.0;
+	inline const int SlowSeconds = 10;
+	inline const int CostSecondsShown = 3;
+	struct Cost {
+		// this second so far
+		double ms = 0;
+		// the last seconds counted, for perFrame
+		double secondMs[CostSecondsShown] = {};
+		int secondFrames[CostSecondsShown] = {};
+		int secondsKept = 0;
+		int nextSecond = 0;
+		// ms per frame over the seconds kept, -1 before the first one
+		double perFrame = -1;
+		// seconds in a row over SlowMsPerFrame
+		int slowSeconds = 0;
+		// it was slow SlowSeconds in a row at this start
+		bool slow = false;
+		// its first second is over; that one has its start in it and isn't counted
+		bool started = false;
+	};
+	// One counted second with this many turns. True the first time it makes
+	// the extension slow.
+	extern bool endSecond(Cost& cost, int frames);
+	// a second that isn't counted: the slow run ends, what's shown stays
+	extern void skipSecond(Cost& cost);
 
 	struct ExtensionSetting {
 		std::string id;
@@ -169,8 +206,12 @@ namespace Extensions {
 		int callDepth = 0;
 		long long luaSteps = 0;
 		long long stepLimit = LuaStepLimit;
+		Cost cost;
+		// when each permission was last used, seconds since 1970, 0 for not yet
+		long long lastUsed[PermissionCount] = {};
 		std::string name;
-		std::string description;
+		// metadata.description under its name, metadata.about on its About tab
+		std::string description, about;
 		std::string author;
 		std::string version;
 		std::string extensionHash;
@@ -185,6 +226,35 @@ namespace Extensions {
 		// with the defaults it still had.
 		std::vector<std::string> grantsBeforeChange;
 		std::string hashBeforeChange;
+		// nothing was saved for its folder yet: the first start
+		bool firstStart = false;
+		// by permission name, saved: "Never ask again", and switched off on its
+		// Permissions tab (never asked again either)
+		std::unordered_set<std::string> neverAsk;
+		std::unordered_set<std::string> switchedOff;
+		// "Don't allow" or "Not now", asked again at the next start
+		std::unordered_set<ExtensionPermissionTypes> refused;
+		// the keys it may take by their shown name (Ctrl+F5), saved, and the
+		// ones refused this start
+		std::vector<std::string> allowedKeys;
+		std::unordered_set<std::string> refusedKeys;
+		// overlay settings it asked for and was refused this start
+		std::unordered_set<std::string> refusedSettings;
+		// the permissions its Lua files call for, and the ones it was refused
+		// that they didn't show (saved): its Permissions tab lists them
+		std::unordered_set<ExtensionPermissionTypes> uses;
+		// refused while main.lua's top level ran, asked for once it has loaded
+		std::vector<ExtensionPermissionTypes> askWhenLoaded;
+		// the author's reason for each permission metadata.permissions lists
+		std::unordered_map<ExtensionPermissionTypes, std::string> reasons;
+		// network's sites in metadata.permissions: it reaches only those and
+		// the names under them, when sitesOnly
+		bool sitesOnly = false;
+		std::vector<std::string> sites;
+		// main.lua has run and its metadata was read: until then it reaches no site
+		bool listRead = false;
+		// false: switched off on its Permissions tab, it doesn't load at start
+		bool enabled = true;
 		// switched off while it runs, nothing of it is called anymore
 		bool stopped = false;
 		// print lines in the minute since printMinute (GetTickCount64)
@@ -246,6 +316,10 @@ namespace Extensions {
 	// Lua code runs as ext. Inside the frame, the clips it leaves open on the
 	// background list are closed after it, and it can't close older ones.
 	extern void runForExtension(Extension* ext, const std::function<void()>& function);
+	// One turn of the overlay's loop for the cost. Each second the costs are
+	// counted, and an extension that turns slow is logged. Each extension's
+	// first second, with its start in it, isn't counted, Start again included.
+	extern void countTurn();
 
 	// Which part of the frame runs now. ImGui has a frame only in Update and Menu,
 	// and a window for widgets only in Menu. Anywhere else (Init, keys, loading,
@@ -264,8 +338,41 @@ namespace Extensions {
 	extern int clipFloor;
 	// one line in the log the first time an extension hits it
 	extern void logOnce(const char* function, const std::string& why);
-	extern void drawExtensionPermissionMenu();
+
+	// What PermissionState gives for a permission: "allowed", "off" (switched
+	// off on its Permissions tab), "never" (Never ask again), "refused" (this
+	// start), or "not_asked".
+	extern std::string permissionState(const Extension& ext, ExtensionPermissionTypes permission);
+	// Whether asking for it would show a question: not allowed, off, never or
+	// refused already.
+	extern bool mayAsk(const Extension& ext, ExtensionPermissionTypes permission);
+	// the player's answers, saved
+	extern void allow(Extension& ext, ExtensionPermissionTypes permission);
+	extern void refuse(Extension& ext, ExtensionPermissionTypes permission, bool never);
+	// its switch on the Permissions tab
+	extern void switchPermission(Extension& ext, ExtensionPermissionTypes permission, bool on);
+	// "Let it ask"
+	extern void letAsk(Extension& ext, const std::string& name);
+	// the Permissions tab on its page
+	extern void drawPermissionsTab(Extension& ext);
+	// its About tab: metadata.about, version, author, folder
+	extern void drawAboutTab(const Extension& ext);
+	// Switched off on its Permissions tab: Shutdown runs, everything it
+	// registered goes (unload), and nothing of it is called again.
+	extern void stopExtension(Extension& ext);
+	// The switch on its Permissions tab, saved. Off stops it now; on loads it
+	// again from its folder at the next frame, as [Start again] does.
+	extern void setRunning(Extension& ext, bool on);
 	extern void loadExtensionPermissions(Extension* ext);
+	// metadata.permissions = { network = { reason = "..." } }: the author's
+	// reasons go in ext.reasons, a name nothing has is logged
+	extern void readListedPermissions(Extension& ext, const sol::table& list);
+	// At the first start it's asked for what it lists and doesn't have. After
+	// its files changed, a new one is asked after "Allow the same again".
+	extern void askListedPermissions(Extension& ext);
+	// the line under a permission in the question and on the tab, like "It
+	// can talk to: hoyolab.com" for network with sites
+	extern std::string reasonLine(const Extension& ext, const PermissionInfo& permission);
 	extern void saveExtensionPermissions(const Extension& ext);
 
 	// Everything the extension registered (keybinds, intervals) is removed, so
@@ -286,4 +393,19 @@ namespace Extensions {
 	// the running extension has the permission (None always passes). Always
 	// false with no extension running or while it closes.
 	extern bool allowed(const char* function, ExtensionPermissionTypes permission);
+	// A call that needs this was refused: it's in uses from now on, and the
+	// player is asked for it (keys are asked one by one instead).
+	extern void wanted(Extension& ext, ExtensionPermissionTypes permission);
+	// the permissions Lua code calls for: the functions it names, the triggers
+	// and permission names in its strings; comments are left out
+	extern std::unordered_set<ExtensionPermissionTypes> callsFor(const std::string& code);
+	// For "Used 5 min ago": allowed counts each use, and the overlay calls this
+	// where a permission is used outside a function (a key pressed, an answer
+	// from a website, a trigger that reads the map).
+	extern void markUsed(Extension& ext, ExtensionPermissionTypes permission);
+	// "Used 5 min ago" for its row on the Permissions tab, "Not used yet" or ""
+	// (not allowed and never used) at now (seconds since 1970)
+	extern std::string lastUsedLine(const Extension& ext, ExtensionPermissionTypes permission, long long now);
+	// every extension's last uses into settings.json (destroyExtensions runs it)
+	extern void saveLastUsed();
 }

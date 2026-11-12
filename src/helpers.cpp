@@ -78,6 +78,12 @@ namespace Helpers {
         return textureID;
     }
 
+    std::string joined(const std::vector<std::string>& list) {
+        std::string text;
+        for (const std::string& each : list) text += (text.empty() ? "" : ", ") + each;
+        return text;
+    }
+
     // so files next to the exe are found no matter where it's started from
     std::filesystem::path exeDirectory() {
         wchar_t buffer[MAX_PATH];

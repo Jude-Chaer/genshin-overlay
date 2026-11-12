@@ -12,6 +12,7 @@
 #include "item_catalog.hpp"
 #include "item_files.hpp"
 #include "typing.hpp"
+#include "asks.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -148,6 +149,9 @@ namespace LuaFunctions {
 		global("SetInterval", None, SetInterval);
 		global("ClearInterval", None, ClearInterval);
 		global("GetOSTimeMS", None, GetOSTimeMS);
+		global("HasPermission", None, HasPermission);
+		global("PermissionState", None, PermissionState);
+		global("AskForPermission", None, AskForPermission);
 
 		global("RegisterKeybind", Keybinds, RegisterKeybind);
 		global("DeleteKeybind", Keybinds, DeleteKeybind);
@@ -420,6 +424,7 @@ namespace LuaFunctions {
 		}
 		std::string whyNot;
 		std::string id = Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
+			Extensions::markUsed(*owner, Extensions::ExtensionPermissionTypes::Keybinds);
 			Extensions::runForExtension(owner, [&callbackFunction]() {
 				callLua(callbackFunction, "key");
 				});
@@ -556,16 +561,38 @@ namespace LuaFunctions {
 		return results;
 	}
 
-	// an extension reaches the internet only, one log line per place refused
-	static void logRefused(const char* function, const std::string& place) {
-		if (!place.empty())
-			Extensions::logOnce(function, "can't reach " + place + ": extensions reach only the internet, not this PC or the home network");
+	// what the extension's main.lua lets it reach
+	static Net::Sites sitesFor(const Extensions::Extension* ext) {
+		Net::Sites sites;
+		if (ext && (!ext->listRead || ext->sitesOnly)) {
+			sites.only = true;
+			if (ext->listRead) sites.names = ext->sites;
+		}
+		return sites;
+	}
+
+	// an extension reaches the internet only, and only its sites when it lists
+	// them; one log line per function
+	static void logRefused(const char* function, const std::string& place, bool notListed) {
+		if (place.empty()) return;
+		const Extensions::Extension* ext = Extensions::currentExtension;
+		if (notListed && ext && !ext->listRead) {
+			Extensions::logOnce(function, "can't reach " + place + " while main.lua is still loading: its sites aren't read yet");
+			return;
+		}
+		if (notListed) {
+			std::string sites = ext ? Helpers::joined(ext->sites) : "";
+			Extensions::logOnce(function, "can't reach " + place + ": its main.lua lists only " + (sites.empty() ? "no sites" : sites));
+			return;
+		}
+		Extensions::logOnce(function, "can't reach " + place + ": extensions reach only the internet, not this PC or the home network");
 	}
 
 	// what an extension's request is held to, waitMs for the whole of it
-	static Net::Limits limitsFor(int waitMs) {
+	static Net::Limits limitsFor(const Extensions::Extension* ext, int waitMs) {
 		Net::Limits limits;
 		limits.publicOnly = true;
+		limits.sites = sitesFor(ext);
 		limits.maxBody = NetMaxBody;
 		limits.deadlineMs = waitMs;
 		return limits;
@@ -581,8 +608,8 @@ namespace LuaFunctions {
 		sol::state_view lua(state);
 		Net::Response response;
 
-		if (!Net::get(url, response, false, nullptr, nullptr, limitsFor(NetWaitMs))) {
-			logRefused("Net_Get", response.refused);
+		if (!Net::get(url, response, false, nullptr, nullptr, limitsFor(Extensions::currentExtension, NetWaitMs))) {
+			logRefused("Net_Get", response.refused, response.notListed);
 			logLimits("Net_Get", response);
 			return sol::nil;
 		}
@@ -599,8 +626,8 @@ namespace LuaFunctions {
 		sol::state_view lua(state);
 		Net::Response response;
 
-		if (!Net::post(url, data, response, false, limitsFor(NetWaitMs))) {
-			logRefused("Net_Post", response.refused);
+		if (!Net::post(url, data, response, false, limitsFor(Extensions::currentExtension, NetWaitMs))) {
+			logRefused("Net_Post", response.refused, response.notListed);
 			logLimits("Net_Post", response);
 			return sol::nil;
 		}
@@ -693,7 +720,7 @@ namespace LuaFunctions {
 			request->hasOnDone = true;
 		}
 		std::shared_ptr<NetRequest::Answer> answer = request->answer;
-		Net::Limits limits = limitsFor(NetStartMs);
+		Net::Limits limits = limitsFor(ext, NetStartMs);
 		request->thread = std::thread([answer, url, method, body, limits]() {
 			answer->ok = method == "POST"
 				? Net::post(url, body, answer->response, false, limits, &answer->stopper)
@@ -708,7 +735,7 @@ namespace LuaFunctions {
 	// the request is done: its thread is joined and what went wrong logged, as its extension
 	static void collect(NetRequest& request) {
 		request.thread.join();
-		logRefused("Net_Start", request.answer->response.refused);
+		logRefused("Net_Start", request.answer->response.refused, request.answer->response.notListed);
 		logLimits("Net_Start", request.answer->response);
 	}
 
@@ -741,6 +768,7 @@ namespace LuaFunctions {
 				collect(*request);
 				// Network Access switched off while it waited
 				if (!owner->extensionPermissions.count(Permission::NetworkAccess) || !owner->luaState) return;
+				Extensions::markUsed(*owner, Permission::NetworkAccess);
 				sol::table result;
 				{
 					Extensions::HostAllocations host(owner->memory.get());
@@ -1318,7 +1346,7 @@ namespace LuaFunctions {
 		link->hasOnMessage = entry->onMessage.valid();
 		link->socket.setMaxQueued(SocketMaxQueued);
 		entry->link = link;
-		Net::Limits limits = limitsFor(NetStartMs);
+		Net::Limits limits = limitsFor(ext, NetStartMs);
 		limits.maxBody = 0;
 		entry->thread = std::thread(runSocket, link, url, limits);
 		socket.link = link;
@@ -1390,6 +1418,8 @@ namespace LuaFunctions {
 				dropHandlers(*entry);
 				continue;
 			}
+			// an open socket is in use
+			Extensions::markUsed(*owner, Permission::NetworkAccess);
 			bool finished = entry->link->finished;
 			Extensions::runForExtension(owner, [&]() {
 				if (entry->link->opened && !entry->openSaid) {
@@ -1409,7 +1439,7 @@ namespace LuaFunctions {
 				}
 				if (finished) {
 					const Net::WebSocket& socket = entry->link->socket;
-					logRefused("WebSocket.connect", socket.refusedPlace());
+					logRefused("WebSocket.connect", socket.refusedPlace(), socket.refusedNotListed());
 					if (entry->link->reason == "too_many_messages")
 						Extensions::logOnce("WebSocket", "had " + std::to_string(SocketMaxQueued) + " messages not polled, the socket is closed");
 					sol::object reason;
@@ -1533,6 +1563,37 @@ namespace LuaFunctions {
 				});
 		}
 	}
+	// a permission by its fixed name, logged once when there's none by that name
+	static const Extensions::PermissionInfo* permissionNamed(const char* function, const std::string& name) {
+		const Extensions::PermissionInfo* info = Extensions::findPermission(name);
+		if (!info && !Asks::findSetting(name)) Extensions::logOnce(function, "knows no permission named " + name);
+		return info;
+	}
+
+	bool HasPermission(const std::string& name) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		const Extensions::PermissionInfo* info = permissionNamed("HasPermission", name);
+		if (!ext) return false;
+		if (!info) return Asks::settingState(*ext, name) == "allowed";
+		return ext->extensionPermissions.count(info->type) > 0;
+	}
+
+	sol::object PermissionState(const std::string& name, sol::this_state state) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		const Extensions::PermissionInfo* info = permissionNamed("PermissionState", name);
+		if (!ext || (!info && !Asks::findSetting(name))) return sol::make_object(state, sol::lua_nil);
+		std::string answer = info ? Extensions::permissionState(*ext, info->type) : Asks::settingState(*ext, name);
+		return sol::make_object(state, answer);
+	}
+
+	void AskForPermission(const std::string& name) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		const Extensions::PermissionInfo* info = permissionNamed("AskForPermission", name);
+		if (!ext) return;
+		if (info) Asks::askPermission(*ext, info->type);
+		else Asks::askSetting(*ext, name);
+	}
+
 	std::optional<std::pair<int, int>> mouseFor(POINT cursor, const std::optional<RECT>& game, POINT overlay, bool anywhere) {
 		bool overGame = game && cursor.x >= game->left && cursor.x < game->right && cursor.y >= game->top && cursor.y < game->bottom;
 		if (!anywhere && !overGame) return std::nullopt;
@@ -1552,7 +1613,9 @@ namespace LuaFunctions {
 			if (window && Capture::getClientRectOnScreen(window, rect)) game = rect;
 			int x = 0, y = 0;
 			if (Overlay::Window) glfwGetWindowPos(Overlay::Window, &x, &y);
-			at = mouseFor(cursor, game, POINT{ x, y }, ext->extensionPermissions.count(Permission::MouseAnywhere) > 0);
+			bool anywhere = ext->extensionPermissions.count(Permission::MouseAnywhere) > 0;
+			at = mouseFor(cursor, game, POINT{ x, y }, anywhere);
+			if (anywhere && at && !mouseFor(cursor, game, POINT{ x, y }, false)) Extensions::markUsed(*ext, Permission::MouseAnywhere);
 		}
 		if (!at) {
 			results.push_back(sol::make_object(state, sol::lua_nil));

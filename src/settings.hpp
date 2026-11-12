@@ -52,12 +52,29 @@ namespace Settings {
     extern nlohmann::json LoadExtensions();
     extern void SaveExtensions(const nlohmann::json& extensions);
 
+    // When each extension last used each permission, by folder and permission
+    // name, in seconds since 1970. Saved when the overlay closes; folders not
+    // in lastUsed keep what they had.
+    extern std::map<std::string, long long> LoadLastUsed(const std::string& folder);
+    extern void SaveLastUsed(const std::map<std::string, std::map<std::string, long long>>& lastUsed);
+    // the permissions an extension was refused that its files didn't show, by
+    // folder and permission name, under extensionCalls
+    extern std::vector<std::string> LoadCalls(const std::string& folder);
+    extern void SaveCalls(const std::string& folder, const std::vector<std::string>& names);
+
     // What the player allowed an extension, kept per extension folder: the
-    // permissions by name and the hash its files had then.
+    // permissions by name and the hash its files had then. never and off are
+    // permission names too ("Never ask again", switched off on its Permissions
+    // tab), keys the keys it may take by their shown name (Ctrl+F5). These and
+    // enabled stay when its files change.
     struct Grants {
         bool saved = false;
         std::string hash;
         std::vector<std::string> names;
+        std::vector<std::string> never;
+        std::vector<std::string> off;
+        std::vector<std::string> keys;
+        bool enabled = true;
     };
     // Lists saved the old way (permission numbers under the files' hash) are
     // moved to the folder the first time that hash loads.

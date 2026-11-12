@@ -1,6 +1,7 @@
 metadata = {
     name = "Example",
     description = "A small extension to show how they're put together.",
+    about = "Its menu has a button that counts clicks. It also tries a web request, a file and a WebSocket, and writes what happens to its log.",
     author = "genshin-overlay",
     version = "1.0.0",
 }

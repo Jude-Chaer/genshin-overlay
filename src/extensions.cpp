@@ -1,5 +1,6 @@
 #include <Windows.h>
 #include "extensions.hpp"
+#include "asks.hpp"
 #include "files.hpp"
 #include "helpers.hpp"
 #include "keybindings.hpp"
@@ -10,6 +11,8 @@
 #include "controls.hpp"
 #include <imgui.h>
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <iostream>
 
 namespace fs = std::filesystem;
@@ -91,6 +94,66 @@ namespace Extensions {
 		return moved;
 	}
 
+	using Clock = std::chrono::steady_clock;
+
+	// the extension whose call runs now, its time since then not counted yet
+	static Extension* timed = nullptr;
+	static Clock::time_point timedSince;
+
+	static void countTimed() {
+		Clock::time_point now = Clock::now();
+		if (timed) timed->cost.ms += std::chrono::duration<double, std::milli>(now - timedSince).count();
+		timedSince = now;
+	}
+
+	bool endSecond(Cost& cost, int frames) {
+		cost.secondMs[cost.nextSecond] = cost.ms;
+		cost.secondFrames[cost.nextSecond] = frames;
+		cost.nextSecond = (cost.nextSecond + 1) % CostSecondsShown;
+		cost.secondsKept = std::min(cost.secondsKept + 1, CostSecondsShown);
+		double ms = 0;
+		int allFrames = 0;
+		for (int i = 0; i < cost.secondsKept; i++) {
+			ms += cost.secondMs[i];
+			allFrames += cost.secondFrames[i];
+		}
+		cost.perFrame = ms / allFrames;
+
+		bool slowSecond = frames > 0 && cost.ms / frames > SlowMsPerFrame;
+		cost.ms = 0;
+		cost.slowSeconds = slowSecond ? cost.slowSeconds + 1 : 0;
+		if (cost.slow || cost.slowSeconds < SlowSeconds) return false;
+		cost.slow = true;
+		return true;
+	}
+
+	void skipSecond(Cost& cost) {
+		cost.ms = 0;
+		cost.slowSeconds = 0;
+	}
+
+	void countTurn() {
+		static Clock::time_point secondStart = Clock::now();
+		static int turns = 0;
+
+		Clock::time_point now = Clock::now();
+		turns++;
+		if (now - secondStart < std::chrono::seconds(1)) return;
+
+		for (auto& ext : registeredExtensions) {
+			if (!ext->cost.started) {
+				skipSecond(ext->cost);
+				ext->cost.started = true;
+			}
+			else if (endSecond(ext->cost, turns)) {
+				std::cerr << "[" << ext->name << "] slow: more than " << SlowMsPerFrame << " ms per frame for "
+					<< SlowSeconds << " s" << std::endl;
+			}
+		}
+		secondStart = now;
+		turns = 0;
+	}
+
 	// Lua functions like DefineExtensionSetting need to know which extension called them
 	void runForExtension(Extension* ext, const std::function<void()>& function) {
 		if (!function) return;
@@ -108,8 +171,13 @@ namespace Extensions {
 			if (ext->callDepth == 0) ext->luaSteps = 0;
 			ext->callDepth++;
 		}
+		countTimed();
+		Extension* previousTimed = timed;
+		timed = ext;
 
 		auto restore = [&]() {
+			countTimed();
+			timed = previousTimed;
 			if (ext) {
 				ext->callDepth--;
 				// Lua's memory error can end the call before the guard's next step
@@ -210,14 +278,147 @@ namespace Extensions {
 		Extension* ext = currentExtension;
 		if (!ext || ext->closing) return false;
 		if (permission == ExtensionPermissionTypes::None) return true;
-		if (ext->extensionPermissions.count(permission)) return true;
+		if (ext->extensionPermissions.count(permission)) {
+			markUsed(*ext, permission);
+			return true;
+		}
 
 		if (ext->refusalsLogged.insert(function).second) {
 			const PermissionInfo* info = findPermission(permission);
 			std::cerr << "[" << ext->name << "] " << function << " needs " << (info ? info->label : "a permission")
 				<< ", which it isn't allowed" << std::endl;
 		}
+		wanted(*ext, permission);
 		return false;
+	}
+
+	void wanted(Extension& ext, ExtensionPermissionTypes permission) {
+		const PermissionInfo* info = findPermission(permission);
+		if (!info) return;
+		if (ext.uses.insert(permission).second && !ext.folderKey.empty()) {
+			std::vector<std::string> saved = Settings::LoadCalls(ext.folderKey);
+			if (std::find(saved.begin(), saved.end(), info->name) == saved.end()) {
+				saved.push_back(info->name);
+				Settings::SaveCalls(ext.folderKey, saved);
+			}
+		}
+		if (permission == ExtensionPermissionTypes::Keybinds) return;
+		bool loaded = std::any_of(registeredExtensions.begin(), registeredExtensions.end(),
+			[&](const auto& each) { return each.get() == &ext; });
+		if (loaded) Asks::askPermission(ext, permission);
+		else if (std::find(ext.askWhenLoaded.begin(), ext.askWhenLoaded.end(), permission) == ext.askWhenLoaded.end())
+			ext.askWhenLoaded.push_back(permission);
+	}
+
+	// Lua's long brackets: [[, [=[ and so on
+	static bool longOpen(const std::string& code, size_t at, size_t& level, size_t& after) {
+		if (at >= code.size() || code[at] != '[') return false;
+		size_t i = at + 1;
+		while (i < code.size() && code[i] == '=') i++;
+		if (i >= code.size() || code[i] != '[') return false;
+		level = i - at - 1;
+		after = i + 1;
+		return true;
+	}
+
+	// where the text inside ends, and where the bracket after it ends
+	static std::pair<size_t, size_t> longClose(const std::string& code, size_t from, size_t level) {
+		std::string close = "]" + std::string(level, '=') + "]";
+		size_t end = code.find(close, from);
+		if (end == std::string::npos) return { code.size(), code.size() };
+		return { end, end + close.size() };
+	}
+
+	std::unordered_set<ExtensionPermissionTypes> callsFor(const std::string& code) {
+		// a function by its name, a usertype's (WebSocket) by the type's
+		std::unordered_map<std::string, ExtensionPermissionTypes> names;
+		for (const auto& function : LuaFunctions::boundFunctions()) {
+			if (function.permission == ExtensionPermissionTypes::None) continue;
+			size_t dot = function.name.find('.');
+			names[dot == std::string::npos ? function.name : function.name.substr(0, dot)] = function.permission;
+		}
+		names["RegisterKeybind"] = ExtensionPermissionTypes::Keybinds;
+
+		std::unordered_set<ExtensionPermissionTypes> found;
+		auto fromString = [&](const std::string& text) {
+			if (const PermissionInfo* info = findPermission(text)) found.insert(info->type);
+		};
+		auto word = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+		size_t i = 0;
+		while (i < code.size()) {
+			char c = code[i];
+			size_t level = 0, after = 0;
+			if (c == '-' && i + 1 < code.size() && code[i + 1] == '-') {
+				if (longOpen(code, i + 2, level, after)) i = longClose(code, after, level).second;
+				else {
+					size_t end = code.find('\n', i);
+					i = end == std::string::npos ? code.size() : end + 1;
+				}
+			}
+			else if (longOpen(code, i, level, after)) {
+				auto [end, next] = longClose(code, after, level);
+				fromString(code.substr(after, end - after));
+				i = next;
+			}
+			else if (c == '"' || c == '\'') {
+				std::string text;
+				size_t j = i + 1;
+				while (j < code.size() && code[j] != c && code[j] != '\n') {
+					if (code[j] == '\\' && j + 1 < code.size()) j++;
+					text += code[j++];
+				}
+				fromString(text);
+				i = j + 1;
+			}
+			else if (word(c)) {
+				size_t j = i;
+				while (j < code.size() && word(code[j])) j++;
+				if (!std::isdigit((unsigned char)c)) {
+					auto name = names.find(code.substr(i, j - i));
+					if (name != names.end()) found.insert(name->second);
+				}
+				i = j;
+			}
+			else i++;
+		}
+		return found;
+	}
+
+	// what its Lua files call for, and what it was refused before that they didn't show
+	static void findUses(Extension& ext, const fs::path& folderPath) {
+		ext.uses.clear();
+		for (const auto& [path, hash] : ext.luaFiles) {
+			for (ExtensionPermissionTypes permission : callsFor(Files::readText(folderPath / fs::u8path(path)))) ext.uses.insert(permission);
+		}
+		for (const std::string& name : Settings::LoadCalls(ext.folderKey)) {
+			if (const PermissionInfo* info = findPermission(name)) ext.uses.insert(info->type);
+		}
+	}
+
+	void markUsed(Extension& ext, ExtensionPermissionTypes permission) {
+		ext.lastUsed[(int)permission] = (long long)std::time(nullptr);
+	}
+
+	std::string lastUsedLine(const Extension& ext, ExtensionPermissionTypes permission, long long now) {
+		long long used = ext.lastUsed[(int)permission];
+		if (used == 0) return ext.extensionPermissions.count(permission) ? "Not used yet" : "";
+		long long minutes = std::max(0LL, now - used) / 60;
+		if (minutes == 0) return "Used just now";
+		if (minutes < 60) return "Used " + std::to_string(minutes) + " min ago";
+		if (minutes < 48 * 60) return "Used " + std::to_string(minutes / 60) + " h ago";
+		return "Used " + std::to_string(minutes / (24 * 60)) + " days ago";
+	}
+
+	void saveLastUsed() {
+		std::map<std::string, std::map<std::string, long long>> all;
+		for (auto& ext : registeredExtensions) {
+			if (ext->folderKey.empty()) continue;
+			std::map<std::string, long long>& times = all[ext->folderKey];
+			for (const auto& permission : permissionList) {
+				if (ext->lastUsed[(int)permission.type]) times[permission.name] = ext->lastUsed[(int)permission.type];
+			}
+		}
+		Settings::SaveLastUsed(all);
 	}
 
 	// file is inside root, or root itself; both canonical
@@ -301,13 +502,17 @@ namespace Extensions {
 			}
 			return std::nullopt;
 		}
-		if (ext.extensionPermissions.count(needed)) return file;
+		if (ext.extensionPermissions.count(needed)) {
+			markUsed(ext, needed);
+			return file;
+		}
 
 		const PermissionInfo* info = findPermission(needed);
 		std::string label = info ? info->label : "a permission";
 		if (ext.refusalsLogged.insert("path " + label).second) {
 			std::cerr << "[" << ext.name << "] " << path << " needs " << label << ", which it isn't allowed" << std::endl;
 		}
+		wanted(ext, needed);
 		return std::nullopt;
 	}
 
@@ -317,6 +522,7 @@ namespace Extensions {
 	}
 
 	void unload(Extension& ext) {
+		Asks::forget(ext);
 		for (const std::string& id : ext.keybinds) {
 			Keybindings::DeleteKeybind(id);
 		}
@@ -353,6 +559,7 @@ namespace Extensions {
 		for (auto& ext : registeredExtensions) {
 			runForExtension(ext.get(), ext->shutdownFunction);
 		}
+		saveLastUsed();
 		registeredExtensions.clear();
 	}
 
@@ -372,7 +579,7 @@ namespace Extensions {
 		LuaFunctions::Items::beginFrame();
 		LuaFunctions::UpdateIntervals();
 		for (auto& ext : registeredExtensions) {
-			runForExtension(ext.get(), ext->updateFunction);
+			if (!ext->stopped) runForExtension(ext.get(), ext->updateFunction);
 		}
 	}
 
@@ -497,36 +704,40 @@ namespace Extensions {
 		);
 		ImGui::PopStyleColor();
 
-		ImGui::TextDisabled(
-			"%s  v%s",
-			ext->author.c_str(),
-			ext->version.c_str()
-		);
-
 		ImGui::EndGroup();
 		ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.3f));
 
-		ImGui::Separator();
-
-		if (!ext->stopReason.empty() || !ext->startError.empty()) {
-			if (!ext->stopReason.empty())
-				ImGui::TextWrapped("Stopped: %s", ext->stoppedForMemory ? "it used too much memory" : "it ran too long");
-			else
-				ImGui::TextWrapped("Couldn't start: %s", ext->startError.c_str());
-			if (Controls::Button("Start again")) ext->startAgain = true;
-		}
-
-		for (const auto& id : ext->settingsOrder) {
-			auto it = ext->settings.find(id);
-
-			if (it != ext->settings.end() && drawSetting(it->second)) {
-				saveSettings();
-			}
-		}
-
+		std::vector<std::string> tabs = { "General" };
+		tabs.push_back("Permissions");
+		tabs.push_back("About");
+		const std::string& tab = tabs[Controls::Tabs("##extensionTabs", tabs)];
 		{
-			InPhase menu(Phase::Menu);
-			runForExtension(ext.get(), ext->menuFunction);
+			if (tab == "General") {
+				if (!ext->stopReason.empty() || !ext->startError.empty()) {
+					if (!ext->stopReason.empty())
+						ImGui::TextWrapped("Stopped: %s", ext->stoppedForMemory ? "it used too much memory" : "it ran too long");
+					else
+						ImGui::TextWrapped("Couldn't start: %s", ext->startError.c_str());
+					if (Controls::Button("Start again")) ext->startAgain = true;
+				}
+				else if (ext->stopped) {
+					ImGui::TextDisabled("Switched off.");
+				}
+				for (const auto& id : ext->settingsOrder) {
+					auto it = ext->settings.find(id);
+
+					if (it != ext->settings.end() && drawSetting(it->second)) {
+						saveSettings();
+					}
+				}
+
+				{
+					InPhase menu(Phase::Menu);
+					runForExtension(ext.get(), ext->menuFunction);
+				}
+			}
+			else if (tab == "Permissions") drawPermissionsTab(*ext);
+			else drawAboutTab(*ext);
 		}
 
 		ImGui::PopID();
@@ -799,6 +1010,26 @@ namespace Extensions {
 		return name;
 	}
 
+	// What the author wrote, at most `most` letters with "..." where it's
+	// cut. One line unless lines, then only its line breaks are kept.
+	static std::string authorText(const std::string& text, size_t most, bool lines) {
+		std::string shown;
+		size_t letters = 0;
+		for (size_t i = 0; i < text.size(); i++) {
+			unsigned char c = (unsigned char)text[i];
+			if ((c & 0xC0) != 0x80 && ++letters > most) {
+				shown += "...";
+				break;
+			}
+			shown += c == '\n' && lines ? '\n' : c < 0x20 ? ' ' : (char)c;
+		}
+		return shownName(shown);
+	}
+
+	static std::string authorLine(const std::string& text) {
+		return authorText(text, 200, false);
+	}
+
 	// Every folder gives an extension: one that failed has startError (or
 	// stopReason) and no Lua state, and is shown with it.
 	static std::unique_ptr<Extension> loadExtension(const fs::path& scriptPath, const fs::path& folderPath) {
@@ -872,6 +1103,13 @@ namespace Extensions {
 			return ext;
 		}
 		loadExtensionPermissions(ext.get());
+		findUses(*ext, folderPath);
+		// switched off: on its page with nothing of it run, so it can be switched on
+		if (!ext->enabled) {
+			ext->stopped = true;
+			std::cout << "Extension switched off: " << ext->folderKey << std::endl;
+			return ext;
+		}
 
 		sol::environment env(
 			*ext->luaState,
@@ -913,10 +1151,14 @@ namespace Extensions {
 		if (meta) {
 			ext->name = shownName(meta->get_or("name", ext->name));
 			if (ext->name.empty()) ext->name = shownName(ext->folderKey);
-			ext->description = meta->get_or("description", std::string("No description."));
+			ext->description = authorText(meta->get_or("description", std::string("No description.")), DescriptionLetters, false);
+			ext->about = authorText(meta->get_or("about", std::string()), AboutLetters, true);
 			ext->author = meta->get_or("author", std::string("Unknown"));
 			ext->version = meta->get_or("version", std::string("1.0.0"));
+			sol::optional<sol::table> listed = (*meta)["permissions"];
+			if (listed) readListedPermissions(*ext, *listed);
 		}
+		ext->listRead = true;
 
 		std::filesystem::path iconPath = folderPath / "icon.png";
 		if (std::filesystem::exists(iconPath)) {
@@ -937,8 +1179,20 @@ namespace Extensions {
 		return ext;
 	}
 
+	// its questions go out once it's in registeredExtensions
+	static void askOnceLoaded(Extension& ext) {
+		if (!ext.luaState || ext.stopped) return;
+		askListedPermissions(ext);
+		for (ExtensionPermissionTypes permission : ext.askWhenLoaded) {
+			if (!ext.extensionPermissions.count(permission)) Asks::askPermission(ext, permission);
+		}
+		ext.askWhenLoaded.clear();
+		Asks::askChanged(ext);
+	}
+
 	void loadLuaExtension(const fs::path& scriptPath, const fs::path& folderPath) {
 		registeredExtensions.push_back(loadExtension(scriptPath, folderPath));
+		askOnceLoaded(*registeredExtensions.back());
 	}
 
 	void startAgainPressed() {
@@ -946,38 +1200,195 @@ namespace Extensions {
 			if (!slot->startAgain) continue;
 			fs::path folder = slot->folder;
 			std::cout << "Starting again: " << slot->name << std::endl;
+			long long lastUsed[PermissionCount];
+			std::copy(std::begin(slot->lastUsed), std::end(slot->lastUsed), lastUsed);
 			slot.reset();
 			slot = loadExtension(folder / "main.lua", folder);
+			for (int i = 0; i < PermissionCount; i++) slot->lastUsed[i] = std::max(slot->lastUsed[i], lastUsed[i]);
+			askOnceLoaded(*slot);
 			runForExtension(slot.get(), slot->registerSettings);
 			loadSettings();
 			runInit(*slot);
 		}
 	}
 
-	void drawExtensionPermissionMenu() {
-		ImGui::TextWrapped(
-			"Extensions can be given permissions to access certain features.  Some of these are sensitive and should be granted with caution.");
-		for (auto& ext : registeredExtensions) {
-			ImGui::Separator();
-			ImGui::Text("%s", ext->name.c_str());
-			// the name is the extension's own word, its folder tells two with the same name apart
-			ImGui::SameLine();
-			ImGui::TextDisabled("(folder: %s)", ext->folderKey.c_str());
-			ImGui::TextDisabled("%s  v%s", ext->author.c_str(), ext->version.c_str());
-			ImGui::TextWrapped("%s", ext->description.c_str());
-			ImGui::Separator();
-			ImGui::PushID(ext.get());
-			for (const auto& permission : permissionList) {
-				bool hasPermission = ext->extensionPermissions.count(permission.type) > 0;
-				if (ImGui::Checkbox(permission.label, &hasPermission)) {
-					if (hasPermission) {
-						ext->extensionPermissions.insert(permission.type);
-					}
-					else {
-						ext->extensionPermissions.erase(permission.type);
-					}
-					saveExtensionPermissions(*ext);
+	// a host name: letters, digits, '-' and dots between them, like hoyolab.com
+	static bool siteName(const std::string& name) {
+		if (name.empty() || name.size() > 253 || name.front() == '.' || name.back() == '.') return false;
+		if (name.find("..") != std::string::npos) return false;
+		for (char c : name) {
+			if (!(std::islower((unsigned char)c) || std::isdigit((unsigned char)c) || c == '-' || c == '.')) return false;
+		}
+		return true;
+	}
+
+	static void readSites(Extension& ext, const sol::table& sites) {
+		ext.sitesOnly = true;
+		ext.sites.clear();
+		for (const auto& [index, value] : sites) {
+			std::string name = value.get_type() == sol::type::string ? value.as<std::string>() : "";
+			for (char& c : name) c = (char)std::tolower((unsigned char)c);
+			if (!siteName(name)) {
+				std::cerr << "[" << ext.name << "] metadata.permissions.network.sites: " << authorLine(name)
+					<< " isn't a site name, like hoyolab.com" << std::endl;
+				continue;
+			}
+			if (std::find(ext.sites.begin(), ext.sites.end(), name) == ext.sites.end()) ext.sites.push_back(name);
+		}
+	}
+
+	std::string reasonLine(const Extension& ext, const PermissionInfo& permission) {
+		if (permission.type != ExtensionPermissionTypes::NetworkAccess || !ext.sitesOnly) return permission.reason;
+		if (ext.sites.empty()) return "It can't talk to any website.";
+		return "It can talk to: " + Helpers::joined(ext.sites);
+	}
+
+	void readListedPermissions(Extension& ext, const sol::table& list) {
+		for (const auto& [key, value] : list) {
+			if (key.get_type() != sol::type::string) continue;
+			std::string name = key.as<std::string>();
+			const PermissionInfo* info = findPermission(name);
+			if (!info) {
+				std::cerr << "[" << ext.name << "] metadata.permissions: knows no permission named " << name << std::endl;
+				continue;
+			}
+			std::string reason;
+			if (value.get_type() == sol::type::table) {
+				sol::table entry = value.as<sol::table>();
+				sol::optional<std::string> written = entry["reason"];
+				if (written) reason = authorLine(*written);
+				sol::object sites = entry["sites"];
+				if (info->type == ExtensionPermissionTypes::NetworkAccess && sites.get_type() == sol::type::table) {
+					readSites(ext, sites.as<sol::table>());
 				}
+				else if (info->type == ExtensionPermissionTypes::NetworkAccess && sites.valid() && sites.get_type() != sol::type::lua_nil) {
+					// a list it can't read lets it reach none
+					std::cerr << "[" << ext.name << "] metadata.permissions.network.sites should be a list, like { \"hoyolab.com\" }" << std::endl;
+					ext.sitesOnly = true;
+					ext.sites.clear();
+				}
+			}
+			else {
+				std::cerr << "[" << ext.name << "] metadata.permissions." << name << " should be a table, like { reason = \"...\" }" << std::endl;
+			}
+			ext.reasons[info->type] = reason;
+		}
+	}
+
+	void askListedPermissions(Extension& ext) {
+		for (const PermissionInfo& permission : permissionList) {
+			if (!ext.reasons.count(permission.type) || ext.extensionPermissions.count(permission.type)) continue;
+			// keys are asked for one by one, as they're registered
+			if (permission.type == ExtensionPermissionTypes::Keybinds) continue;
+			bool hadIt = std::find(ext.grantsBeforeChange.begin(), ext.grantsBeforeChange.end(), permission.name) != ext.grantsBeforeChange.end();
+			bool newSinceChange = !ext.grantsBeforeChange.empty() && !hadIt;
+			if (ext.firstStart || newSinceChange) Asks::askPermission(ext, permission.type);
+		}
+	}
+
+	// whether the Permissions tab has a row for it: it has it, may have it
+	// without asking, its code calls for it, main.lua lists it, or it asked
+	static bool shownOnTab(const Extension& ext, const PermissionInfo& permission) {
+		return ext.extensionPermissions.count(permission.type) || defaultPermissions.count(permission.type) ||
+			ext.uses.count(permission.type) ||
+			ext.reasons.count(permission.type) || ext.refused.count(permission.type) ||
+			ext.neverAsk.count(permission.name) || ext.switchedOff.count(permission.name);
+	}
+
+	// The player answers on the tab: a waiting "Allow the same again" is
+	// answered by what the tab shows.
+	static void changedOnTab(Extension& ext) {
+		if (!ext.grantsBeforeChange.empty()) {
+			ext.grantsBeforeChange.clear();
+			ext.hashBeforeChange.clear();
+			Asks::forget(ext, Asks::Kind::Changed);
+		}
+		saveExtensionPermissions(ext);
+	}
+
+	void setRunning(Extension& ext, bool on) {
+		ext.enabled = on;
+		if (!on) {
+			ext.startAgain = false;
+			stopExtension(ext);
+		}
+		// a stopped one with an error keeps its [Start again]
+		else if (ext.stopped && ext.startError.empty() && ext.stopReason.empty()) ext.startAgain = true;
+		saveExtensionPermissions(ext);
+	}
+
+	void stopExtension(Extension& ext) {
+		if (ext.stopped) return;
+		runForExtension(&ext, ext.shutdownFunction);
+		unload(ext);
+		ext.stopped = true;
+		std::cout << "[" << ext.name << "] switched off" << std::endl;
+	}
+
+	// The overlay's tab on every extension's page, the extension can't draw in
+	// it: the switch for the whole extension, then each permission with its
+	// switch and reason line, and what it won't ask for again.
+	void drawAboutTab(const Extension& ext) {
+		if (!ext.about.empty()) {
+			ImGui::TextWrapped("%s", ext.about.c_str());
+			ImGui::Separator();
+		}
+		ImGui::Text("Version: %s", ext.version.c_str());
+		ImGui::Text("Author: %s", ext.author.c_str());
+		ImGui::TextDisabled("As the extension names it. Nobody checks it.");
+		ImGui::Text("Folder: %s", ext.folderKey.c_str());
+	}
+
+	void drawPermissionsTab(Extension& ext) {
+		// its files weren't read, so what's saved for it wasn't either
+		if (ext.extensionHash.empty()) {
+			ImGui::TextDisabled("Its files can't be read.");
+			return;
+		}
+		bool on = ext.enabled;
+		if (Controls::Toggle("Run this extension", &on)) setRunning(ext, on);
+		if (!ext.stopped && ext.stopReason.empty() && ext.cost.perFrame >= 0) {
+			if (ext.cost.perFrame < 0.05) ImGui::Text("Time it takes: less than 0.1 ms per frame");
+			else if (ext.cost.perFrame > SlowMsPerFrame) ImGui::Text("Time it takes: about %.1f ms per frame, it's slowing the overlay down", ext.cost.perFrame);
+			else ImGui::Text("Time it takes: about %.1f ms per frame", ext.cost.perFrame);
+		}
+		ImGui::Separator();
+
+		for (const auto& permission : permissionList) {
+			if (!shownOnTab(ext, permission)) continue;
+			bool has = ext.extensionPermissions.count(permission.type) > 0;
+			// the extension's own words first, in white, then ours in grey
+			Controls::ToggleOptions row;
+			auto reason = ext.reasons.find(permission.type);
+			if (reason != ext.reasons.end() && !reason->second.empty()) {
+				// its reason on one line, in quotes
+				std::string said = reason->second;
+				std::replace(said.begin(), said.end(), '\n', ' ');
+				std::replace(said.begin(), said.end(), '\r', ' ');
+				row.lines.push_back({ "\"" + said + "\"", false });
+			}
+			if (permission.type == ExtensionPermissionTypes::Keybinds && !ext.allowedKeys.empty())
+				row.lines.push_back({ "Keys: " + Helpers::joined(ext.allowedKeys), false });
+			row.lines.push_back({ reasonLine(ext, permission) });
+			if (!has && ext.refused.count(permission.type)) row.lines.push_back({ "Refused at this start." });
+			std::string used = lastUsedLine(ext, permission.type, (long long)std::time(nullptr));
+			if (!used.empty()) row.lines.push_back({ used });
+			if (Controls::Toggle((std::string(permission.label) + "##" + permission.name).c_str(), &has, row)) {
+				switchPermission(ext, permission.type, has);
+				changedOnTab(ext);
+			}
+		}
+
+		std::vector<std::string> never(ext.neverAsk.begin(), ext.neverAsk.end());
+		std::sort(never.begin(), never.end());
+		for (const std::string& name : never) {
+			const PermissionInfo* permission = findPermission(name);
+			ImGui::PushID(name.c_str());
+			ImGui::Text("Won't ask again: %s", permission ? permission->label : name.c_str());
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Let it ask")) {
+				letAsk(ext, name);
+				changedOnTab(ext);
 			}
 			ImGui::PopID();
 		}
@@ -989,23 +1400,37 @@ namespace Extensions {
 
 	// Saved grants by folder. None saved: the defaults. Saved for other files
 	// (the extension changed since): the defaults too, and the old ones are kept
-	// for asking to allow the same again.
+	// for asking to allow the same again. Never, off and enabled are by folder.
 	void loadExtensionPermissions(Extension* ext) {
 		Settings::Grants grants = Settings::LoadGrants(ext->folderKey, ext->extensionHash);
 		ext->extensionPermissions.clear();
 		ext->unknownGrants.clear();
 		ext->grantsBeforeChange.clear();
 		ext->hashBeforeChange.clear();
+		ext->neverAsk = { grants.never.begin(), grants.never.end() };
+		ext->switchedOff = { grants.off.begin(), grants.off.end() };
+		ext->refused.clear();
+		ext->allowedKeys = grants.keys;
+		ext->refusedKeys.clear();
+		ext->refusedSettings.clear();
+		for (const auto& [name, time] : Settings::LoadLastUsed(ext->folderKey)) {
+			const PermissionInfo* permission = findPermission(name);
+			if (permission) ext->lastUsed[(int)permission->type] = std::max(ext->lastUsed[(int)permission->type], time);
+		}
+		ext->enabled = grants.enabled;
+		ext->firstStart = !grants.saved;
 
 		if (!grants.saved) {
 			ext->extensionPermissions = defaultPermissions;
 			return;
 		}
+		// the defaults, but none the player switched off; a default added in a
+		// newer overlay is on for extensions saved before it
+		for (const PermissionInfo& permission : permissionList) {
+			if (defaultPermissions.count(permission.type) && !ext->switchedOff.count(permission.name)) ext->extensionPermissions.insert(permission.type);
+		}
 		if (grants.hash != ext->extensionHash) {
-			// the defaults, but nothing the player had taken away
 			for (const std::string& name : grants.names) {
-				const PermissionInfo* permission = findPermission(name);
-				if (permission && defaultPermissions.count(permission->type)) ext->extensionPermissions.insert(permission->type);
 				if (!isRetired(name)) ext->grantsBeforeChange.push_back(name);
 			}
 			ext->hashBeforeChange = grants.hash;
@@ -1019,14 +1444,80 @@ namespace Extensions {
 		}
 	}
 
+	static std::vector<std::string> sorted(const std::unordered_set<std::string>& names) {
+		std::vector<std::string> list(names.begin(), names.end());
+		std::sort(list.begin(), list.end());
+		return list;
+	}
+
+	// Asked to allow the same again, the old hash and grants stay saved until
+	// it's answered, with what the player allowed since added to them.
 	void saveExtensionPermissions(const Extension& ext) {
-		Settings::Grants grants;
-		grants.saved = true;
-		grants.hash = ext.extensionHash;
-		for (const auto& permission : permissionList) {
-			if (ext.extensionPermissions.count(permission.type)) grants.names.push_back(permission.name);
+		Settings::Grants grants = Settings::LoadGrants(ext.folderKey, ext.extensionHash);
+		bool waitingForSame = !ext.grantsBeforeChange.empty();
+		if (!waitingForSame) {
+			grants.hash = ext.extensionHash;
+			grants.names.clear();
 		}
-		for (const std::string& name : ext.unknownGrants) grants.names.push_back(name);
+		for (const auto& permission : permissionList) {
+			bool saved = std::find(grants.names.begin(), grants.names.end(), permission.name) != grants.names.end();
+			if (ext.extensionPermissions.count(permission.type) && !saved) grants.names.push_back(permission.name);
+		}
+		if (!waitingForSame) {
+			for (const std::string& name : ext.unknownGrants) grants.names.push_back(name);
+		}
+		grants.saved = true;
+		grants.never = sorted(ext.neverAsk);
+		grants.off = sorted(ext.switchedOff);
+		grants.keys = ext.allowedKeys;
+		grants.enabled = ext.enabled;
 		Settings::SaveGrants(ext.folderKey, grants);
+	}
+
+	std::string permissionState(const Extension& ext, ExtensionPermissionTypes permission) {
+		const PermissionInfo* info = findPermission(permission);
+		if (ext.extensionPermissions.count(permission)) return "allowed";
+		if (info && ext.switchedOff.count(info->name)) return "off";
+		if (info && ext.neverAsk.count(info->name)) return "never";
+		if (ext.refused.count(permission)) return "refused";
+		return "not_asked";
+	}
+
+	bool mayAsk(const Extension& ext, ExtensionPermissionTypes permission) {
+		return findPermission(permission) && permissionState(ext, permission) == "not_asked";
+	}
+
+	void allow(Extension& ext, ExtensionPermissionTypes permission) {
+		const PermissionInfo* info = findPermission(permission);
+		if (!info) return;
+		ext.extensionPermissions.insert(permission);
+		ext.refused.erase(permission);
+		ext.neverAsk.erase(info->name);
+		ext.switchedOff.erase(info->name);
+	}
+
+	void refuse(Extension& ext, ExtensionPermissionTypes permission, bool never) {
+		const PermissionInfo* info = findPermission(permission);
+		if (!info) return;
+		ext.refused.insert(permission);
+		if (never) ext.neverAsk.insert(info->name);
+	}
+
+	void switchPermission(Extension& ext, ExtensionPermissionTypes permission, bool on) {
+		const PermissionInfo* info = findPermission(permission);
+		if (!info) return;
+		if (on) {
+			allow(ext, permission);
+		}
+		else {
+			ext.extensionPermissions.erase(permission);
+			ext.switchedOff.insert(info->name);
+		}
+	}
+
+	void letAsk(Extension& ext, const std::string& name) {
+		ext.neverAsk.erase(name);
+		const PermissionInfo* info = findPermission(name);
+		if (info) ext.refused.erase(info->type);
 	}
 }

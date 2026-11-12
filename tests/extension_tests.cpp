@@ -1,4 +1,5 @@
 #include <chrono>
+#include <ctime>
 #include <windows.h>
 #include <GLFW/glfw3.h>
 #include <catch2/catch_approx.hpp>
@@ -31,6 +32,12 @@ using Catch::Approx;
 
 namespace {
     const fs::path DATA = fs::path(__FILE__).parent_path() / "data";
+
+    // the defaults and these
+    std::unordered_set<Permission> withDefaults(std::unordered_set<Permission> more) {
+        more.insert(Extensions::defaultPermissions.begin(), Extensions::defaultPermissions.end());
+        return more;
+    }
 
     // what's written to std::cerr while it's alive
     struct CaptureLog {
@@ -336,9 +343,7 @@ TEST_CASE("an old by-hash permission list is moved to the extension's folder") {
     CHECK(saved["extensions"]["map"]["opacity"] == 0.5);
     CHECK(saved["zoomFromKnob"] == true);
 
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{
-        Permission::DisplayOverlay, Permission::DisplayRead, Permission::Keybinds,
-        Permission::InternalWritefile, Permission::NetworkAccess, Permission::InternalReadfile });
+    CHECK(ext.extensionPermissions == withDefaults({ Permission::Keybinds, Permission::NetworkAccess }));
     CHECK(ext.grantsBeforeChange.empty());
 
     // the next start finds it by folder
@@ -355,17 +360,30 @@ TEST_CASE("saved grants come back by name, with ones this overlay doesn't know k
     ext.extensionHash = "h1";
     Extensions::loadExtensionPermissions(&ext);
 
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::Keybinds, Permission::NetworkAccess });
+    CHECK(ext.extensionPermissions == withDefaults({ Permission::Keybinds, Permission::NetworkAccess }));
     CHECK(ext.unknownGrants == std::vector<std::string>{ "game_traffic" });
 
     // the player takes Network Access away
     ext.extensionPermissions.erase(Permission::NetworkAccess);
     Extensions::saveExtensionPermissions(ext);
-    CHECK(readSettings()["extensionGrants"]["markers"]["granted"] == std::vector<std::string>{ "keybinds", "game_traffic" });
+    CHECK(readSettings()["extensionGrants"]["markers"]["granted"] == std::vector<std::string>{ "display_overlay", "display_read",
+        "keybinds", "internal_read", "internal_write", "game_traffic" });
 
     Extensions::loadExtensionPermissions(&ext);
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::Keybinds });
+    CHECK(ext.extensionPermissions == withDefaults({ Permission::Keybinds }));
     CHECK(ext.unknownGrants == std::vector<std::string>{ "game_traffic" });
+}
+
+TEST_CASE("a default the old list didn't have stays off") {
+    // the player had taken Display Read and file writing away
+    writeSettings(R"({ "extensionPermissions": { "h1": [6, 5, 2] } })");
+    Extensions::Extension ext;
+    ext.name = ext.folderKey = "example";
+    ext.extensionHash = "h1";
+    Extensions::loadExtensionPermissions(&ext);
+    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::Keybinds, Permission::DisplayOverlay, Permission::NetworkAccess,
+        Permission::InternalReadfile });
+    CHECK(readSettings()["extensionGrants"]["example"]["off"] == std::vector<std::string>{ "display_read", "internal_write" });
 }
 
 TEST_CASE("saved grants for files outside the folder are dropped") {
@@ -374,7 +392,7 @@ TEST_CASE("saved grants for files outside the folder are dropped") {
     ext.name = ext.folderKey = "markers";
     ext.extensionHash = "h1";
     Extensions::loadExtensionPermissions(&ext);
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::NetworkAccess });
+    CHECK(ext.extensionPermissions == withDefaults({ Permission::NetworkAccess }));
     CHECK(ext.unknownGrants.empty());
 
     // nor asked for again after a change
@@ -386,14 +404,14 @@ TEST_CASE("saved grants for files outside the folder are dropped") {
 TEST_CASE("an extension whose files changed runs with the defaults it still had") {
     // the player took file writing away, and gave it the internet
     writeSettings(R"({ "extensionGrants": { "markers": { "hash": "h1", "granted": ["keybinds", "network",
-        "display_overlay", "display_read", "internal_read"] } } })");
+        "display_overlay", "display_read", "internal_read"], "off": ["internal_write"] } } })");
     Extensions::Extension ext;
     ext.name = ext.folderKey = "markers";
     ext.extensionHash = "h2";
     Extensions::loadExtensionPermissions(&ext);
 
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{
-        Permission::Keybinds, Permission::DisplayOverlay, Permission::DisplayRead, Permission::InternalReadfile });
+    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::Keybinds,
+        Permission::DisplayOverlay, Permission::DisplayRead, Permission::InternalReadfile });
     CHECK(ext.grantsBeforeChange == std::vector<std::string>{ "keybinds", "network",
         "display_overlay", "display_read", "internal_read" });
     CHECK(ext.hashBeforeChange == "h1");
@@ -549,6 +567,27 @@ TEST_CASE("pathFor takes folder and file names in any language") {
     CHECK(lua->script(R"(return ListDirectory("")[1])").get<std::string>() == "笔记.txt");
 }
 
+TEST_CASE("the description is one line and the about text keeps its lines, both cut past their length") {
+    std::filesystem::remove(Settings::file);
+    Extensions::Extension* ext = TestExtension::load("long_texts", R"(
+        metadata = { description = "Short\nline", about = "First\nSecond\tthird" }
+    )");
+    REQUIRE(ext != nullptr);
+    CHECK(ext->description == "Short line");
+    CHECK(ext->about == "First\nSecond third");
+    TestExtension::unloadAll();
+
+    // letters, not bytes: each of these is three bytes in UTF-8
+    std::string description(Extensions::DescriptionLetters * 3 + 3, 'x');
+    for (size_t i = 0; i < Extensions::DescriptionLetters + 1; i++) description.replace(i * 3, 3, "地");
+    std::string about(Extensions::AboutLetters + 10, 'y');
+    ext = TestExtension::load("long_texts", "metadata = { description = '" + description + "', about = '" + about + "' }");
+    REQUIRE(ext != nullptr);
+    CHECK(ext->description == description.substr(0, Extensions::DescriptionLetters * 3) + "...");
+    CHECK(ext->about == std::string(Extensions::AboutLetters, 'y') + "...");
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("an extension loads with its metadata and its functions") {
     std::filesystem::remove(Settings::file);
     Extensions::Extension* ext = TestExtension::load("loads", R"(
@@ -561,6 +600,7 @@ TEST_CASE("an extension loads with its metadata and its functions") {
     CHECK(ext->description == "For the tests");
     CHECK(ext->author == "Someone");
     CHECK(ext->version == "1.2.3");
+    CHECK(ext->about.empty());
     CHECK(ext->folder == TestExtension::folder("loads"));
     CHECK(ext->extensionPermissions == Extensions::defaultPermissions);
 
@@ -1322,5 +1362,118 @@ TEST_CASE("only the settings a player changed are saved") {
     ext->settings["count"].value = 5;
     Extensions::saveSettings();
     CHECK(Settings::LoadExtensions().count("saved_changes") == 0);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("an extension's time counts what the overlay does inside its calls, not another extension's") {
+    Extensions::Extension* a = TestExtension::load("cost_a", "");
+    Extensions::Extension* b = TestExtension::load("cost_b", "");
+    REQUIRE(a != nullptr);
+    REQUIRE(b != nullptr);
+    a->cost.ms = b->cost.ms = 0;
+
+    // a blocking overlay function inside a's call, and b's call inside that
+    a->luaState->set_function("Wait", [b]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        Extensions::runForExtension(b, []() { std::this_thread::sleep_for(std::chrono::milliseconds(60)); });
+    });
+    REQUIRE(TestExtension::run(a, "Wait()"));
+    CHECK(a->cost.ms >= 29);
+    CHECK(a->cost.ms < 55);
+    CHECK(b->cost.ms >= 59);
+
+    // its own Lua counts too
+    double before = a->cost.ms;
+    REQUIRE(TestExtension::run(a, "local x = 0 for i = 1, 5000000 do x = x + i end"));
+    CHECK(a->cost.ms - before > 1);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("a newly started extension's first second isn't counted") {
+    // ends the second running now, whatever is in it
+    Extensions::countTurn();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1050));
+    Extensions::countTurn();
+
+    Extensions::Extension* ext = TestExtension::load("cost_new", "");
+    REQUIRE(ext != nullptr);
+    // a long Init
+    ext->cost.ms = 500;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1050));
+    Extensions::countTurn();
+    CHECK(ext->cost.perFrame == -1);
+    CHECK(ext->cost.ms == 0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1050));
+    Extensions::countTurn();
+    CHECK(ext->cost.perFrame >= 0);
+    CHECK(ext->cost.perFrame < 1);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("an extension is slow after 10 seconds in a row over 2 ms per frame, once") {
+    Extensions::Cost cost;
+    CHECK(cost.perFrame == -1);
+
+    // 60 frames a second: 150 ms is 2.5 ms per frame
+    for (int i = 0; i < 9; i++) {
+        cost.ms = 150;
+        CHECK_FALSE(Extensions::endSecond(cost, 60));
+    }
+    CHECK(cost.perFrame == Approx(2.5));
+    // a second at 2 ms isn't over, the run starts again
+    cost.ms = 120;
+    CHECK_FALSE(Extensions::endSecond(cost, 60));
+    for (int i = 0; i < 9; i++) {
+        cost.ms = 150;
+        CHECK_FALSE(Extensions::endSecond(cost, 60));
+    }
+    // a second that isn't counted ends the run too
+    Extensions::skipSecond(cost);
+    for (int i = 0; i < 9; i++) {
+        cost.ms = 150;
+        CHECK_FALSE(Extensions::endSecond(cost, 60));
+    }
+    cost.ms = 150;
+    CHECK(Extensions::endSecond(cost, 60));
+    CHECK(cost.slow);
+    cost.ms = 150;
+    CHECK_FALSE(Extensions::endSecond(cost, 60));
+
+    // what's shown is the last 3 seconds
+    for (int ms : {600, 0, 0}) {
+        cost.ms = ms;
+        Extensions::endSecond(cost, 100);
+    }
+    CHECK(cost.perFrame == Approx(2.0));
+    cost.ms = 0;
+    Extensions::endSecond(cost, 100);
+    CHECK(cost.perFrame == Approx(0.0));
+}
+
+TEST_CASE("each permission says when it was last used, kept when the overlay closes") {
+    std::filesystem::remove(Settings::file);
+    Extensions::Extension* ext = TestExtension::load("last_used", "");
+    REQUIRE(ext != nullptr);
+    using Extensions::lastUsedLine;
+    long long now = (long long)std::time(nullptr);
+    CHECK(lastUsedLine(*ext, Permission::InternalWritefile, now) == "Not used yet");
+    // not allowed and never used: no line
+    CHECK(lastUsedLine(*ext, Permission::NetworkAccess, now) == "");
+
+    // a path in its folder uses file writing, a function uses its own permission
+    REQUIRE(TestExtension::run(ext, R"(WriteFile("used.txt", "x"))"));
+    now = (long long)std::time(nullptr);
+    CHECK(lastUsedLine(*ext, Permission::InternalWritefile, now) == "Used just now");
+    CHECK(lastUsedLine(*ext, Permission::InternalWritefile, now + 5 * 60) == "Used 5 min ago");
+    CHECK(lastUsedLine(*ext, Permission::InternalWritefile, now + 125 * 60) == "Used 2 h ago");
+    CHECK(lastUsedLine(*ext, Permission::InternalWritefile, now + 3 * 24 * 3600) == "Used 3 days ago");
+    CHECK(lastUsedLine(*ext, Permission::NetworkAccess, now) == "");
+
+    Extensions::destroyExtensions();
+    ext = TestExtension::load("last_used", "");
+    REQUIRE(ext != nullptr);
+    CHECK(lastUsedLine(*ext, Permission::InternalWritefile, now + 5 * 60) == "Used 5 min ago");
+    CHECK(lastUsedLine(*ext, Permission::InternalReadfile, now) == "Not used yet");
     TestExtension::unloadAll();
 }

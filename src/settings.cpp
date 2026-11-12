@@ -131,6 +131,54 @@ namespace Settings {
         write(settings);
     }
 
+    std::map<std::string, long long> LoadLastUsed(const std::string& folder) {
+        std::map<std::string, long long> times;
+        nlohmann::json settings = read();
+        auto all = settings.find("extensionLastUsed");
+        if (all == settings.end() || !all->is_object()) return times;
+        auto saved = all->find(folder);
+        if (saved == all->end() || !saved->is_object()) return times;
+        for (auto& [name, time] : saved->items()) {
+            if (time.is_number_integer()) times[name] = time.get<long long>();
+        }
+        return times;
+    }
+
+    void SaveLastUsed(const std::map<std::string, std::map<std::string, long long>>& lastUsed) {
+        nlohmann::json settings = read();
+        nlohmann::json& all = settings["extensionLastUsed"];
+        if (!all.is_object()) all = nlohmann::json::object();
+        for (const auto& [folder, times] : lastUsed) {
+            if (times.empty()) all.erase(folder);
+            else all[folder] = times;
+        }
+        if (all.empty()) settings.erase("extensionLastUsed");
+        write(settings);
+    }
+
+    std::vector<std::string> LoadCalls(const std::string& folder) {
+        std::vector<std::string> names;
+        nlohmann::json settings = read();
+        auto all = settings.find("extensionCalls");
+        if (all == settings.end() || !all->is_object()) return names;
+        auto saved = all->find(folder);
+        if (saved == all->end() || !saved->is_array()) return names;
+        for (const auto& name : *saved) {
+            if (name.is_string()) names.push_back(name.get<std::string>());
+        }
+        return names;
+    }
+
+    void SaveCalls(const std::string& folder, const std::vector<std::string>& names) {
+        nlohmann::json settings = read();
+        nlohmann::json& all = settings["extensionCalls"];
+        if (!all.is_object()) all = nlohmann::json::object();
+        if (names.empty()) all.erase(folder);
+        else all[folder] = names;
+        if (all.empty()) settings.erase("extensionCalls");
+        write(settings);
+    }
+
     // the numbers the old lists used, which were the order of the permission enum then
     static const char* oldPermissionName(int number) {
         switch (number) {
@@ -146,22 +194,37 @@ namespace Settings {
         }
     }
 
+    static std::vector<std::string> names(const nlohmann::json& saved, const char* field) {
+        std::vector<std::string> list;
+        auto it = saved.find(field);
+        if (it == saved.end() || !it->is_array()) return list;
+        for (const auto& name : *it) {
+            if (name.is_string()) list.push_back(name.get<std::string>());
+        }
+        return list;
+    }
+
     static Grants grantsFrom(const nlohmann::json& saved) {
         Grants grants;
         if (!saved.is_object()) return grants;
         grants.saved = true;
         grants.hash = Files::stringField(saved, "hash");
-        auto names = saved.find("granted");
-        if (names != saved.end() && names->is_array()) {
-            for (const auto& name : *names) {
-                if (name.is_string()) grants.names.push_back(name.get<std::string>());
-            }
-        }
+        grants.names = names(saved, "granted");
+        grants.never = names(saved, "never");
+        grants.off = names(saved, "off");
+        grants.keys = names(saved, "keys");
+        auto enabled = saved.find("enabled");
+        if (enabled != saved.end() && enabled->is_boolean()) grants.enabled = enabled->get<bool>();
         return grants;
     }
 
     static nlohmann::json toJson(const Grants& grants) {
-        return { { "hash", grants.hash }, { "granted", grants.names } };
+        nlohmann::json saved = { { "hash", grants.hash }, { "granted", grants.names } };
+        if (!grants.never.empty()) saved["never"] = grants.never;
+        if (!grants.off.empty()) saved["off"] = grants.off;
+        if (!grants.keys.empty()) saved["keys"] = grants.keys;
+        if (!grants.enabled) saved["enabled"] = false;
+        return saved;
     }
 
     Grants LoadGrants(const std::string& folder, const std::string& hash) {
@@ -182,6 +245,10 @@ namespace Settings {
         for (const auto& number : *list) {
             const char* name = number.is_number_integer() ? oldPermissionName(number.get<int>()) : nullptr;
             if (name) grants.names.push_back(name);
+        }
+        // the old list had these unless the player took them away
+        for (const char* name : { "display_overlay", "display_read", "internal_read", "internal_write" }) {
+            if (std::find(grants.names.begin(), grants.names.end(), name) == grants.names.end()) grants.off.push_back(name);
         }
         old->erase(hash);
         if (old->empty()) settings.erase("extensionPermissions");

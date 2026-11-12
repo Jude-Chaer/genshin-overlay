@@ -5,6 +5,7 @@
 #include "keybindings.hpp"
 #include "extensions.hpp"
 #include "lua_functions.hpp"
+#include "asks.hpp"
 #include "helpers.hpp"
 #include "item_files.hpp"
 #include "map_tiles.hpp"
@@ -32,6 +33,8 @@ namespace Overlay {
     const GLFWvidmode* monitorVideoMode = nullptr;
 
     static bool menuOpen = false;
+    // the menu's page: 0 = Home, 1 = Usage, 2+ = extensions
+    static int activeTab = 0;
     static std::string iniPath;
     static double startTime = 0.0;
 
@@ -740,12 +743,6 @@ namespace Overlay {
         );
         ImGui::PopStyleVar();
 
-        // 0 = Home
-        // 1 = Settings
-        // 2 = Usage
-        // 3+ = extensions
-        static int activeTab = 0;
-
         Controls::Theme theme = Controls::GetTheme();
         // the player's width in font sizes once the splitter is dragged, below 0 to fit the names
         static float sidebarFonts = -1;
@@ -753,7 +750,7 @@ namespace Overlay {
         float splitterWidth = std::max(2.0f, font * 0.35f);
         float listPad = font * 0.35f;
 
-        std::vector<std::string> pageNames = { "Home", "Settings", "Usage" };
+        std::vector<std::string> pageNames = { "Home", "Usage" };
         for (auto& ext : Extensions::registeredExtensions) pageNames.push_back(ext->name);
         float sidebarWidth = sidebarMin;
         if (sidebarFonts > 0) sidebarWidth = sidebarFonts * font;
@@ -787,8 +784,7 @@ namespace Overlay {
 
         // Apple's grey and orange tiles for the overlay's own pages
         DrawPage("Home", 0, 0, false, 0x8E8E93FF);
-        DrawPage("Settings", 1, 0, false, 0x8E8E93FF);
-        DrawPage("Usage", 2, 0, false, 0xFF9F0AFF);
+        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF);
 
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();
@@ -797,7 +793,7 @@ namespace Overlay {
         for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
             auto& ext = Extensions::registeredExtensions[i];
             ImTextureID icon = ext->extensionImage ? (ImTextureID)(intptr_t)ext->extensionImage : 0;
-            DrawPage(ext->name.c_str(), static_cast<int>(i) + 3, icon, false);
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + 2, icon, false);
         }
 
         ImGui::PopStyleVar();
@@ -973,11 +969,6 @@ namespace Overlay {
             break;
 
         case 1:
-            Controls::PageTitle("Settings");
-            Extensions::drawExtensionPermissionMenu();
-            break;
-
-        case 2:
             Controls::PageTitle("Usage");
 
             Stats::Draw();
@@ -986,7 +977,7 @@ namespace Overlay {
 
         default:
             Extensions::drawExtensionMenus(
-                activeTab - 3
+                activeTab - 2
             );
 
             break;
@@ -1004,6 +995,7 @@ namespace Overlay {
     void MainLoop() {
         bool drewLastFrame = true;
         while (!glfwWindowShouldClose(Overlay::Window)) {
+            Extensions::countTurn();
             glfwPollEvents();
             Keybindings::ProcessKeybindings();
             keepOnTop(false);
@@ -1063,6 +1055,7 @@ namespace Overlay {
             if (menuOpen) {
                 DrawMenu();
             }
+            Asks::draw(MapTracking::IsMapOpen(), menuOpen);
             updateTyping(true);
 
             ImGui::Render();
