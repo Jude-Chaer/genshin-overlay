@@ -11,7 +11,7 @@ namespace TestExtension {
     // where the extension with this name is put
     extern std::filesystem::path folder(const std::string& name);
     // Writes main.lua and the other files (name, what's in it) into a fresh
-    // folder and loads it. nullptr if it didn't load.
+    // folder and loads it. nullptr if it didn't start.
     extern Extensions::Extension* load(const std::string& name, const std::string& mainLua,
         const std::map<std::string, std::string>& otherFiles = {});
     // runs Lua as that extension, false if it stopped with an error

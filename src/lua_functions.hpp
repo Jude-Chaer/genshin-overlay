@@ -104,7 +104,13 @@ namespace LuaFunctions {
     int SetInterval(sol::protected_function callback, int milliseconds);
     void ClearInterval(int id);
     void UpdateIntervals();
-    std::tuple<int, int> GetMousePosition();
+    // The cursor in overlay pixels. Without Mouse anywhere only over the game
+    // window, nil anywhere else.
+    sol::variadic_results GetMousePosition(sol::this_state state);
+    // GetMousePosition's answer for a cursor on the screen: game is the game
+    // window's client area on screen (nullopt without the game), overlay the
+    // overlay window's corner
+    std::optional<std::pair<int, int>> mouseFor(POINT cursor, const std::optional<RECT>& game, POINT overlay, bool anywhere);
 
     // what the GetItem functions give, from the catalog passed in (nullptr for none)
     namespace Items {

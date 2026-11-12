@@ -6,6 +6,7 @@
 #include "overlay.hpp"
 #include "map_tiles.hpp"
 #include "map_tracking.hpp"
+#include "capture.hpp"
 #include "minimap.hpp"
 #include "item_icons.hpp"
 #include "item_catalog.hpp"
@@ -222,13 +223,23 @@ namespace LuaFunctions {
 		luaState["Keys"] = keys;
 	}
 
+	static bool inMenu(const char* function) {
+		return Extensions::inPhase(function, Extensions::Phase::Menu);
+	}
+
+	static bool inFrame(const char* function) {
+		return Extensions::inPhase(function, Extensions::Phase::Update);
+	}
+
 	void ImGUI_Text(const std::string& str) {
+		if (!inMenu("ImGUI_Text")) return;
 		ImGui::Text("%s", str.c_str());
 	}
 
 	// ImGUI_Button(label, onPress, options), options is optional:
 	// { look = "main" or "risky", busy = true or the text to show while busy }
 	void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> table) {
+		if (!inMenu("ImGUI_Button")) return;
 		Controls::ButtonOptions options;
 		if (table) {
 			std::string look = table->get_or<std::string>("look", "");
@@ -247,12 +258,14 @@ namespace LuaFunctions {
 	}
 
 	void ImGUI_Image(GLuint textureID, float width, float height) {
+		if (!inMenu("ImGUI_Image")) return;
 		ImGui::Image((ImTextureID)(intptr_t)textureID, ImVec2(width, height));
 	}
 
 	bool ImGUI_Checkbox(const std::string& label, bool currentValue)
 	{
 		bool value = currentValue;
+		if (!inMenu("ImGUI_Checkbox")) return value;
 		Controls::Toggle(label.c_str(), &value);
 		return value;
 	}
@@ -268,6 +281,7 @@ namespace LuaFunctions {
 	bool ImGUI_Toggle(const std::string& label, bool currentValue, sol::optional<sol::table> table)
 	{
 		bool value = currentValue;
+		if (!inMenu("ImGUI_Toggle")) return value;
 		Controls::ToggleOptions options;
 		if (table) {
 			options.checkbox = table->get_or<std::string>("look", "") == "checkbox";
@@ -288,6 +302,7 @@ namespace LuaFunctions {
 
 	float ImGUI_SliderFloat(const std::string& label, float currentValue, float minValue, float maxValue)
 	{
+		if (!inMenu("ImGUI_SliderFloat")) return currentValue;
 		Controls::NumberOptions options;
 		if (minValue < maxValue) { options.min = minValue; options.max = maxValue; }
 		return static_cast<float>(drawnNumber(label, currentValue, options));
@@ -295,6 +310,7 @@ namespace LuaFunctions {
 
 	int ImGUI_SliderInt(const std::string& label, int currentValue, int minValue, int maxValue)
 	{
+		if (!inMenu("ImGUI_SliderInt")) return currentValue;
 		Controls::NumberOptions options;
 		if (minValue < maxValue) { options.min = minValue; options.max = maxValue; }
 		options.whole = true;
@@ -305,6 +321,7 @@ namespace LuaFunctions {
 	// { min, max, step, default (shows Reset), field = true (no slider), whole = true }
 	double ImGUI_Number(const std::string& label, double currentValue, sol::optional<sol::table> table)
 	{
+		if (!inMenu("ImGUI_Number")) return currentValue;
 		Controls::NumberOptions options;
 		if (table) {
 			auto min = table->get<sol::optional<double>>("min");
@@ -326,6 +343,7 @@ namespace LuaFunctions {
 	std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table)
 	{
 		std::string value = currentText;
+		if (!inMenu("ImGUI_InputText")) return value;
 		Controls::TextOptions options;
 		if (table) {
 			options.backToGame = table->get_or("backToGame", true);
@@ -341,32 +359,38 @@ namespace LuaFunctions {
 
 	void ImGUI_SameLine()
 	{
+		if (!inMenu("ImGUI_SameLine")) return;
 		ImGui::SameLine();
 	}
 
 	void ImGUI_Tooltip(const std::string& text)
 	{
+		if (!inMenu("ImGUI_Tooltip")) return;
 		Controls::Tooltip(text.c_str());
 	}
 
 	void ImGUI_Waiting(const std::string& text)
 	{
+		if (!inMenu("ImGUI_Waiting")) return;
 		Controls::Waiting(text.c_str());
 	}
 
 	void ImGUI_Empty(const std::string& text)
 	{
+		if (!inMenu("ImGUI_Empty")) return;
 		Controls::Empty(text.c_str());
 	}
 
 	void ImGUI_Progress(const std::string& text, sol::optional<float> fraction)
 	{
+		if (!inMenu("ImGUI_Progress")) return;
 		float shown = fraction && std::isfinite(*fraction) ? std::max(0.0f, *fraction) : -1.0f;
 		Controls::Progress(text.c_str(), shown);
 	}
 
 	void ImGUI_Separator()
 	{
+		if (!inMenu("ImGUI_Separator")) return;
 		ImGui::Separator();
 	}
 
@@ -382,6 +406,10 @@ namespace LuaFunctions {
 		// remember which extension made it, so GetSetting works inside the callback
 		Extensions::Extension* owner = Extensions::currentExtension;
 		if (!owner) return "";
+		if (owner->keybinds.size() >= Extensions::MaxKeys) {
+			Extensions::logOnce("RegisterKeybind", "has " + std::to_string(Extensions::MaxKeys) + " keys, no more are bound");
+			return "";
+		}
 		std::string whyNot;
 		std::string id = Keybindings::CreateKeybind(glfwKey, [owner, callbackFunction]() {
 			Extensions::runForExtension(owner, [&callbackFunction]() {
@@ -421,6 +449,10 @@ namespace LuaFunctions {
 
 		if (extPtr->settings.find(id) != extPtr->settings.end())
 			return;
+		if (extPtr->settings.size() >= Extensions::MaxSettings) {
+			Extensions::logOnce("DefineExtensionSetting", "has " + std::to_string(Extensions::MaxSettings) + " settings, no more are made");
+			return;
+		}
 
 		Extensions::ExtensionSetting s;
 		s.id = id;
@@ -439,8 +471,13 @@ namespace LuaFunctions {
 			s.defaultValue = defaultValue.as<float>();
 		}
 		else if (type == "string" && defaultValue.is<std::string>()) {
+			std::string text = defaultValue.as<std::string>();
+			if (text.size() > Extensions::MaxSettingText) {
+				Extensions::logOnce("DefineExtensionSetting", "takes a string default of " + std::to_string(Extensions::MaxSettingText) + " bytes at most");
+				return;
+			}
 			s.type = Extensions::ExtensionSettingTypes::String;
-			s.defaultValue = defaultValue.as<std::string>();
+			s.defaultValue = text;
 		}
 		else {
 			std::cerr << "Bad setting " << id << ": type " << type << " doesn't match its default value" << std::endl;
@@ -479,11 +516,26 @@ namespace LuaFunctions {
 			}, it->second.value);
 	}
 
+	// A file there that isn't a plain file (a folder, a link to a device) is
+	// never opened. One that isn't there yet passes when it's to be made.
+	static bool plainFile(const std::filesystem::path& file, bool mayBeNew) {
+		std::error_code ec;
+		std::filesystem::file_status status = std::filesystem::status(file, ec);
+		if (status.type() == std::filesystem::file_type::not_found) return mayBeNew;
+		return !ec && status.type() == std::filesystem::file_type::regular;
+	}
+
 	// texture, width, height; nil when it can't be read
 	sol::variadic_results LoadTextureFromFileLua(const std::string& path, sol::this_state state) {
 		sol::variadic_results results;
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (ext && ext->textures.size() >= Extensions::MaxTextures) {
+			Extensions::logOnce("LoadTexture", "has " + std::to_string(Extensions::MaxTextures) + " textures, no more are loaded");
+			results.push_back(sol::make_object(state, sol::lua_nil));
+			return results;
+		}
 		auto file = Extensions::pathFor(path, Extensions::Access::Read);
-		if (!file) {
+		if (!file || !plainFile(*file, false)) {
 			results.push_back(sol::make_object(state, sol::lua_nil));
 			return results;
 		}
@@ -675,18 +727,26 @@ namespace LuaFunctions {
 
 	// draws behind every ImGui window, straight onto the overlay
 	void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
-		if (textureID == 0) return;
+		if (textureID == 0 || !inFrame("DrawImage")) return;
 		int a = (int)(alpha.value_or(1.0f) * 255.0f);
 		ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)textureID, ImVec2(x0, y0), ImVec2(x1, y1),
 			ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
 	}
 
 	void PushClipRect(float x0, float y0, float x1, float y1) {
+		if (!inFrame("PushClipRect")) return;
 		ImGui::GetBackgroundDrawList()->PushClipRect(ImVec2(x0, y0), ImVec2(x1, y1), true);
 	}
 
+	// only the clips this callback pushed: below them are the overlay's own
 	void PopClipRect() {
-		ImGui::GetBackgroundDrawList()->PopClipRect();
+		if (!inFrame("PopClipRect")) return;
+		ImDrawList* list = ImGui::GetBackgroundDrawList();
+		if (list->_ClipRectStack.Size <= Extensions::clipFloor) {
+			Extensions::logOnce("PopClipRect", "has no PushClipRect of its own left to close");
+			return;
+		}
+		list->PopClipRect();
 	}
 
 	// Deeper than this is refused, both ways: each level is a C++ call, and
@@ -847,6 +907,8 @@ namespace LuaFunctions {
 		auto file = Extensions::pathFor(path, Extensions::Access::Read);
 		if (!file) return sol::nullopt;
 
+		if (!plainFile(*file, false))
+			throw std::runtime_error("Failed to open file");
 		std::ifstream stream(*file, std::ios::binary);
 		if (!stream)
 			throw std::runtime_error("Failed to open file");
@@ -884,27 +946,33 @@ namespace LuaFunctions {
 		return result;
 	}
 
-	static void writeExtensionData(std::ofstream& file, const std::string& data) {
+	// checked before the file is opened, so a refused write leaves the file as it was
+	static void checkWriteLimit(const std::string& data) {
 		auto* ext = Extensions::currentExtension;
 
 		if (!ext)
 			throw std::runtime_error("No current extension");
 
-		if (data.size() > Extensions::ExtensionWriteLimit - ext->bytesToDiskWritten)
+		if (data.size() > (size_t)(Extensions::ExtensionWriteLimit - ext->bytesToDiskWritten))
 			throw std::runtime_error("Extension disk write limit exceeded");
+	}
 
+	static void writeExtensionData(std::ofstream& file, const std::string& data) {
 		file.write(data.data(), static_cast<std::streamsize>(data.size()));
 
 		if (!file)
 			throw std::runtime_error("Failed to write file");
 
-		ext->bytesToDiskWritten += static_cast<int>(data.size());
+		Extensions::currentExtension->bytesToDiskWritten += static_cast<int>(data.size());
 	}
 
 	bool WriteFile(const std::string& path, const std::string& data) {
 		auto file = Extensions::pathFor(path, Extensions::Access::Write);
 		if (!file) return false;
+		checkWriteLimit(data);
 
+		if (!plainFile(*file, true))
+			throw std::runtime_error("Failed to open file");
 		std::ofstream stream(*file, std::ios::binary | std::ios::trunc);
 
 		if (!stream)
@@ -918,7 +986,10 @@ namespace LuaFunctions {
 	bool AppendFile(const std::string& path, const std::string& data) {
 		auto file = Extensions::pathFor(path, Extensions::Access::Write);
 		if (!file) return false;
+		checkWriteLimit(data);
 
+		if (!plainFile(*file, true))
+			throw std::runtime_error("Failed to open file");
 		std::ofstream stream(*file, std::ios::binary | std::ios::app);
 
 		if (!stream)
@@ -986,12 +1057,18 @@ namespace LuaFunctions {
 	{
 		if (!callback.valid() || milliseconds <= 0)
 			return 0;
+		Extensions::Extension* owner = Extensions::currentExtension;
+		if (owner && (size_t)std::count_if(intervals.begin(), intervals.end(),
+			[owner](const LuaInterval& each) { return each.owner == owner; }) >= Extensions::MaxIntervals) {
+			Extensions::logOnce("SetInterval", "has " + std::to_string(Extensions::MaxIntervals) + " intervals, no more are set");
+			return 0;
+		}
 
 		LuaInterval interval;
 		interval.id = nextIntervalId++;
 		interval.milliseconds = milliseconds;
 		interval.nextExecution = GetOSTimeMS() + milliseconds;
-		interval.owner = Extensions::currentExtension;
+		interval.owner = owner;
 		interval.callback = std::move(callback);
 
 		intervals.push_back(std::move(interval));
@@ -1057,13 +1134,34 @@ namespace LuaFunctions {
 				});
 		}
 	}
-	std::tuple<int, int> GetMousePosition()
-	{
-		POINT point;
-		if (!GetCursorPos(&point))
-			return { 0, 0 };
+	std::optional<std::pair<int, int>> mouseFor(POINT cursor, const std::optional<RECT>& game, POINT overlay, bool anywhere) {
+		bool overGame = game && cursor.x >= game->left && cursor.x < game->right && cursor.y >= game->top && cursor.y < game->bottom;
+		if (!anywhere && !overGame) return std::nullopt;
+		return std::make_pair((int)(cursor.x - overlay.x), (int)(cursor.y - overlay.y));
+	}
 
-		return { point.x, point.y };
+	sol::variadic_results GetMousePosition(sol::this_state state)
+	{
+		sol::variadic_results results;
+		Extensions::Extension* ext = Extensions::currentExtension;
+		POINT cursor;
+		std::optional<std::pair<int, int>> at;
+		if (ext && GetCursorPos(&cursor)) {
+			std::optional<RECT> game;
+			RECT rect;
+			HWND window = Capture::findRunningGame();
+			if (window && Capture::getClientRectOnScreen(window, rect)) game = rect;
+			int x = 0, y = 0;
+			if (Overlay::Window) glfwGetWindowPos(Overlay::Window, &x, &y);
+			at = mouseFor(cursor, game, POINT{ x, y }, ext->extensionPermissions.count(Permission::MouseAnywhere) > 0);
+		}
+		if (!at) {
+			results.push_back(sol::make_object(state, sol::lua_nil));
+			return results;
+		}
+		results.push_back(sol::make_object(state, at->first));
+		results.push_back(sol::make_object(state, at->second));
+		return results;
 	}
 	sol::table GetTheme(sol::this_state state) {
 		return themeTable(Controls::GetTheme(), state);
@@ -1088,7 +1186,7 @@ namespace LuaFunctions {
 
 	void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color)
 	{
-		if (text.empty())
+		if (text.empty() || !inFrame("DrawText"))
 			return;
 
 		float fontSize = size.value_or(ImGui::GetFontSize());

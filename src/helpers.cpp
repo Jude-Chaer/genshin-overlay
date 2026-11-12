@@ -15,6 +15,9 @@
 #include <vector>
 #include <array>
 
+// in SOIL2's library, only the size from a picture's header
+extern "C" int stbi_info_from_memory(unsigned char const* buffer, int len, int* x, int* y, int* comp);
+
 namespace Helpers {
     std::string utf8(const std::filesystem::path& path) {
         return path.u8string();
@@ -24,10 +27,29 @@ namespace Helpers {
         return std::filesystem::u8path(text);
     }
 
-    // read here, SOIL opens files by code page names
+    // Read here, SOIL opens files by code page names. A file or a picture over
+    // these is refused before it's unpacked: a small file can say 60000 x 60000.
+    static const std::uintmax_t MAX_IMAGE_FILE = 16 * 1024 * 1024;
+    static const int MAX_IMAGE_SIDE = 4096;
+
     GLuint loadTextureFromFile(const std::filesystem::path& filename, int& width, int& height) {
+        width = height = 0;
+        // one byte more than allowed is read, so a file that grows while it's read is caught too
         std::ifstream file(filename, std::ios::binary);
-        std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::string bytes(MAX_IMAGE_FILE + 1, '\0');
+        file.read(bytes.data(), (std::streamsize)bytes.size());
+        bytes.resize((size_t)file.gcount());
+        if (bytes.size() > MAX_IMAGE_FILE) {
+            std::cerr << "Failed to load texture: " << utf8(filename) << ", bigger than 16 MB" << std::endl;
+            return 0;
+        }
+        int sideX = 0, sideY = 0, channels = 0;
+        if (!bytes.empty() && (!stbi_info_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &sideX, &sideY, &channels)
+            || sideX > MAX_IMAGE_SIDE || sideY > MAX_IMAGE_SIDE)) {
+            std::cerr << "Failed to load texture: " << utf8(filename) << ", not a picture up to "
+                << MAX_IMAGE_SIDE << " x " << MAX_IMAGE_SIDE << std::endl;
+            return 0;
+        }
         GLuint textureID = bytes.empty() ? 0 : SOIL_load_OGL_texture_from_memory(
             (const unsigned char*)bytes.data(),
             (int)bytes.size(),

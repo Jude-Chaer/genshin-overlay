@@ -25,7 +25,9 @@ namespace TestExtension {
         size_t before = Extensions::registeredExtensions.size();
         Extensions::loadLuaExtension(path / "main.lua", path);
         if (Extensions::registeredExtensions.size() == before) return nullptr;
-        return Extensions::registeredExtensions.back().get();
+        Extensions::Extension* ext = Extensions::registeredExtensions.back().get();
+        if (!ext->startError.empty() || !ext->stopReason.empty()) return nullptr;
+        return ext;
     }
 
     bool run(Extensions::Extension* extension, const std::string& lua) {

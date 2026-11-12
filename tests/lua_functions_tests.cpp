@@ -175,17 +175,23 @@ TEST_CASE("without the file permissions nothing is read or written") {
 TEST_CASE("an extension can't write more than the write limit") {
     Extensions::Extension* ext = load("files");
     REQUIRE(ext != nullptr);
+    std::ofstream(ext->folder / "kept.txt", std::ios::binary) << "kept";
     ext->bytesToDiskWritten = Extensions::ExtensionWriteLimit - 3;
     REQUIRE(TestExtension::run(ext, R"(
         tooMuch = pcall(WriteFile, "big.txt", "four")
         fits = pcall(AppendFile, "small.txt", "abc")
         full = pcall(AppendFile, "small.txt", "d")
+        overKept = pcall(WriteFile, "kept.txt", "too long")
     )"));
     sol::state& lua = *ext->luaState;
     CHECK(lua["tooMuch"].get_or(true) == false);
     CHECK(lua["fits"].get_or(false) == true);
     CHECK(lua["full"].get_or(true) == false);
     CHECK(read(ext->folder / "small.txt") == "abc");
+    // refused before the file was opened, so it isn't emptied
+    CHECK(lua["overKept"].get_or(true) == false);
+    CHECK(read(ext->folder / "kept.txt") == "kept");
+    CHECK(!std::filesystem::exists(ext->folder / "big.txt"));
     CHECK(ext->bytesToDiskWritten == Extensions::ExtensionWriteLimit);
     TestExtension::unloadAll();
 }
@@ -310,4 +316,21 @@ TEST_CASE("GetMapTile only takes tiles on the map's grid at the sizes drawn") {
     CHECK_FALSE(MapTiles::IsTile(grid, 0, -1, 256));
     // a size nobody draws, the biggest a resize to gigabytes
     for (int size : { 0, -32, 100, 512, 1 << 20 }) CHECK_FALSE(MapTiles::IsTile(grid, 0, 0, size));
+}
+
+TEST_CASE("GetMousePosition sees the cursor only over the game, unless it has Mouse anywhere") {
+    using LuaFunctions::mouseFor;
+    // the game on the second screen, the overlay over it
+    RECT game = { 1920, 0, 3840, 1080 };
+    POINT overlay = { 1920, 0 };
+
+    CHECK(mouseFor({ 2000, 500 }, game, overlay, false) == std::make_pair(80, 500));
+    CHECK(mouseFor({ 1920, 0 }, game, overlay, false) == std::make_pair(0, 0));
+    // on the desktop next to it, past its last pixel, or with no game at all
+    CHECK_FALSE(mouseFor({ 100, 500 }, game, overlay, false));
+    CHECK_FALSE(mouseFor({ 3840, 500 }, game, overlay, false));
+    CHECK_FALSE(mouseFor({ 2000, 500 }, std::nullopt, overlay, false));
+
+    CHECK(mouseFor({ 100, 500 }, game, overlay, true) == std::make_pair(-1820, 500));
+    CHECK(mouseFor({ 100, 500 }, std::nullopt, overlay, true) == std::make_pair(-1820, 500));
 }
