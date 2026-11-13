@@ -68,6 +68,15 @@ namespace LuaFunctions {
     std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options);
     void ImGUI_SameLine();
     void ImGUI_Tooltip(const std::string& text);
+    // Notice(text, { kind = "error" | "tip" | "done", id }): a short message
+    // in the menu, kept on the extension's page. A tip shows once, id tells
+    // tips apart. False when it wasn't shown.
+    bool Notice(const std::string& text, sol::optional<sol::table> options);
+    // Dot(part, on): an attention dot on one of its tabs, headers or controls,
+    // by name or label, false takes it off. On a tab or header it goes once
+    // that part has been open 2 seconds, on a control once it's used. At
+    // most 3 at once.
+    void Dot(const std::string& part, sol::optional<bool> on);
     void ImGUI_Separator();
     bool IsProgramHidden();
     std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, sol::optional<int> modifiers,

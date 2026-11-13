@@ -31,6 +31,8 @@ namespace Extensions {
 		DisplayRead,
 		Keybinds,
 		MouseAnywhere,
+		Notices,
+		Dots,
 		TakeClicks
 	};
 
@@ -52,18 +54,22 @@ namespace Extensions {
 		{ExtensionPermissionTypes::InternalWritefile, "internal_write", "Internal File Writing", "It can change files in its own folder."},
 		{ExtensionPermissionTypes::NetworkAccess, "network", "Network Access", "It can send and get things from any website."},
 		{ExtensionPermissionTypes::MouseAnywhere, "mouse_anywhere", "Mouse anywhere", "It can see where your mouse is, even outside the game."},
+		{ExtensionPermissionTypes::Notices, "notices", "Notices", "It can show you short messages."},
+		{ExtensionPermissionTypes::Dots, "dots", "Attention dots", "It can mark what needs your attention."},
 		{ExtensionPermissionTypes::TakeClicks, "take_clicks", "Take clicks", "Clicks on parts of what it draws go to it instead of the game, while the map or the menu is open."},
 	};
 
 	// saved names of permissions that no longer exist, dropped when grants are loaded
 	inline const std::vector<std::string> retiredPermissions = { "external_read", "external_write" };
 
-	// what a new extension may do without asking: everything but the internet
+	// what a new extension may do without asking
 	inline const std::unordered_set<ExtensionPermissionTypes> defaultPermissions = {
 		ExtensionPermissionTypes::DisplayOverlay,
 		ExtensionPermissionTypes::DisplayRead,
 		ExtensionPermissionTypes::InternalReadfile,
-		ExtensionPermissionTypes::InternalWritefile
+		ExtensionPermissionTypes::InternalWritefile,
+		ExtensionPermissionTypes::Notices,
+		ExtensionPermissionTypes::Dots
 	};
 
 	inline const int PermissionCount = (int)ExtensionPermissionTypes::TakeClicks + 1;
@@ -120,6 +126,9 @@ namespace Extensions {
 	inline const size_t MaxHeaderLabel = 128;
 	// headers past those, kept open or closed for the session only
 	inline const size_t MaxSessionHeaders = 256;
+	// attention dots on at once, and how long their part is open before one goes
+	inline const size_t MaxDots = 3;
+	inline const double DotSeenAfter = 2.0;
 	// a text setting's default, the same as the box the player types in
 	inline const size_t MaxSettingText = 256;
 	// print lines a minute, the ones past it are left out
@@ -227,6 +236,13 @@ namespace Extensions {
 		// an open header's card is being drawn, ended by the next header,
 		// ImGUI_EndHeader or the end of the call
 		bool headerCard = false;
+		struct DotSeen {
+			// when its part opened, and the frame it was last open
+			double since = -1;
+			int lastFrame = -1;
+		};
+		// its attention dots by the tab or header they're on, for this session
+		std::map<std::string, DotSeen> dots;
 		std::string name;
 		// metadata.description under its name, metadata.about on its About tab
 		std::string description, about;
@@ -327,6 +343,8 @@ namespace Extensions {
 
 
 	extern std::vector<std::unique_ptr<Extension>> registeredExtensions;
+	// the notice that the extension slows the overlay down, with a button to its page
+	extern void tellSlow(const Extension& ext);
 	extern sol::state globalLuaState;
 	extern Extension* currentExtension;
 	extern void initExtensions();

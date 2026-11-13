@@ -1,6 +1,8 @@
 #include <windows.h>
 #include <dwmapi.h>
 #include "overlay.hpp"
+#include "notices.hpp"
+#include "controls.hpp"
 #include "keybindings.hpp"
 #include "extensions.hpp"
 #include "lua_functions.hpp"
@@ -233,6 +235,11 @@ namespace Overlay {
 
     bool MenuOpen() {
         return menuOpen;
+    }
+
+    void ShowExtension(int index) {
+        activeTab = index + 2;
+        SetMenuOpen(true);
     }
 
     void SetMenuOpen(bool open) {
@@ -818,7 +825,7 @@ namespace Overlay {
         for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
             auto& ext = Extensions::registeredExtensions[i];
             ImTextureID icon = ext->extensionImage ? (ImTextureID)(intptr_t)ext->extensionImage : 0;
-            DrawPage(ext->name.c_str(), static_cast<int>(i) + 2, icon, false);
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + 2, icon, !ext->dots.empty());
         }
 
         ImGui::PopStyleVar();
@@ -1021,7 +1028,10 @@ namespace Overlay {
 
         ImGui::EndChild();
 
+        ImVec2 menuPos = ImGui::GetWindowPos();
+        ImVec2 menuSize = ImGui::GetWindowSize();
         ImGui::End();
+        Notices::DrawInMenu(glfwGetTime(), menuPos, menuSize);
 
         if (!open) {
             Overlay::SetMenuOpen(false);
@@ -1045,7 +1055,8 @@ namespace Overlay {
             LuaFunctions::UpdateAnswers();
 
             // map and menu closed: nothing to show, so don't draw at all
-            bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0;
+            bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
+                Notices::OverGameShowing(glfwGetTime());
             // an extension that follows the player has things to draw with the map closed too
             bool forPlayer = !showing && MiniMap::Wanted();
             if (!showing && !forPlayer) {
@@ -1092,6 +1103,7 @@ namespace Overlay {
             if (menuOpen) {
                 DrawMenu();
             }
+            else Notices::DrawOverGame(glfwGetTime());
             Asks::draw(MapTracking::IsMapOpen(), menuOpen);
             updateTyping(true);
 

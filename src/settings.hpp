@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 // The app's own settings, saved in settings.json next to the exe. A
@@ -75,6 +76,9 @@ namespace Settings {
     // which of an extension's headers are open, by label, under extensionHeaders
     extern std::map<std::string, bool> LoadHeaders(const std::string& folder);
     extern void SaveHeaders(const std::string& folder, const std::map<std::string, bool>& open);
+    // the tips an extension's player closed, by tip id, under closedTips
+    extern std::set<std::string> LoadClosedTips(const std::string& folder);
+    extern void SaveClosedTips(const std::string& folder, const std::set<std::string>& closed);
 
     // What the player allowed an extension, kept per extension folder: the
     // permissions by name and the hash its files had then. never and off are

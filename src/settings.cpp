@@ -211,6 +211,29 @@ namespace Settings {
         write(settings);
     }
 
+    std::set<std::string> LoadClosedTips(const std::string& folder) {
+        std::set<std::string> closed;
+        nlohmann::json settings = read();
+        auto all = settings.find("closedTips");
+        if (all == settings.end() || !all->is_object()) return closed;
+        auto saved = all->find(folder);
+        if (saved == all->end() || !saved->is_array()) return closed;
+        for (const auto& tip : *saved) {
+            if (tip.is_string()) closed.insert(tip.get<std::string>());
+        }
+        return closed;
+    }
+
+    void SaveClosedTips(const std::string& folder, const std::set<std::string>& closed) {
+        nlohmann::json settings = read();
+        nlohmann::json& all = settings["closedTips"];
+        if (!all.is_object()) all = nlohmann::json::object();
+        if (closed.empty()) all.erase(folder);
+        else all[folder] = closed;
+        if (all.empty()) settings.erase("closedTips");
+        write(settings);
+    }
+
     // the numbers the old lists used, which were the order of the permission enum then
     static const char* oldPermissionName(int number) {
         switch (number) {

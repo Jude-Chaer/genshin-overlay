@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 #include "controls.hpp"
 #include "extensions.hpp"
+#include "notices.hpp"
 #include "files.hpp"
 #include "helpers.hpp"
 #include "keybindings.hpp"
@@ -374,7 +375,7 @@ TEST_CASE("saved grants come back by name, with ones this overlay doesn't know k
     ext.extensionPermissions.erase(Permission::NetworkAccess);
     Extensions::saveExtensionPermissions(ext);
     CHECK(readSettings()["extensionGrants"]["markers"]["granted"] == std::vector<std::string>{ "display_overlay", "display_read",
-        "keybinds", "internal_read", "internal_write", "game_traffic" });
+        "keybinds", "internal_read", "internal_write", "notices", "dots", "game_traffic" });
 
     Extensions::loadExtensionPermissions(&ext);
     CHECK(ext.extensionPermissions == withDefaults({ Permission::Keybinds }));
@@ -389,7 +390,7 @@ TEST_CASE("a default the old list didn't have stays off") {
     ext.extensionHash = "h1";
     Extensions::loadExtensionPermissions(&ext);
     CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay, Permission::NetworkAccess,
-        Permission::InternalReadfile });
+        Permission::InternalReadfile, Permission::Notices, Permission::Dots });
     CHECK(readSettings()["extensionGrants"]["example"]["off"] == std::vector<std::string>{ "display_read", "internal_write" });
 }
 
@@ -418,7 +419,7 @@ TEST_CASE("an extension whose files changed runs with the defaults it still had"
     Extensions::loadExtensionPermissions(&ext);
 
     CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay, Permission::DisplayRead,
-        Permission::InternalReadfile });
+        Permission::InternalReadfile, Permission::Notices, Permission::Dots });
     CHECK(ext.grantsBeforeChange == std::vector<std::string>{ "keybinds", "network",
         "display_overlay", "display_read", "internal_read" });
     CHECK(ext.hashBeforeChange == "h1");
@@ -1735,5 +1736,142 @@ TEST_CASE("each permission says when it was last used, kept when the overlay clo
     REQUIRE(ext != nullptr);
     CHECK(lastUsedLine(*ext, Permission::InternalWritefile, now + 5 * 60) == "Used 5 min ago");
     CHECK(lastUsedLine(*ext, Permission::InternalReadfile, now) == "Not used yet");
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("Notice shows with the Notices permission, its kind and tip id from the options") {
+    Notices::Clear();
+    Extensions::Extension* ext = TestExtension::load("noticing", "function Init() end");
+    REQUIRE(ext != nullptr);
+    ext->extensionPermissions.erase(Permission::Notices);
+    {
+        CaptureLog log;
+        TestExtension::run(ext, "Notice('Synced')");
+        CHECK(log.count("[noticing] Notice needs Notices, which it isn't allowed") == 1);
+    }
+    CHECK(Notices::Of(ext->folderKey).empty());
+
+    ext->extensionPermissions.insert(Permission::Notices);
+    REQUIRE(TestExtension::run(ext, R"(
+        _G.plain = Notice("Synced")
+        _G.again = Notice("Synced")
+        _G.failed = Notice("Sync failed", { kind = "error" })
+        _G.tip = Notice("Right-click a marker to hide it.", { kind = "tip", id = "hide" })
+    )"));
+    sol::state& lua = *ext->luaState;
+    CHECK(lua["plain"].get<bool>());
+    CHECK_FALSE(lua["again"].get<bool>());
+    CHECK(lua["failed"].get<bool>());
+    CHECK(lua["tip"].get<bool>());
+    auto shown = Notices::Of(ext->folderKey);
+    REQUIRE(shown.size() == 3);
+    CHECK(shown[0]->kind == Notices::Kind::Tip);
+    CHECK(shown[0]->tip == "hide");
+    CHECK(shown[1]->kind == Notices::Kind::Error);
+    CHECK(shown[2]->from == ext->name);
+    Notices::Clear();
+}
+
+TEST_CASE("a slow extension gets a notice naming it, with a button to its page") {
+    Notices::Clear();
+    Extensions::Extension* ext = TestExtension::load("slow_notice", "function Init() end");
+    REQUIRE(ext != nullptr);
+    Extensions::tellSlow(*ext);
+    auto shown = Notices::Of(ext->folderKey);
+    REQUIRE(shown.size() == 1);
+    CHECK(shown[0]->kind == Notices::Kind::Plain);
+    CHECK(shown[0]->text == ext->name + " is slowing the overlay down.");
+    CHECK(shown[0]->actionLabel == "Open its page");
+    CHECK(bool(shown[0]->action));
+    // menu only, never over the game
+    CHECK_FALSE(Notices::OverGameShowing(shown[0]->addedAt));
+    Notices::Clear();
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("a dot on a control sits in its corner, moves nothing, and goes once the control is used") {
+    Extensions::Extension* ext = TestExtension::load("dotted", "function Init() end");
+    REQUIRE(ext != nullptr);
+    REQUIRE(TestExtension::run(ext, "Dot('Show markers')"));
+
+    ImGuiContext* context = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(800, 600);
+    io.DeltaTime = 0.5f;
+    io.IniFilename = nullptr;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    ImRect toggle;
+    float reached = 0;
+    auto menu = [&] {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2(800, 600));
+        ImGui::Begin("page");
+        Extensions::InPhase phase(Extensions::Phase::Menu);
+        REQUIRE(TestExtension::run(ext, "ImGUI_Toggle('Show markers', false)"));
+        toggle = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        reached = ImGui::GetCurrentWindow()->DC.CursorMaxPos.x;
+        ImGui::End();
+        ImGui::EndFrame();
+    };
+    // seen for 3 s, not used: it stays, and the page is no wider than the control
+    for (int i = 0; i < 6; i++) menu();
+    CHECK(ext->dots.count("Show markers") == 1);
+    CHECK(reached == toggle.Max.x);
+
+    io.AddMousePosEvent(toggle.GetCenter().x, toggle.GetCenter().y);
+    menu();
+    io.AddMouseButtonEvent(0, true);
+    menu();
+    io.AddMouseButtonEvent(0, false);
+    menu();
+    CHECK(ext->dots.count("Show markers") == 0);
+    ImGui::DestroyContext(context);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("an attention dot goes once its tab has been open 2 seconds, at most 3 are on") {
+    Extensions::Extension* ext = TestExtension::load("dotted", "function Init() end");
+    REQUIRE(ext != nullptr);
+    ext->extensionPermissions.erase(Permission::Dots);
+    {
+        CaptureLog log;
+        TestExtension::run(ext, "Dot('Regions')");
+        CHECK(log.count("[dotted] Dot needs Attention dots, which it isn't allowed") == 1);
+    }
+    CHECK(ext->dots.empty());
+
+    ext->extensionPermissions.insert(Permission::Dots);
+    {
+        CaptureLog log;
+        REQUIRE(TestExtension::run(ext, "Dot('Regions') Dot('Types') Dot('Types') Dot('Found') Dot('Fourth')"));
+        CHECK(log.count("[dotted] Dot has 3 dots on, no more are added") == 1);
+    }
+    CHECK(ext->dots.size() == 3);
+    REQUIRE(TestExtension::run(ext, "Dot('Found', false)"));
+    CHECK(ext->dots.size() == 2);
+
+    ImGuiContext* context = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(800, 600);
+    io.DeltaTime = 0.5f;
+    io.IniFilename = nullptr;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    // one menu frame with the extension's tabs, the first one open
+    auto menu = [&] {
+        ImGui::NewFrame();
+        ImGui::Begin("page");
+        Extensions::InPhase phase(Extensions::Phase::Menu);
+        REQUIRE(TestExtension::run(ext, "ImGUI_Tabs({ 'Regions', 'Types' })"));
+        ImGui::End();
+        ImGui::EndFrame();
+    };
+    // Regions is open: 1.5 s isn't long enough, 2 s is, Types stays
+    for (int i = 0; i < 4; i++) menu();
+    CHECK(ext->dots.count("Regions") == 1);
+    menu();
+    CHECK(ext->dots.count("Regions") == 0);
+    CHECK(ext->dots.count("Types") == 1);
+    ImGui::DestroyContext(context);
     TestExtension::unloadAll();
 }

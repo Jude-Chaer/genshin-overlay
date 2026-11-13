@@ -18,6 +18,7 @@
 #include "asks.hpp"
 #include "key_choices.hpp"
 #include "settings.hpp"
+#include "notices.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -144,6 +145,8 @@ namespace LuaFunctions {
 		global("ImGUI_InputText", None, ImGUI_InputText);
 		global("ImGUI_SameLine", None, ImGUI_SameLine);
 		global("ImGUI_Tooltip", None, ImGUI_Tooltip);
+		global("Notice", Permission::Notices, Notice);
+		global("Dot", Permission::Dots, Dot);
 		global("ImGUI_Waiting", None, ImGUI_Waiting);
 		global("ImGUI_Empty", None, ImGUI_Empty);
 		global("ImGUI_Progress", None, ImGUI_Progress);
@@ -269,6 +272,17 @@ namespace LuaFunctions {
 		~PlayerAction() { if (ext) ext->playerAction--; }
 	};
 
+	// whether one of the extension's controls has a dot, by its label
+	static bool dotted(const std::string& label) {
+		auto* ext = Extensions::currentExtension;
+		return ext && ext->dots.count(label);
+	}
+
+	// a control's dot goes once the player uses it
+	static void used(const std::string& label, bool used) {
+		if (used && Extensions::currentExtension) Extensions::currentExtension->dots.erase(label);
+	}
+
 	// ImGUI_Button(label, onPress, options), options is optional:
 	// { look = "main" or "risky", busy = true or the text to show while busy }
 	void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> table) {
@@ -285,7 +299,10 @@ namespace LuaFunctions {
 			}
 			else if (busy.is<bool>()) options.busy = busy.as<bool>();
 		}
-		if (Controls::Button(label.c_str(), options)) {
+		options.dotted = dotted(label);
+		bool pressed = Controls::Button(label.c_str(), options);
+		used(label, pressed);
+		if (pressed) {
 			PlayerAction action(Extensions::currentExtension);
 			callLua(callback, "button");
 		}
@@ -295,7 +312,9 @@ namespace LuaFunctions {
 	{
 		bool value = currentValue;
 		if (!inMenu("ImGUI_Checkbox")) return value;
-		Controls::Toggle(label.c_str(), &value);
+		Controls::ToggleOptions options;
+		options.dotted = dotted(label);
+		used(label, Controls::Toggle(label.c_str(), &value, options));
 		return value;
 	}
 
@@ -369,6 +388,34 @@ namespace LuaFunctions {
 	}
 
 	// ImGUI_Tabs({ "Markers", "Sync" }) draws the extension's own tab row and gives the open tab's name
+	// a part of the page shown this frame: its dot goes once it's been open long enough
+	static void dotSeen(Extensions::Extension* ext, const std::string& part) {
+		auto dot = ext->dots.find(part);
+		if (dot == ext->dots.end()) return;
+		double now = ImGui::GetTime();
+		int frame = ImGui::GetFrameCount();
+		Extensions::Extension::DotSeen& seen = dot->second;
+		// not open last frame: the time starts again
+		if (seen.lastFrame < 0 || frame - seen.lastFrame > 1) seen.since = now;
+		seen.lastFrame = frame;
+		if (now - seen.since >= Extensions::DotSeenAfter) ext->dots.erase(dot);
+	}
+
+	void Dot(const std::string& part, sol::optional<bool> on) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext || part.empty()) return;
+		if (!on.value_or(true)) {
+			ext->dots.erase(part);
+			return;
+		}
+		if (ext->dots.count(part)) return;
+		if (ext->dots.size() >= Extensions::MaxDots) {
+			Extensions::logOnce("Dot", "has 3 dots on, no more are added");
+			return;
+		}
+		ext->dots[part] = {};
+	}
+
 	sol::object ImGUI_Tabs(sol::table names, sol::this_state state) {
 		if (!inMenu("ImGUI_Tabs")) return sol::lua_nil;
 		std::vector<std::string> list;
@@ -385,7 +432,12 @@ namespace LuaFunctions {
 		}
 		std::string id = "##tabs" + std::to_string(row++);
 		if (list.empty()) return sol::lua_nil;
-		return sol::make_object(state, list[Controls::Segments(id.c_str(), list)]);
+		auto* ext = Extensions::currentExtension;
+		std::vector<bool> dotted;
+		for (const std::string& name : list) dotted.push_back(ext && ext->dots.count(name));
+		const std::string& open = list[Controls::Segments(id.c_str(), list, dotted)];
+		if (ext) dotSeen(ext, open);
+		return sol::make_object(state, open);
 	}
 
 	// ImGUI_Header(label, options) is true while the part under it is open. options is optional:
@@ -407,7 +459,7 @@ namespace LuaFunctions {
 		auto session = ext->sessionHeaders.find(label);
 		if (!known && session != ext->sessionHeaders.end()) open = session->second;
 		bool roomFor = known || (ext->openHeaders.size() < Extensions::MaxHeaders && label.size() <= Extensions::MaxHeaderLabel);
-		if (Controls::BeginHeader(label.c_str(), open).changed) {
+		if (Controls::BeginHeader(label.c_str(), open, ext->dots.count(label) > 0).changed) {
 			if (roomFor) {
 				ext->openHeaders[label] = open;
 				Settings::SaveHeaders(ext->folderKey, ext->openHeaders);
@@ -415,6 +467,7 @@ namespace LuaFunctions {
 			else if (session != ext->sessionHeaders.end()) session->second = open;
 			else if (ext->sessionHeaders.size() < Extensions::MaxSessionHeaders) ext->sessionHeaders[label] = open;
 		}
+		if (open) dotSeen(ext, label);
 		ext->headerCard = open;
 		return open;
 	}
@@ -426,6 +479,22 @@ namespace LuaFunctions {
 		if (!ext || !ext->headerCard) return;
 		ext->headerCard = false;
 		Controls::EndSection();
+	}
+
+	bool Notice(const std::string& text, sol::optional<sol::table> options) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return false;
+		::Notices::Kind kind = ::Notices::Kind::Plain;
+		std::string tip;
+		if (options) {
+			std::string name = options->get_or<std::string>("kind", "");
+			if (name == "error") kind = ::Notices::Kind::Error;
+			else if (name == "tip") kind = ::Notices::Kind::Tip;
+			else if (name == "done") kind = ::Notices::Kind::Done;
+			else if (!name.empty() && name != "plain") Extensions::logOnce("Notice", "kind is error, tip, done or nothing");
+			tip = options->get_or<std::string>("id", "").substr(0, 64);
+		}
+		return ::Notices::Add(ext->folderKey, ext->name, kind, text, glfwGetTime(), tip) != 0;
 	}
 
 	// ImGUI_Toggle(label, value, options), options is optional:
@@ -441,14 +510,16 @@ namespace LuaFunctions {
 			GLuint icon = table->get_or<GLuint>("icon", 0);
 			if (icon && ownsTexture(icon)) options.icon = (ImTextureID)(intptr_t)icon;
 		}
-		Controls::Toggle(label.c_str(), &value, options);
+		options.dotted = dotted(label);
+		used(label, Controls::Toggle(label.c_str(), &value, options));
 		return value;
 	}
 
 	// the number piece, as every number in the menu
-	static double drawnNumber(const std::string& label, double value, const Controls::NumberOptions& options) {
+	static double drawnNumber(const std::string& label, double value, Controls::NumberOptions options) {
 		value = Controls::Fit(value, options);
-		Controls::Number(label.c_str(), value, options);
+		options.dotted = dotted(label);
+		used(label, Controls::Number(label.c_str(), value, options).changed);
 		return value;
 	}
 
@@ -505,7 +576,8 @@ namespace LuaFunctions {
 			options.confirm = table->get_or("confirm", false);
 			options.taken = table->get_or("taken", false);
 		}
-		Controls::Text(label.c_str(), value, options);
+		options.dotted = dotted(label);
+		used(label, Controls::Text(label.c_str(), value, options));
 		return value;
 	}
 

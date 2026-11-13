@@ -1,5 +1,7 @@
 #include <Windows.h>
 #include "extensions.hpp"
+#include "notices.hpp"
+#include "overlay.hpp"
 #include "asks.hpp"
 #include "files.hpp"
 #include "helpers.hpp"
@@ -133,6 +135,16 @@ namespace Extensions {
 		cost.slowSeconds = 0;
 	}
 
+	void tellSlow(const Extension& ext) {
+		std::string folder = ext.folderKey;
+		Notices::Add(folder, ext.name, Notices::Kind::Plain, ext.name + " is slowing the overlay down.", glfwGetTime(), "",
+			"Open its page", [folder] {
+				for (size_t i = 0; i < registeredExtensions.size(); i++) {
+					if (registeredExtensions[i]->folderKey == folder) Overlay::ShowExtension((int)i);
+				}
+			});
+	}
+
 	void countTurn() {
 		static Clock::time_point secondStart = Clock::now();
 		static int turns = 0;
@@ -149,6 +161,7 @@ namespace Extensions {
 			else if (endSecond(ext->cost, turns)) {
 				std::cerr << "[" << ext->name << "] slow: more than " << SlowMsPerFrame << " ms per frame for "
 					<< SlowSeconds << " s" << std::endl;
+				tellSlow(*ext);
 			}
 		}
 		secondStart = now;
@@ -542,6 +555,7 @@ namespace Extensions {
 			ext.textures.clear();
 		}
 		ext.webImages.clear();
+		ext.dots.clear();
 
 		ext.initializeFunction = nullptr;
 		ext.shutdownFunction = nullptr;
@@ -716,6 +730,7 @@ namespace Extensions {
 		ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.3f));
 
 		std::vector<std::string> tabs = { "General" };
+		if (!::Notices::Of(ext->folderKey).empty()) tabs.push_back("Notices");
 		if (!ext->keys.empty()) tabs.push_back("Keys");
 		tabs.push_back("Permissions");
 		tabs.push_back("About");
@@ -745,6 +760,7 @@ namespace Extensions {
 					runForExtension(ext.get(), ext->menuFunction);
 				}
 			}
+			else if (tab == "Notices") ::Notices::DrawList(ext->folderKey);
 			else if (tab == "Keys") KeyChoices::drawKeysTab(*ext);
 			else if (tab == "Permissions") drawPermissionsTab(*ext);
 			else drawAboutTab(*ext);

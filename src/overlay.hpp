@@ -22,6 +22,8 @@ namespace Overlay {
     void SetMenuOpen(bool open);
     // the game in front again, restored if it minimized, e.g. after a file window
     void GiveFocusToGame();
+    // opens the menu on that extension's page
+    void ShowExtension(int index);
     // "Hide on map close": the menu opens and closes with the map
     void MenuFollowsMap(bool mapOpen);
     // Boxes in overlay pixels where the overlay takes the mouse from the game,

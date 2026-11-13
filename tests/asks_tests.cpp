@@ -661,6 +661,21 @@ TEST_CASE("sites it can't read let it reach none") {
     TestExtension::unloadAll();
 }
 
+TEST_CASE("notices and dots are on without asking and can be switched off") {
+    Fresh fresh;
+    {
+        Bare a("a");
+        CHECK(Extensions::permissionState(a.ext, Permission::Notices) == "allowed");
+        CHECK(Extensions::permissionState(a.ext, Permission::Dots) == "allowed");
+        Extensions::switchPermission(a.ext, Permission::Dots, false);
+        Extensions::saveExtensionPermissions(a.ext);
+    }
+    Bare a("a");
+    CHECK(Extensions::permissionState(a.ext, Permission::Notices) == "allowed");
+    CHECK(Extensions::permissionState(a.ext, Permission::Dots) == "off");
+    CHECK(Extensions::findPermission("notices")->type == Permission::Notices);
+}
+
 TEST_CASE("the permissions an extension's code calls for are found, comments left out") {
     // fills the list of functions
     auto lua = Extensions::newLuaState(TestExtension::folder("calls"));

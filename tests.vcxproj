@@ -139,6 +139,7 @@
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\asks.cpp" />
     <ClCompile Include="src\controls.cpp" />
+    <ClCompile Include="src\notices.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
     <ClCompile Include="src\file_dialogs.cpp" />
@@ -168,6 +169,7 @@
     <ClCompile Include="src\typing.cpp" />
     <ClCompile Include="tests\asks_tests.cpp" />
     <ClCompile Include="tests\controls_tests.cpp" />
+    <ClCompile Include="tests\notices_tests.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
     <ClCompile Include="tests\file_dialog_tests.cpp" />
@@ -199,6 +201,7 @@
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\asks.hpp" />
     <ClInclude Include="src\controls.hpp" />
+    <ClInclude Include="src\notices.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\game_ui.hpp" />
     <ClInclude Include="src\helpers.hpp" />
