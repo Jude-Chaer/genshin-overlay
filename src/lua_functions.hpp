@@ -102,9 +102,23 @@ namespace LuaFunctions {
     inline const int NetStartMs = 30000;
     // requests of one extension waiting or not collected yet
     inline const int NetMaxWaiting = 16;
-    // each turn of the overlay, drawn or not: web requests and
+    // Windows' open and save windows, from the function of the extension's
+    // button or key only, else nil. filter: { "JSON", "*.json" } or nil for
+    // all files. The answer is { name, data } for an open, { name } for a
+    // save, or { error } with "cancelled", "too_big" or "failed". onDone gets
+    // it once; without onDone FileDialogResult(id) gives nil while the window
+    // is open, then the answer once. One window at a time, 64 MB at most.
+    sol::object OpenFileDialog(sol::object filter, sol::object onDone, sol::this_state state);
+    sol::object SaveFileDialog(const std::string& name, const std::string& data, sol::object filter, sol::object onDone,
+        sol::this_state state);
+    sol::object FileDialogResult(int id, sol::this_state state);
+    // each turn of the overlay, drawn or not: file windows, web requests and
     // sockets give what came to their handlers
     void UpdateAnswers();
+    // answers to their onDone, the focus back to the game
+    void UpdateFileDialogs();
+    // drops the extension's answers, see Extensions::unload
+    void forgetFileDialogs(Extensions::Extension* owner);
     // gives the requests that are done to their onDone, see UpdateAnswers
     void UpdateNetRequests();
     // stops the extension's requests and drops their answers, see Extensions::unload

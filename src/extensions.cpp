@@ -530,6 +530,7 @@ namespace Extensions {
 		ext.keys.clear();
 		LuaFunctions::forgetIntervals(&ext);
 		LuaFunctions::forgetNetRequests(&ext);
+		LuaFunctions::forgetFileDialogs(&ext);
 		LuaFunctions::forgetSockets(&ext);
 		if (!ext.textures.empty()) {
 			glDeleteTextures((GLsizei)ext.textures.size(), ext.textures.data());

@@ -1,11 +1,11 @@
 #include <windows.h>
 #include <dwmapi.h>
 #include "overlay.hpp"
-#include "controls.hpp"
 #include "keybindings.hpp"
 #include "extensions.hpp"
 #include "lua_functions.hpp"
 #include "asks.hpp"
+#include "file_dialogs.hpp"
 #include "helpers.hpp"
 #include "item_files.hpp"
 #include "map_tiles.hpp"
@@ -166,6 +166,7 @@ namespace Overlay {
         exStyle = (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
         glfwShowWindow(Overlay::Window);
+        FileDialogs::giveFocusBack = []() { GiveFocusToGame(); };
 
         glfwMakeContextCurrent(Overlay::Window);
         // No vsync from the driver, its wait for the screen spun a whole core

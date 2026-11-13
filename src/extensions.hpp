@@ -206,6 +206,9 @@ namespace Extensions {
 		int callDepth = 0;
 		long long luaSteps = 0;
 		long long stepLimit = LuaStepLimit;
+		// its button or key function runs now: the player started it, so it
+		// may open a file dialog
+		int playerAction = 0;
 		Cost cost;
 		// when each permission was last used, seconds since 1970, 0 for not yet
 		long long lastUsed[PermissionCount] = {};

@@ -141,6 +141,7 @@
     <ClCompile Include="src\controls.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
+    <ClCompile Include="src\file_dialogs.cpp" />
     <ClCompile Include="src\game_ui.cpp" />
     <ClCompile Include="src\helpers.cpp" />
     <ClCompile Include="src\item_catalog.cpp" />
@@ -169,6 +170,7 @@
     <ClCompile Include="tests\controls_tests.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
+    <ClCompile Include="tests\file_dialog_tests.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
     <ClCompile Include="tests\item_catalog_tests.cpp" />
@@ -201,6 +203,7 @@
     <ClInclude Include="src\game_ui.hpp" />
     <ClInclude Include="src\helpers.hpp" />
     <ClInclude Include="src\files.hpp" />
+    <ClInclude Include="src\file_dialogs.hpp" />
     <ClInclude Include="src\item_catalog.hpp" />
     <ClInclude Include="src\item_icons.hpp" />
     <ClInclude Include="src\item_files.hpp" />

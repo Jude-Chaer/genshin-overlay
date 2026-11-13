@@ -8,6 +8,9 @@
 #include "map_tracking.hpp"
 #include "capture.hpp"
 #include "minimap.hpp"
+#include "file_dialogs.hpp"
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #include "item_icons.hpp"
 #include "item_catalog.hpp"
 #include "item_files.hpp"
@@ -192,6 +195,9 @@ namespace LuaFunctions {
 		global("Net_Post", Network, NetPost);
 		global("Net_Start", Network, NetStart);
 		global("Net_Result", Network, NetResult);
+		global("OpenFileDialog", None, OpenFileDialog);
+		global("SaveFileDialog", None, SaveFileDialog);
+		global("FileDialogResult", None, FileDialogResult);
 
 		luaState["KeybindModifiers"] = luaState.create_table_with(
 			"None", Keybindings::KeybindModifiers_None,
@@ -245,6 +251,13 @@ namespace LuaFunctions {
 		ImGui::Text("%s", str.c_str());
 	}
 
+	// while the extension's button or key function runs, lowered however it ends
+	struct PlayerAction {
+		Extensions::Extension* ext;
+		explicit PlayerAction(Extensions::Extension* ext) : ext(ext) { if (ext) ext->playerAction++; }
+		~PlayerAction() { if (ext) ext->playerAction--; }
+	};
+
 	// ImGUI_Button(label, onPress, options), options is optional:
 	// { look = "main" or "risky", busy = true or the text to show while busy }
 	void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> table) {
@@ -262,6 +275,7 @@ namespace LuaFunctions {
 			else if (busy.is<bool>()) options.busy = busy.as<bool>();
 		}
 		if (Controls::Button(label.c_str(), options)) {
+			PlayerAction action(Extensions::currentExtension);
 			callLua(callback, "button");
 		}
 	}
@@ -447,7 +461,8 @@ namespace LuaFunctions {
 		KeyChoices::start(*owner, key);
 		key.callback = [owner, callbackFunction]() {
 			Extensions::markUsed(*owner, Extensions::ExtensionPermissionTypes::Keybinds);
-			Extensions::runForExtension(owner, [&callbackFunction]() {
+			Extensions::runForExtension(owner, [owner, &callbackFunction]() {
+				PlayerAction action(owner);
 				callLua(callbackFunction, "key");
 				});
 			};
@@ -670,6 +685,53 @@ namespace LuaFunctions {
 		return result;
 	}
 
+	// What Net_Start and the file windows wait on: each gives its answer to
+	// onDone on the first turn it's done, or to the Result call when it has none.
+	// Request has id, owner, onDone, hasOnDone and done().
+	template <class Request>
+	struct Waiting {
+		std::vector<std::unique_ptr<Request>> list;
+		int nextId = 1;
+
+		int of(const Extensions::Extension* owner) const {
+			return (int)std::count_if(list.begin(), list.end(), [owner](const auto& each) { return each->owner == owner; });
+		}
+		int add(std::unique_ptr<Request> request, Extensions::Extension* owner, const sol::object& onDone) {
+			request->id = nextId++;
+			request->owner = owner;
+			if (onDone != sol::lua_nil) {
+				request->onDone = onDone.as<sol::protected_function>();
+				request->hasOnDone = true;
+			}
+			int id = request->id;
+			list.push_back(std::move(request));
+			return id;
+		}
+		// the owner's request without onDone, once it's done
+		std::unique_ptr<Request> takeAnswer(int id, const Extensions::Extension* owner) {
+			auto it = std::find_if(list.begin(), list.end(), [&](const auto& each) { return each->id == id && each->owner == owner; });
+			if (it == list.end() || (*it)->hasOnDone || !(*it)->done()) return nullptr;
+			std::unique_ptr<Request> request = std::move(*it);
+			list.erase(it);
+			return request;
+		}
+		// the ones with onDone that are done
+		std::vector<std::unique_ptr<Request>> takeDue() {
+			std::vector<std::unique_ptr<Request>> due;
+			for (auto it = list.begin(); it != list.end();) {
+				if ((*it)->hasOnDone && (*it)->done()) {
+					due.push_back(std::move(*it));
+					it = list.erase(it);
+				}
+				else ++it;
+			}
+			return due;
+		}
+		void forget(const Extensions::Extension* owner) {
+			list.erase(std::remove_if(list.begin(), list.end(), [owner](const auto& each) { return each->owner == owner; }), list.end());
+		}
+	};
+
 	// One Net_Start. The thread writes only into answer, the draw thread reads
 	// it once done is set.
 	struct NetRequest {
@@ -685,17 +747,17 @@ namespace LuaFunctions {
 		bool hasOnDone = false;
 		std::shared_ptr<Answer> answer = std::make_shared<Answer>();
 		std::thread thread;
+		bool done() const { return answer->done; }
 
 		~NetRequest() {
 			answer->stopper.stop();
 			if (thread.joinable()) thread.join();
 		}
 	};
-	static std::vector<std::unique_ptr<NetRequest>> netRequests;
-	static int nextNetId = 1;
+	static Waiting<NetRequest> netRequests;
 
 	int netRequestsOf(const Extensions::Extension* owner) {
-		return (int)std::count_if(netRequests.begin(), netRequests.end(), [owner](const auto& each) { return each->owner == owner; });
+		return netRequests.of(owner);
 	}
 
 	static sol::table answerTable(const NetRequest& request, sol::state_view lua) {
@@ -744,12 +806,6 @@ namespace LuaFunctions {
 		}
 
 		auto request = std::make_unique<NetRequest>();
-		request->id = nextNetId++;
-		request->owner = ext;
-		if (onDone != sol::lua_nil) {
-			request->onDone = onDone.as<sol::protected_function>();
-			request->hasOnDone = true;
-		}
 		std::shared_ptr<NetRequest::Answer> answer = request->answer;
 		Net::Limits limits = limitsFor(ext, NetStartMs);
 		request->thread = std::thread([answer, url, method, body, limits]() {
@@ -758,9 +814,7 @@ namespace LuaFunctions {
 				: Net::get(url, answer->response, false, nullptr, &answer->stopper, limits);
 			answer->done = true;
 		});
-		int id = request->id;
-		netRequests.push_back(std::move(request));
-		return sol::make_object(state, id);
+		return sol::make_object(state, netRequests.add(std::move(request), ext, onDone));
 	}
 
 	// the request is done: its thread is joined and what went wrong logged, as its extension
@@ -772,26 +826,15 @@ namespace LuaFunctions {
 
 	sol::object NetResult(int id, sol::this_state state)
 	{
-		auto it = std::find_if(netRequests.begin(), netRequests.end(), [id](const auto& each) {
-			return each->id == id && each->owner == Extensions::currentExtension;
-		});
-		if (it == netRequests.end() || (*it)->hasOnDone || !(*it)->answer->done) return sol::nil;
-		std::unique_ptr<NetRequest> request = std::move(*it);
-		netRequests.erase(it);
+		std::unique_ptr<NetRequest> request = netRequests.takeAnswer(id, Extensions::currentExtension);
+		if (!request) return sol::nil;
 		collect(*request);
 		return answerTable(*request, sol::state_view(state));
 	}
 
 	void UpdateNetRequests()
 	{
-		std::vector<std::unique_ptr<NetRequest>> due;
-		for (auto it = netRequests.begin(); it != netRequests.end();) {
-			if ((*it)->hasOnDone && (*it)->answer->done) {
-				due.push_back(std::move(*it));
-				it = netRequests.erase(it);
-			}
-			else ++it;
-		}
+		std::vector<std::unique_ptr<NetRequest>> due = netRequests.takeDue();
 		// a callback can start new requests, and its extension can be unloaded
 		for (auto& request : due) {
 			Extensions::Extension* owner = request->owner;
@@ -814,16 +857,125 @@ namespace LuaFunctions {
 		}
 	}
 
+	struct DialogRequest {
+		int id = 0;
+		Extensions::Extension* owner = nullptr;
+		bool save = false;
+		sol::protected_function onDone;
+		bool hasOnDone = false;
+		std::shared_ptr<FileDialogs::Answer> answer;
+		bool done() const { return answer->done; }
+	};
+	static Waiting<DialogRequest> dialogRequests;
+
+	static sol::table dialogTable(const FileDialogs::Answer& answer, bool save, sol::state_view lua) {
+		sol::table result = lua.create_table();
+		if (!answer.error.empty()) result["error"] = answer.error;
+		else {
+			result["name"] = answer.name;
+			if (!save) result["data"] = answer.data;
+		}
+		return result;
+	}
+
+	// what both dialogs check before one opens
+	static sol::object startDialog(const char* function, bool save, const std::string& name, const std::string& data,
+		sol::object filter, sol::object onDone, sol::this_state state) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return sol::nil;
+		if (ext->playerAction == 0) {
+			Extensions::logOnce(function, "opens only from the function of its button or key");
+			return sol::nil;
+		}
+		std::optional<FileDialogs::Filter> types;
+		if (filter.is<sol::table>()) {
+			sol::table table = filter;
+			sol::optional<std::string> label = table[1];
+			sol::optional<std::string> pattern = table[2];
+			if (label && pattern) types = FileDialogs::filterFrom(*label, *pattern);
+			if (!types) {
+				Extensions::logOnce(function, "takes a filter like { \"JSON\", \"*.json\" }");
+				return sol::nil;
+			}
+		}
+		else if (filter != sol::lua_nil) {
+			Extensions::logOnce(function, "takes a filter like { \"JSON\", \"*.json\" }");
+			return sol::nil;
+		}
+		if (onDone != sol::lua_nil && !onDone.is<sol::protected_function>()) {
+			Extensions::logOnce(function, "takes a function as onDone");
+			return sol::nil;
+		}
+		if (data.size() > FileDialogs::MaxSize) {
+			Extensions::logOnce(function, "saves at most 64 MB");
+			return sol::nil;
+		}
+		auto answer = FileDialogs::start(Overlay::Window ? glfwGetWin32Window(Overlay::Window) : nullptr, save, name, data, types);
+		if (!answer) {
+			std::cerr << "[" << ext->name << "] " << function << ": another file window is open" << std::endl;
+			return sol::nil;
+		}
+		auto request = std::make_unique<DialogRequest>();
+		request->save = save;
+		request->answer = answer;
+		return sol::make_object(state, dialogRequests.add(std::move(request), ext, onDone));
+	}
+
+	sol::object OpenFileDialog(sol::object filter, sol::object onDone, sol::this_state state)
+	{
+		return startDialog("OpenFileDialog", false, "", "", filter, onDone, state);
+	}
+
+	sol::object SaveFileDialog(const std::string& name, const std::string& data, sol::object filter, sol::object onDone,
+		sol::this_state state)
+	{
+		return startDialog("SaveFileDialog", true, name, data, filter, onDone, state);
+	}
+
+	sol::object FileDialogResult(int id, sol::this_state state)
+	{
+		std::unique_ptr<DialogRequest> request = dialogRequests.takeAnswer(id, Extensions::currentExtension);
+		if (!request) return sol::nil;
+		return dialogTable(*request->answer, request->save, sol::state_view(state));
+	}
+
 	void UpdateAnswers()
 	{
+		UpdateFileDialogs();
 		UpdateNetRequests();
 		UpdateSockets();
 	}
 
+	void UpdateFileDialogs()
+	{
+		FileDialogs::update();
+		std::vector<std::unique_ptr<DialogRequest>> due = dialogRequests.takeDue();
+		for (auto& request : due) {
+			Extensions::Extension* owner = request->owner;
+			Extensions::runForExtension(owner, [&]() {
+				if (!owner->luaState) return;
+				sol::table result;
+				{
+					Extensions::HostAllocations host(owner->memory.get());
+					result = dialogTable(*request->answer, request->save, sol::state_view(*owner->luaState));
+				}
+				auto called = request->onDone(result);
+				if (!called.valid()) {
+					sol::error err = called;
+					std::cerr << "[" << owner->name << "] file window onDone: " << err.what() << std::endl;
+				}
+			});
+		}
+	}
+
+	void forgetFileDialogs(Extensions::Extension* owner)
+	{
+		dialogRequests.forget(owner);
+	}
+
 	void forgetNetRequests(Extensions::Extension* owner)
 	{
-		netRequests.erase(std::remove_if(netRequests.begin(), netRequests.end(),
-			[owner](const auto& each) { return each->owner == owner; }), netRequests.end());
+		netRequests.forget(owner);
 	}
 
 	// Where the in-game map is looking, or nil when it isn't open. Positions are

@@ -147,6 +147,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClCompile Include="src\controls.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
+    <ClCompile Include="src\file_dialogs.cpp" />
     <ClCompile Include="src\game_ui.cpp" />
     <ClCompile Include="src\helpers.cpp" />
     <ClCompile Include="src\item_catalog.cpp" />
@@ -182,6 +183,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClInclude Include="src\game_ui.hpp" />
     <ClInclude Include="src\helpers.hpp" />
     <ClInclude Include="src\files.hpp" />
+    <ClInclude Include="src\file_dialogs.hpp" />
     <ClInclude Include="src\item_catalog.hpp" />
     <ClInclude Include="src\item_icons.hpp" />
     <ClInclude Include="src\item_files.hpp" />
