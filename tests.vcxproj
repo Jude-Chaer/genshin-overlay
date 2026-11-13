@@ -166,6 +166,7 @@
     <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="src\triggers.cpp" />
     <ClCompile Include="src\typing.cpp" />
     <ClCompile Include="tests\asks_tests.cpp" />
     <ClCompile Include="tests\controls_tests.cpp" />
@@ -191,6 +192,7 @@
     <ClCompile Include="tests\map_follow_tests.cpp" />
     <ClCompile Include="tests\minimap_tests.cpp" />
     <ClCompile Include="tests\overlay_tests.cpp" />
+    <ClCompile Include="tests\triggers_tests.cpp" />
     <ClCompile Include="tests\typing_tests.cpp" />
     <ClCompile Include="tests\settings_tests.cpp" />
     <ClCompile Include="tests\test_extension.cpp" />
@@ -231,6 +233,7 @@
     <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
+    <ClInclude Include="src\triggers.hpp" />
     <ClInclude Include="src\typing.hpp" />
     <ClInclude Include="tests\test_extension.hpp" />
     <ClInclude Include="tests\test_map.hpp" />

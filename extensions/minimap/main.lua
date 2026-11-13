@@ -65,7 +65,7 @@ local function drawMap(player, left, top, right, bottom)
 end
 
 function Update()
-    local player = GetPlayerPosition()
+    local player = GetPlayer()
 
     if GetSetting("show") then
         local text = "no minimap"

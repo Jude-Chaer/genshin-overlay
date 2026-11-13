@@ -13,6 +13,8 @@
 #include "keybindings.hpp"
 #include "lua_functions.hpp"
 #include "map_tiles.hpp"
+#include "minimap.hpp"
+#include "overlay.hpp"
 #include "settings.hpp"
 #include "test_extension.hpp"
 
@@ -357,6 +359,58 @@ TEST_CASE("GetMapTile only takes tiles on the map's grid at the sizes drawn") {
     CHECK_FALSE(MapTiles::IsTile(grid, 0, -1, 256));
     // a size nobody draws, the biggest a resize to gigabytes
     for (int size : { 0, -32, 100, 512, 1 << 20 }) CHECK_FALSE(MapTiles::IsTile(grid, 0, 0, size));
+}
+
+TEST_CASE("GetScreens names every known screen, up or not, and needs no permission") {
+    Extensions::Extension* ext = load("screens");
+    REQUIRE(ext != nullptr);
+    ext->extensionPermissions.clear();
+    Overlay::SetMenuOpen(true);
+    REQUIRE(TestExtension::run(ext, R"(
+        local up = GetScreens()
+        map, menu, count = up.map, up.menu, 0
+        for _ in pairs(up) do count = count + 1 end
+    )"));
+    sol::state& lua = *ext->luaState;
+    CHECK(lua["map"].get<bool>() == false);
+    CHECK(lua["menu"].get<bool>() == true);
+    CHECK(lua["count"].get<int>() == (int)Screens::list.size());
+    Overlay::SetMenuOpen(false);
+    REQUIRE(TestExtension::run(ext, "menu = GetScreens().menu"));
+    CHECK(lua["menu"].get<bool>() == false);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("the map and the menu can be up together") {
+    Screens::Up up;
+    CHECK_FALSE(up.any());
+    up.set(Screens::Screen::Map, true);
+    up.set(Screens::Screen::Menu, true);
+    CHECK(up.any());
+    sol::state lua;
+    sol::table screens = LuaFunctions::screensTable(up, lua);
+    CHECK(screens["map"].get<bool>());
+    CHECK(screens["menu"].get<bool>());
+}
+
+TEST_CASE("GetPlayer gives the minimap's spot and the square round the minimap") {
+    MiniMap::Spot spot;
+    spot.found = false;
+    spot.state = MiniMap::State::Near;
+    spot.age = 1.5;
+    spot.mapId = 2;
+    spot.lat = 100.0;
+    spot.lng = -20.0;
+    spot.square = { 40, 60, 240, 260 };
+    sol::state lua;
+    sol::table player = LuaFunctions::playerTable(spot, lua);
+    CHECK_FALSE(player.get<bool>("found"));
+    CHECK(player.get<std::string>("state") == "near");
+    CHECK(player.get<double>("age") == 1.5);
+    CHECK(player.get<int>("mapId") == 2);
+    CHECK(player.get<double>("lat") == 100.0);
+    CHECK(player.get<float>("centerX") == 140.0f);
+    CHECK(player.get<float>("radius") == 100.0f);
 }
 
 TEST_CASE("GetMousePosition sees the cursor only over the game, unless it has Mouse anywhere") {

@@ -8,9 +8,12 @@
 #include "net.hpp"
 #include "extensions.hpp"
 #include "controls.hpp"
+#include "screens.hpp"
 
 namespace ItemCatalog { class Catalog; }
 namespace ItemFiles { struct Status; }
+namespace MiniMap { struct Spot; }
+namespace MapTracking { struct MapView; }
 
 namespace LuaFunctions {
     // Every function an extension can call, each with the permission it needs.
@@ -78,7 +81,8 @@ namespace LuaFunctions {
     // most 3 at once.
     void Dot(const std::string& part, sol::optional<bool> on);
     void ImGUI_Separator();
-    bool IsProgramHidden();
+    sol::table GetScreens(sol::this_state state);
+    sol::table screensTable(const Screens::Up& up, sol::state_view lua);
     std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, sol::optional<int> modifiers,
         sol::optional<std::string> label);
     bool DeleteKeybind(const std::string& uuid);
@@ -87,16 +91,19 @@ namespace LuaFunctions {
     sol::object GetExtensionSetting(const std::string& id, sol::this_state state);
     sol::variadic_results LoadTextureFromFileLua(const std::string& path, sol::this_state state);
     sol::object GetMapView(sol::this_state state);
+    // GetMapView's table for a view, nil while it isn't shown
+    sol::object mapViewTable(const MapTracking::MapView& view, sol::state_view lua);
     void FollowMapWhileMoving();
     // left, right: the widest stretch across the map between y0 and y1 that
     // the game's map UI and the floor picker leave free, nil while the map
     // isn't open. In overlay pixels, like GetMapView.
     sol::variadic_results FreeSpace(float y0, float y1, sol::this_state state);
-    sol::object GetPlayerPosition(sol::this_state state);
+    sol::table GetPlayer(sol::this_state state);
+    // GetPlayer's table for a spot the minimap gave
+    sol::table playerTable(const MiniMap::Spot& spot, sol::state_view lua);
     sol::object GetMapGrid(int mapId, sol::this_state state);
     GLuint GetMapTile(int mapId, int x, int y, int size);
-    uint64_t GetItemsVersion();
-    sol::object GetItemsState(sol::this_state state);
+    sol::table GetItems(sol::this_state state);
     sol::object GetItemTypes(sol::this_state state);
     sol::object GetItemPositions(int type, sol::this_state state);
     sol::object GetItemRegions(sol::this_state state);
@@ -211,7 +218,6 @@ namespace LuaFunctions {
     // "never" (Never ask again) or "off" (switched off on its Permissions
     // tab), nil for a name nothing has. AskForPermission queues the question,
     // it shows while the map or menu is open.
-    bool HasPermission(const std::string& name);
     sol::object PermissionState(const std::string& name, sol::this_state state);
     void AskForPermission(const std::string& name);
 
@@ -228,7 +234,8 @@ namespace LuaFunctions {
         // takes the catalog the GetItem functions read until the next frame, and frees
         // the icons of an older one; call before the extensions update
         void beginFrame();
-        sol::table state(const ItemFiles::Status& status, sol::state_view lua);
+        // GetItems' table
+        sol::table table(uint64_t version, const ItemFiles::Status& status, sol::state_view lua);
         sol::table types(const ItemCatalog::Catalog* catalog, sol::state_view lua);
         sol::object positions(const ItemCatalog::Catalog* catalog, int type, sol::state_view lua);
         sol::table regions(const ItemCatalog::Catalog* catalog, sol::state_view lua);

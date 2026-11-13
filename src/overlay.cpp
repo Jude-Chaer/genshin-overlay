@@ -17,6 +17,7 @@
 #include "stats.hpp"
 #include "settings.hpp"
 #include "capture.hpp"
+#include "triggers.hpp"
 #include "key_choices.hpp"
 #include "typing.hpp"
 #include <imgui_internal.h>
@@ -235,6 +236,11 @@ namespace Overlay {
 
     bool MenuOpen() {
         return menuOpen;
+    }
+
+    int ShownExtension() {
+        if (!menuOpen || activeTab < 2) return -1;
+        return activeTab - 2;
     }
 
     void ShowExtension(int index) {
@@ -1048,10 +1054,11 @@ namespace Overlay {
             // sends the tracker a new screenshot when it's ready for one
             MapTracking::Tick(glfwGetWin32Window(Overlay::Window));
             Stats::Update();
-            // before the frame is skipped, MapClosed and MenuClosed come on undrawn turns
+            // before the frame is skipped, so the map and menu closing reach the Screens trigger
             updateLook(lookPicked);
             lookPicked = false;
             updateFont();
+            Triggers::checkNow();
             LuaFunctions::UpdateAnswers();
 
             // map and menu closed: nothing to show, so don't draw at all

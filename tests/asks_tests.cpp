@@ -149,8 +149,6 @@ TEST_CASE("PermissionState gives its five answers to Lua, nil for an unknown nam
         never = PermissionState("mouse_anywhere")
         off = PermissionState("display_read")
         unknown = PermissionState("everything") == nil
-        has = HasPermission("display_overlay")
-        hasNot = HasPermission("network")
         AskForPermission("everything")
     )"));
     sol::state& lua = *ext->luaState;
@@ -159,8 +157,6 @@ TEST_CASE("PermissionState gives its five answers to Lua, nil for an unknown nam
     CHECK(lua["never"].get<std::string>() == "never");
     CHECK(lua["off"].get<std::string>() == "off");
     CHECK(lua["unknown"].get<bool>() == true);
-    CHECK(lua["has"].get<bool>() == true);
-    CHECK(lua["hasNot"].get<bool>() == false);
     CHECK(log.has("knows no permission named everything"));
     CHECK(Asks::queue().empty());
 
@@ -683,6 +679,7 @@ TEST_CASE("the permissions an extension's code calls for are found, comments lef
     CHECK(callsFor("ClickArea(1, 2, 3, 4)") == std::unordered_set<Permission>{ Permission::TakeClicks });
     CHECK(callsFor("local socket = WebSocket.new()") == std::unordered_set<Permission>{ Permission::NetworkAccess });
     CHECK(callsFor("RegisterKeybind(Keys.F5, f, KeybindModifiers.Alt)") == std::unordered_set<Permission>{ Permission::Keybinds });
+    CHECK(callsFor("AddTrigger('MapView', f)") == std::unordered_set<Permission>{ Permission::MapInfo });
     CHECK(callsFor("AskForPermission([[mouse_anywhere]])") == std::unordered_set<Permission>{ Permission::MouseAnywhere });
     CHECK(callsFor("-- ClickArea(1, 2, 3, 4)\n--[==[ Net_Get(x) ]==]\nlocal ClickAreas = 1").empty());
     CHECK(callsFor("print(\"ClickArea \\\" Net_Get\")").empty());

@@ -26,6 +26,12 @@ namespace Asks {
 		return nullptr;
 	}
 
+	std::vector<std::string> settingNames() {
+		std::vector<std::string> names;
+		for (const auto& setting : settings) names.push_back(setting.name);
+		return names;
+	}
+
 	std::string settingState(const Extension& ext, const std::string& name) {
 		const OverlaySetting* setting = findSetting(name);
 		if (setting && setting->isOn && setting->isOn()) return "allowed";

@@ -43,6 +43,8 @@ namespace Asks {
 	};
 	void addSetting(const OverlaySetting& setting);
 	const OverlaySetting* findSetting(const std::string& name);
+	// the names of every setting extensions may ask for
+	std::vector<std::string> settingNames();
 	// PermissionState for an overlay setting: "allowed" when it's on
 	std::string settingState(const Extensions::Extension& ext, const std::string& name);
 

@@ -33,7 +33,8 @@ namespace Extensions {
 		MouseAnywhere,
 		Notices,
 		Dots,
-		TakeClicks
+		TakeClicks,
+		MapInfo
 	};
 
 	// Saved in settings.json and named in Lua by name, shown to the player by
@@ -48,7 +49,8 @@ namespace Extensions {
 
 	inline const std::vector<PermissionInfo> permissionList = {
 		{ExtensionPermissionTypes::DisplayOverlay, "display_overlay", "Display Overlay", "It can draw on the overlay."},
-		{ExtensionPermissionTypes::DisplayRead, "display_read", "Display Read", "It can see where the map is and what it shows."},
+		{ExtensionPermissionTypes::MapInfo, "map_info", "Map info", "It can see where the map is, where you are and the map items."},
+		{ExtensionPermissionTypes::DisplayRead, "display_read", "Display Read", "It can see the game's screen."},
 		{ExtensionPermissionTypes::Keybinds, "keybinds", "Keybinds", "It takes these keys while you play. The game won't see them."},
 		{ExtensionPermissionTypes::InternalReadfile, "internal_read", "Internal File Reading", "It can read files in its own folder."},
 		{ExtensionPermissionTypes::InternalWritefile, "internal_write", "Internal File Writing", "It can change files in its own folder."},
@@ -66,13 +68,14 @@ namespace Extensions {
 	inline const std::unordered_set<ExtensionPermissionTypes> defaultPermissions = {
 		ExtensionPermissionTypes::DisplayOverlay,
 		ExtensionPermissionTypes::DisplayRead,
+		ExtensionPermissionTypes::MapInfo,
 		ExtensionPermissionTypes::InternalReadfile,
 		ExtensionPermissionTypes::InternalWritefile,
 		ExtensionPermissionTypes::Notices,
 		ExtensionPermissionTypes::Dots
 	};
 
-	inline const int PermissionCount = (int)ExtensionPermissionTypes::TakeClicks + 1;
+	inline const int PermissionCount = (int)ExtensionPermissionTypes::MapInfo + 1;
 
 	// nullptr for None and for a name this overlay doesn't know
 	const PermissionInfo* findPermission(ExtensionPermissionTypes type);

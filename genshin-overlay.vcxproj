@@ -173,6 +173,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="src\triggers.cpp" />
     <ClCompile Include="src\typing.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -210,6 +211,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
+    <ClInclude Include="src\triggers.hpp" />
     <ClInclude Include="src\typing.hpp" />
   </ItemGroup>
   <ItemGroup>

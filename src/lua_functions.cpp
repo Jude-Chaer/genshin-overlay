@@ -16,6 +16,7 @@
 #include "item_files.hpp"
 #include "typing.hpp"
 #include "asks.hpp"
+#include "triggers.hpp"
 #include "key_choices.hpp"
 #include "settings.hpp"
 #include "notices.hpp"
@@ -125,7 +126,7 @@ namespace LuaFunctions {
 		};
 		const Permission None = Permission::None;
 		const Permission DisplayOverlay = Permission::DisplayOverlay;
-		const Permission DisplayRead = Permission::DisplayRead;
+		const Permission MapInfo = Permission::MapInfo;
 		const Permission InternalRead = Permission::InternalReadfile;
 		const Permission InternalWrite = Permission::InternalWritefile;
 		const Permission Network = Permission::NetworkAccess;
@@ -151,15 +152,17 @@ namespace LuaFunctions {
 		global("ImGUI_Empty", None, ImGUI_Empty);
 		global("ImGUI_Progress", None, ImGUI_Progress);
 		global("ImGUI_Separator", None, ImGUI_Separator);
-		global("IsProgramHidden", None, IsProgramHidden);
+		global("GetScreens", None, GetScreens);
 		global("DefineExtensionSetting", None, DefineExtensionSetting);
 		global("GetSetting", None, GetExtensionSetting);
 		global("JSON_Encode", None, JSONEncode);
 		global("JSON_Decode", None, JSONDecode);
 		global("SetInterval", None, SetInterval);
 		global("ClearInterval", None, ClearInterval);
+		// the map, player and item ones run only with Map info, like their calls
+		global("AddTrigger", None, Triggers::add);
+		global("RemoveTrigger", None, Triggers::remove);
 		global("GetOSTimeMS", None, GetOSTimeMS);
-		global("HasPermission", None, HasPermission);
 		global("PermissionState", None, PermissionState);
 		global("AskForPermission", None, AskForPermission);
 
@@ -181,21 +184,20 @@ namespace LuaFunctions {
 		global("ClickArea", Permission::TakeClicks, ClickArea);
 
 		// what's on the screen and the map
-		global("GetMapView", DisplayRead, GetMapView);
-		global("FollowMapWhileMoving", DisplayRead, FollowMapWhileMoving);
-		global("GetPlayerPosition", DisplayRead, GetPlayerPosition);
-		global("GetMapGrid", DisplayRead, GetMapGrid);
-		global("GetMapTile", DisplayRead, GetMapTile);
-		global("GetMapFloor", DisplayRead, GetMapFloor);
-		global("FreeSpace", DisplayRead, FreeSpace);
-		global("GetMousePosition", DisplayRead, GetMousePosition);
-		global("CompareImages", DisplayRead, CompareImages);
-		global("GetItemsVersion", DisplayRead, GetItemsVersion);
-		global("GetItemsState", DisplayRead, GetItemsState);
-		global("GetItemTypes", DisplayRead, GetItemTypes);
-		global("GetItemPositions", DisplayRead, GetItemPositions);
-		global("GetItemRegions", DisplayRead, GetItemRegions);
-		global("GetItemIcon", DisplayRead, GetItemIcon);
+		global("GetMapView", MapInfo, GetMapView);
+		global("FollowMapWhileMoving", MapInfo, FollowMapWhileMoving);
+		global("GetPlayer", MapInfo, GetPlayer);
+		global("GetMapGrid", MapInfo, GetMapGrid);
+		global("GetMapTile", MapInfo, GetMapTile);
+		global("GetMapFloor", MapInfo, GetMapFloor);
+		global("FreeSpace", MapInfo, FreeSpace);
+		global("GetMousePosition", MapInfo, GetMousePosition);
+		global("CompareImages", None, CompareImages);
+		global("GetItems", MapInfo, GetItems);
+		global("GetItemTypes", MapInfo, GetItemTypes);
+		global("GetItemPositions", MapInfo, GetItemPositions);
+		global("GetItemRegions", MapInfo, GetItemRegions);
+		global("GetItemIcon", MapInfo, GetItemIcon);
 
 		// files, only in the extension's own folder (pathFor)
 		global("LoadTexture", InternalRead, LoadTextureFromFileLua);
@@ -618,9 +620,15 @@ namespace LuaFunctions {
 		ImGui::Separator();
 	}
 
-	// hidden means the menu is closed
-	bool IsProgramHidden() {
-		return !Overlay::MenuOpen();
+	// { map = true, menu = false }: which of the screens the overlay knows are up
+	sol::table GetScreens(sol::this_state state) {
+		return screensTable(Screens::now(), state);
+	}
+
+	sol::table screensTable(const Screens::Up& up, sol::state_view lua) {
+		sol::table screens = lua.create_table();
+		for (const Screens::Known& known : Screens::list) screens[known.name] = up[known.screen];
+		return screens;
 	}
 
 	// RegisterKeybind(key, function, modifiers, label), modifiers like
@@ -1268,12 +1276,18 @@ namespace LuaFunctions {
 	// "picked" (the overlay's floor picker) or "guess" (from the map's picture). ui is the game's
 	// own UI as boxes to keep off, and the overlay's floor picker while it's
 	// there. panelLeft is where a panel on the right starts, only while one is open.
+	// the overlay window's corner on the screen, 0, 0 without a window
+	static POINT overlayCorner() {
+		int x = 0, y = 0;
+		if (Overlay::Window) glfwGetWindowPos(Overlay::Window, &x, &y);
+		return { x, y };
+	}
+
 	// the game in overlay pixels, and its map UI and the floor picker in them
 	static RECT gameOnOverlay(const MapTracking::MapView& view) {
-		int windowX = 0, windowY = 0;
-		glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+		POINT window = overlayCorner();
 		RECT game = view.gameRect;
-		OffsetRect(&game, -windowX, -windowY);
+		OffsetRect(&game, -window.x, -window.y);
 		return game;
 	}
 
@@ -1285,8 +1299,11 @@ namespace LuaFunctions {
 	}
 
 	sol::object GetMapView(sol::this_state state) {
-		MapTracking::MapView view = MapTracking::GetView();
-		if (!view.visible) return sol::lua_nil;
+		return mapViewTable(MapTracking::GetView(), state);
+	}
+
+	sol::object mapViewTable(const MapTracking::MapView& view, sol::state_view lua) {
+		if (!view.visible) return sol::make_object(lua, sol::lua_nil);
 
 		// everything below is placed from the game
 		RECT game = gameOnOverlay(view);
@@ -1295,7 +1312,6 @@ namespace LuaFunctions {
 		float right = (float)game.right;
 		float bottom = (float)game.bottom;
 
-		sol::state_view lua(state);
 		sol::table ui = lua.create_table();
 		auto addBox = [&](const RECT& box) {
 			ui.add(lua.create_table_with(
@@ -1366,20 +1382,20 @@ namespace LuaFunctions {
 	// the spot is where they were last seen and age how many seconds ago
 	// that was. mapId is 0 until they were seen once. The minimap is only
 	// watched while this gets called, so the first calls aren't found.
-	sol::object GetPlayerPosition(sol::this_state state) {
-		MiniMap::Spot spot = MiniMap::GetPlayer();
+	sol::table GetPlayer(sol::this_state state) {
+		return playerTable(MiniMap::GetPlayer(), state);
+	}
 
-		int windowX = 0, windowY = 0;
-		glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
-		float left = (float)(spot.square.left - windowX);
-		float top = (float)(spot.square.top - windowY);
-		float right = (float)(spot.square.right - windowX);
-		float bottom = (float)(spot.square.bottom - windowY);
+	sol::table playerTable(const MiniMap::Spot& spot, sol::state_view lua) {
+		POINT window = overlayCorner();
+		float left = (float)(spot.square.left - window.x);
+		float top = (float)(spot.square.top - window.y);
+		float right = (float)(spot.square.right - window.x);
+		float bottom = (float)(spot.square.bottom - window.y);
 
 		// Left to bottom is the square around the game's minimap on the overlay.
 		// The minimap is the circle that just fits in it.
-		sol::state_view lua(state);
-		return sol::make_object(state, lua.create_table_with(
+		return lua.create_table_with(
 			"found", spot.found,
 			"state", stateName(spot.state),
 			"age", spot.age,
@@ -1396,7 +1412,7 @@ namespace LuaFunctions {
 			"centerX", (left + right) / 2.0f,
 			"centerY", (top + bottom) / 2.0f,
 			"radius", (right - left) / 2.0f
-		));
+		);
 	}
 
 	// how a map's tiles are laid out: tile x covers map units x * tileSize - originX and up
@@ -1445,13 +1461,13 @@ namespace LuaFunctions {
 			ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
 	}
 
-	// Clicks in the box go to the overlay from the next frame on, while the map
-	// or the menu is open. Nothing while the cursor is over the menu or another
+	// Clicks in the box go to the overlay from the next frame on, while one of
+	// the known screens is up. Nothing while the cursor is over the menu or another
 	// of the overlay's windows, so they always stay usable.
 	std::tuple<bool, bool> ClickArea(float x0, float y0, float x1, float y1) {
 		if (!inFrame("ClickArea")) return { false, false };
 		Overlay::ClaimMouse(x0, y0, x1, y1, Extensions::currentExtension ? Extensions::currentExtension->name : std::string());
-		if (!MapTracking::IsMapOpen() && !Overlay::MenuOpen()) return { false, false };
+		if (!Screens::now().any()) return { false, false };
 		if (ImGui::GetIO().WantCaptureMouse) return { false, false };
 		bool hovered = ImGui::IsMouseHoveringRect(ImVec2(x0, y0), ImVec2(x1, y1), false);
 		return { hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left), hovered };
@@ -2081,14 +2097,6 @@ namespace LuaFunctions {
 		return info;
 	}
 
-	bool HasPermission(const std::string& name) {
-		Extensions::Extension* ext = Extensions::currentExtension;
-		const Extensions::PermissionInfo* info = permissionNamed("HasPermission", name);
-		if (!ext) return false;
-		if (!info) return Asks::settingState(*ext, name) == "allowed";
-		return ext->extensionPermissions.count(info->type) > 0;
-	}
-
 	sol::object PermissionState(const std::string& name, sol::this_state state) {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		const Extensions::PermissionInfo* info = permissionNamed("PermissionState", name);
@@ -2122,11 +2130,10 @@ namespace LuaFunctions {
 			RECT rect;
 			HWND window = Capture::findRunningGame();
 			if (window && Capture::getClientRectOnScreen(window, rect)) game = rect;
-			int x = 0, y = 0;
-			if (Overlay::Window) glfwGetWindowPos(Overlay::Window, &x, &y);
+			POINT corner = overlayCorner();
 			bool anywhere = ext->extensionPermissions.count(Permission::MouseAnywhere) > 0;
-			at = mouseFor(cursor, game, POINT{ x, y }, anywhere);
-			if (anywhere && at && !mouseFor(cursor, game, POINT{ x, y }, false)) Extensions::markUsed(*ext, Permission::MouseAnywhere);
+			at = mouseFor(cursor, game, corner, anywhere);
+			if (anywhere && at && !mouseFor(cursor, game, corner, false)) Extensions::markUsed(*ext, Permission::MouseAnywhere);
 		}
 		if (!at) {
 			results.push_back(sol::make_object(state, sol::lua_nil));
@@ -2236,7 +2243,7 @@ namespace LuaFunctions {
 		else draw->AddCircleFilled(ImVec2(x, y), radius, colour);
 	}
 	// The map items, all read only from the catalog in memory. Unknown ids give
-	// nil. Take what you keep again when GetItemsVersion changes: a type or a
+	// nil. Take what you keep again when GetItems().version changes: a type or a
 	// point can be gone from the new list, and icons from the old one are freed.
 	// One catalog for the whole frame, so every extension sees the same one.
 	namespace Items {
@@ -2274,8 +2281,9 @@ namespace LuaFunctions {
 			return false;
 		}
 
-		sol::table state(const ItemFiles::Status& status, sol::state_view lua) {
+		sol::table table(uint64_t version, const ItemFiles::Status& status, sol::state_view lua) {
 			return lua.create_table_with(
+				"version", version,
 				"state", stateName(status.state),
 				"reason", reasonName(status.reason),
 				"percent", status.percent,
@@ -2343,14 +2351,11 @@ namespace LuaFunctions {
 		}
 	}
 
-	// 0 while there are none, goes up by one with each new list
-	uint64_t GetItemsVersion() {
-		return Items::frameCatalog ? Items::frameCatalog->version : 0;
-	}
-
-	// { state, reason, percent, built, checking }, for an extension's own "waiting" text
-	sol::object GetItemsState(sol::this_state state) {
-		return Items::state(ItemFiles::GetStatus(), state);
+	// { version, state, reason, percent, built, checking }: version is 0 while
+	// there are none and goes up by one with each new list, the rest is how the
+	// download goes, for an extension's own "waiting" text
+	sol::table GetItems(sol::this_state state) {
+		return Items::table(Items::frameCatalog ? Items::frameCatalog->version : 0, ItemFiles::GetStatus(), state);
 	}
 
 	sol::object GetItemTypes(sol::this_state state) {
@@ -2366,7 +2371,7 @@ namespace LuaFunctions {
 		return Items::regions(Items::frameCatalog.get(), state);
 	}
 
-	// made once per type and kept, valid until GetItemsVersion changes
+	// made once per type and kept, valid until GetItems().version changes
 	sol::object GetItemIcon(int type, sol::this_state state) {
 		GLuint texture = ItemIcons::get(Items::frameCatalog.get(), type);
 		if (texture == 0) return sol::lua_nil;

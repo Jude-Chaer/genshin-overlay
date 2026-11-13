@@ -170,7 +170,8 @@ TEST_CASE("every function an extension gets goes through the permission check") 
     CHECK(needs("WebSocket.close") == Permission::None);
     CHECK(needs("RegisterKeybind") == Permission::None);
     CHECK(needs("DrawText") == Permission::DisplayOverlay);
-    CHECK(needs("GetItemTypes") == Permission::DisplayRead);
+    CHECK(needs("GetItemTypes") == Permission::MapInfo);
+    CHECK(needs("CompareImages") == Permission::None);
     CHECK(needs("ReadFile") == Permission::InternalReadfile);
     CHECK(needs("WriteFile") == Permission::InternalWritefile);
     CHECK(needs("GetSetting") == Permission::None);
@@ -374,7 +375,7 @@ TEST_CASE("saved grants come back by name, with ones this overlay doesn't know k
     // the player takes Network Access away
     ext.extensionPermissions.erase(Permission::NetworkAccess);
     Extensions::saveExtensionPermissions(ext);
-    CHECK(readSettings()["extensionGrants"]["markers"]["granted"] == std::vector<std::string>{ "display_overlay", "display_read",
+    CHECK(readSettings()["extensionGrants"]["markers"]["granted"] == std::vector<std::string>{ "display_overlay", "map_info", "display_read",
         "keybinds", "internal_read", "internal_write", "notices", "dots", "game_traffic" });
 
     Extensions::loadExtensionPermissions(&ext);
@@ -390,7 +391,7 @@ TEST_CASE("a default the old list didn't have stays off") {
     ext.extensionHash = "h1";
     Extensions::loadExtensionPermissions(&ext);
     CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay, Permission::NetworkAccess,
-        Permission::InternalReadfile, Permission::Notices, Permission::Dots });
+        Permission::MapInfo, Permission::InternalReadfile, Permission::Notices, Permission::Dots });
     CHECK(readSettings()["extensionGrants"]["example"]["off"] == std::vector<std::string>{ "display_read", "internal_write" });
 }
 
@@ -419,7 +420,7 @@ TEST_CASE("an extension whose files changed runs with the defaults it still had"
     Extensions::loadExtensionPermissions(&ext);
 
     CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay, Permission::DisplayRead,
-        Permission::InternalReadfile, Permission::Notices, Permission::Dots });
+        Permission::MapInfo, Permission::InternalReadfile, Permission::Notices, Permission::Dots });
     CHECK(ext.grantsBeforeChange == std::vector<std::string>{ "keybinds", "network",
         "display_overlay", "display_read", "internal_read" });
     CHECK(ext.hashBeforeChange == "h1");
@@ -1522,7 +1523,6 @@ TEST_CASE("a renamed tab keeps its row's open tab") {
 TEST_CASE("CompareImages compares only the extension's own textures") {
     Extensions::Extension* ext = TestExtension::load("comparing", "function Init() end");
     REQUIRE(ext != nullptr);
-    ext->extensionPermissions.insert(Permission::DisplayRead);
     CaptureLog log;
     REQUIRE(TestExtension::run(ext, "same = CompareImages(7, 8, 1)"));
     CHECK(log.count("compares only textures it loaded itself") == 1);

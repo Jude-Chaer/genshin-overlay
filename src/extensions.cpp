@@ -9,6 +9,7 @@
 #include "lua_functions.hpp"
 #include "lua_patterns.hpp"
 #include "settings.hpp"
+#include "triggers.hpp"
 #include "key_choices.hpp"
 #include "typing.hpp"
 #include "controls.hpp"
@@ -361,6 +362,8 @@ namespace Extensions {
 		std::unordered_set<ExtensionPermissionTypes> found;
 		auto fromString = [&](const std::string& text) {
 			if (const PermissionInfo* info = findPermission(text)) found.insert(info->type);
+			ExtensionPermissionTypes trigger = Triggers::permissionFor(text);
+			if (trigger != ExtensionPermissionTypes::None) found.insert(trigger);
 		};
 		auto word = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
 		size_t i = 0;
@@ -547,6 +550,7 @@ namespace Extensions {
 		}
 		ext.keys.clear();
 		LuaFunctions::forgetIntervals(&ext);
+		Triggers::forget(&ext);
 		LuaFunctions::forgetNetRequests(&ext);
 		LuaFunctions::forgetFileDialogs(&ext);
 		LuaFunctions::forgetSockets(&ext);

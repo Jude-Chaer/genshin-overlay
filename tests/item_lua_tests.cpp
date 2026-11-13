@@ -74,7 +74,7 @@ namespace {
 
 TEST_CASE("extensions get the type list from the catalog in memory") {
     Lua lua;
-    CHECK(lua.run<uint64_t>("GetItemsVersion()") == ItemCatalog::version());
+    CHECK(lua.run<uint64_t>("GetItems().version") == ItemCatalog::version());
     CHECK(lua.run<int>("#GetItemTypes()") == 4);
 
     lua.lua.script("groups = GetItemTypes()");
@@ -149,7 +149,7 @@ TEST_CASE("the download state reads as words") {
     status.state = ItemFiles::State::Old;
     status.reason = ItemFiles::Reason::NoNetwork;
     status.built = "2026-10-17";
-    sol::table old = LuaFunctions::Items::state(status, lua);
+    sol::table old = LuaFunctions::Items::table(3, status, lua);
     CHECK(old.get<std::string>("state") == "old");
     CHECK(old.get<std::string>("reason") == "no_network");
     CHECK(old.get<std::string>("built") == "2026-10-17");
@@ -158,19 +158,19 @@ TEST_CASE("the download state reads as words") {
     status.state = ItemFiles::State::Downloading;
     status.percent = 40;
     status.started = true;
-    sol::table downloading = LuaFunctions::Items::state(status, lua);
+    sol::table downloading = LuaFunctions::Items::table(3, status, lua);
     CHECK(downloading.get<std::string>("state") == "downloading");
     CHECK(downloading.get<std::string>("reason") == "none");
     CHECK(downloading.get<int>("percent") == 40);
 
     CHECK_FALSE(downloading.get<bool>("checking"));
     status.checking = true;
-    CHECK(LuaFunctions::Items::state(status, lua).get<bool>("checking"));
+    CHECK(LuaFunctions::Items::table(3, status, lua).get<bool>("checking"));
 
     // nothing started in the tests: none, and still waiting on the first check
     Lua withFunctions;
-    CHECK(withFunctions.run<std::string>("GetItemsState().state") == "none");
-    CHECK(withFunctions.run<bool>("GetItemsState().checking"));
+    CHECK(withFunctions.run<std::string>("GetItems().state") == "none");
+    CHECK(withFunctions.run<bool>("GetItems().checking"));
 }
 
 TEST_CASE("an icon is made once and freed at the first frame of a new catalog") {
@@ -186,15 +186,15 @@ TEST_CASE("an icon is made once and freed at the first frame of a new catalog") 
     CHECK(textures.freed.empty());
 
     // a new catalog mid frame changes nothing until the next frame starts
-    uint64_t version = lua.run<uint64_t>("GetItemsVersion()");
+    uint64_t version = lua.run<uint64_t>("GetItems().version");
     ItemCatalog::publish(loadFolder());
-    CHECK(lua.run<uint64_t>("GetItemsVersion()") == version);
+    CHECK(lua.run<uint64_t>("GetItems().version") == version);
     CHECK(lua.run<GLuint>("GetItemIcon(231)") == first);
     CHECK(textures.freed.empty());
 
     // the next frame frees the old icons, even with nobody asking for one
     LuaFunctions::Items::beginFrame();
-    CHECK(lua.run<uint64_t>("GetItemsVersion()") == version + 1);
+    CHECK(lua.run<uint64_t>("GetItems().version") == version + 1);
     CHECK(textures.freed.size() == 2);
     CHECK(ItemIcons::count() == 0);
     CHECK(!ItemIcons::owns(first));
