@@ -33,6 +33,8 @@ namespace MapTiles {
     extern GLuint GetTile(int mapId, int x, int y, int size);
     // false until the image is loaded, or if the floor has no image
     extern bool GetFloor(int groupId, int floorId, Floor& out);
+    // a tile's or floor's texture that's loaded now
+    extern bool Owns(GLuint texture);
     // call once per frame after drawing, uploads finished tiles and frees unused ones
     extern void EndFrame();
 }

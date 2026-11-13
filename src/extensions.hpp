@@ -30,7 +30,8 @@ namespace Extensions {
 		DisplayOverlay,
 		DisplayRead,
 		Keybinds,
-		MouseAnywhere
+		MouseAnywhere,
+		TakeClicks
 	};
 
 	// Saved in settings.json and named in Lua by name, shown to the player by
@@ -51,6 +52,7 @@ namespace Extensions {
 		{ExtensionPermissionTypes::InternalWritefile, "internal_write", "Internal File Writing", "It can change files in its own folder."},
 		{ExtensionPermissionTypes::NetworkAccess, "network", "Network Access", "It can send and get things from any website."},
 		{ExtensionPermissionTypes::MouseAnywhere, "mouse_anywhere", "Mouse anywhere", "It can see where your mouse is, even outside the game."},
+		{ExtensionPermissionTypes::TakeClicks, "take_clicks", "Take clicks", "Clicks on parts of what it draws go to it instead of the game, while the map or the menu is open."},
 	};
 
 	// saved names of permissions that no longer exist, dropped when grants are loaded
@@ -64,7 +66,7 @@ namespace Extensions {
 		ExtensionPermissionTypes::InternalWritefile
 	};
 
-	inline const int PermissionCount = (int)ExtensionPermissionTypes::MouseAnywhere + 1;
+	inline const int PermissionCount = (int)ExtensionPermissionTypes::TakeClicks + 1;
 
 	// nullptr for None and for a name this overlay doesn't know
 	const PermissionInfo* findPermission(ExtensionPermissionTypes type);
@@ -112,6 +114,12 @@ namespace Extensions {
 	inline const size_t MaxIntervals = 64;
 	inline const size_t MaxTextures = 256;
 	inline const size_t MaxSettings = 128;
+	inline const size_t MaxTabs = 16;
+	// headers whose open state is kept, and their labels' length
+	inline const size_t MaxHeaders = 64;
+	inline const size_t MaxHeaderLabel = 128;
+	// headers past those, kept open or closed for the session only
+	inline const size_t MaxSessionHeaders = 256;
 	// a text setting's default, the same as the box the player types in
 	inline const size_t MaxSettingText = 256;
 	// print lines a minute, the ones past it are left out
@@ -212,6 +220,13 @@ namespace Extensions {
 		Cost cost;
 		// when each permission was last used, seconds since 1970, 0 for not yet
 		long long lastUsed[PermissionCount] = {};
+		// its headers the player opened or closed, by label, saved by folder
+		std::map<std::string, bool> openHeaders;
+		// the ones past MaxHeaders or with longer labels, for this session
+		std::map<std::string, bool> sessionHeaders;
+		// an open header's card is being drawn, ended by the next header,
+		// ImGUI_EndHeader or the end of the call
+		bool headerCard = false;
 		std::string name;
 		// metadata.description under its name, metadata.about on its About tab
 		std::string description, about;
@@ -286,8 +301,14 @@ namespace Extensions {
 			std::string bound;
 		};
 		std::vector<HeldKey> keys;
-		// the textures it loaded with LoadTexture, freed with it
+		// the textures it loaded with LoadTexture or from a web link, freed with it
 		std::vector<GLuint> textures;
+		// ImGUI_Image's web links this session, 0 while downloading
+		struct WebImage {
+			GLuint texture = 0;
+			bool failed = false;
+		};
+		std::map<std::string, WebImage> webImages;
 		std::filesystem::path folder;
 		// its folder's name, the key for everything it keeps in settings.json
 		std::string folderKey;

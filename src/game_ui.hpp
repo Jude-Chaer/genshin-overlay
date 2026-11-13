@@ -53,6 +53,9 @@ namespace GameUi {
     // left is in the game picture's pixels, as ReadPanel gives it. With a
     // panel open the panel itself is one of the boxes.
     extern std::vector<RECT> Boxes(const RECT& game, const Panel& panel);
+    // The widest stretch across left to right, between y0 and y1, that none
+    // of the boxes covers. All of it when nothing's free.
+    extern void FreeSpan(float left, float right, const std::vector<RECT>& boxes, float y0, float y1, float& from, float& to);
     // Just left of the layer switcher's box, half way down its buttons, in
     // the same coords as game: where the overlay's floor picker goes. False
     // when the region list hides the switcher or the panel is unsure.

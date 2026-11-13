@@ -34,6 +34,10 @@ namespace Settings {
     // SIFT tries the game 480 wide first, and 960 only if that isn't a strong match
     extern bool findSmallFirst;
 
+    // For extension authors, only in settings.json: an outline with the
+    // extension's name round every box that takes the mouse.
+    extern bool showClickBoxes;
+
     // the map items are downloaded from the release when there's a newer pack (the menu's "Download map items")
     extern bool downloadItems;
 
@@ -68,6 +72,9 @@ namespace Settings {
     // folder and permission name, under extensionCalls
     extern std::vector<std::string> LoadCalls(const std::string& folder);
     extern void SaveCalls(const std::string& folder, const std::vector<std::string>& names);
+    // which of an extension's headers are open, by label, under extensionHeaders
+    extern std::map<std::string, bool> LoadHeaders(const std::string& folder);
+    extern void SaveHeaders(const std::string& folder, const std::map<std::string, bool>& open);
 
     // What the player allowed an extension, kept per extension folder: the
     // permissions by name and the hash its files had then. never and off are

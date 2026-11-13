@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <imgui.h>
 #include "net.hpp"
 #include "extensions.hpp"
 #include "lua_functions.hpp"
@@ -990,5 +991,107 @@ TEST_CASE("an answer past the memory cap stops the extension, not the overlay") 
     CHECK(ext->stoppedForMemory);
     // closed once stopped, the same turn
     CHECK((!ext->luaState || (*ext->luaState)["got"] == sol::lua_nil));
+    TestExtension::unloadAll();
+}
+
+// ImGUI_Image: a web link is downloaded once a session, with Network Access.
+
+namespace {
+    // an ImGui frame in a window, Menu()'s part of it
+    struct MenuFrame {
+        ImGuiContext* context = ImGui::CreateContext();
+        MenuFrame() {
+            ImGuiIO& io = ImGui::GetIO();
+            io.DisplaySize = ImVec2(800, 600);
+            io.DeltaTime = 1.0f / 60.0f;
+            io.IniFilename = nullptr;
+            io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+        }
+        ~MenuFrame() { ImGui::DestroyContext(context); }
+
+        bool draw(Extensions::Extension* ext, const std::string& lua) {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImVec2(400, 300));
+            ImGui::Begin("page", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
+            bool ran = false;
+            {
+                Extensions::InPhase menu(Extensions::Phase::Menu);
+                ran = TestExtension::run(ext, lua);
+            }
+            last = ImGui::GetItemRectSize();
+            ImGui::End();
+            ImGui::EndFrame();
+            return ran;
+        }
+        ImVec2 last;
+    };
+}
+
+TEST_CASE("a web image is downloaded once, and only with Network Access") {
+    Replier proxy([](const std::string&) { return closing("not a picture"); });
+    Proxy use(proxy.address());
+    Extensions::Extension* ext = netExtension("web_image", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrame frame;
+    const std::string url = "http://example.com/a.png";
+    const std::string draw = "ImGUI_Image('" + url + "', 32, 16)";
+
+    REQUIRE(frame.draw(ext, draw));
+    REQUIRE(frame.draw(ext, draw));
+    CHECK(LuaFunctions::imageDownloadsOf(ext) == 1);
+    // the grey box takes the image's place meanwhile
+    CHECK(frame.last.x == 32);
+    CHECK(frame.last.y == 16);
+    CHECK(framesUntil([&]() { return LuaFunctions::imageDownloadsOf(ext) == 0; }));
+    REQUIRE(ext->webImages.count(url) == 1);
+    CHECK(ext->webImages[url].failed);
+    CHECK(ext->webImages[url].texture == 0);
+    CHECK(ext->textures.empty());
+
+    // kept for the session, failed or not
+    REQUIRE(frame.draw(ext, draw));
+    CHECK(LuaFunctions::imageDownloadsOf(ext) == 0);
+    CHECK(proxy.requests == 1);
+
+    Extensions::switchPermission(*ext, Permission::NetworkAccess, false);
+    REQUIRE(frame.draw(ext, "ImGUI_Image('http://example.com/b.png', 32, 16)"));
+    CHECK(ext->webImages.count("http://example.com/b.png") == 0);
+    CHECK(LuaFunctions::imageDownloadsOf(ext) == 0);
+
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("an image is drawn only from the extension's own textures, sized by the font and clickable") {
+    Extensions::Extension* ext = TestExtension::load("own_image", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrame frame;
+
+    // a texture id of another extension or the overlay
+    REQUIRE(frame.draw(ext, "_G.clicked = ImGUI_Image(7, 10, 10)"));
+    CHECK(frame.last.x != 10);
+
+    ext->textures.push_back(7);
+    REQUIRE(frame.draw(ext, "ImGUI_Image(7, 10, 10)"));
+    CHECK(frame.last.x == 10);
+    ImGui::GetStyle().FontScaleDpi = 2.0f;
+    REQUIRE(frame.draw(ext, "ImGUI_Image(7, 10, 10)"));
+    CHECK(frame.last.x == 20);
+    ImGui::GetStyle().FontScaleDpi = 1.0f;
+
+    // a click: pressed in one frame, let go in the next
+    const char* clickable = "ImGUI_Image(7, 40, 40, { onClick = function() _G.clicks = (_G.clicks or 0) + 1 end })";
+    ImGuiIO& io = ImGui::GetIO();
+    REQUIRE(frame.draw(ext, clickable));
+    io.AddMousePosEvent(20, 20);
+    REQUIRE(frame.draw(ext, clickable));
+    io.AddMouseButtonEvent(0, true);
+    REQUIRE(frame.draw(ext, clickable));
+    io.AddMouseButtonEvent(0, false);
+    REQUIRE(frame.draw(ext, clickable));
+    REQUIRE(frame.draw(ext, clickable));
+    CHECK((*ext->luaState)["clicks"].get_or(0) == 1);
+
+    ext->textures.clear();
     TestExtension::unloadAll();
 }

@@ -42,7 +42,15 @@ namespace LuaFunctions {
 
     void ImGUI_Text(const std::string& str);
     void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> options);
-    void ImGUI_Image(GLuint textureID, float width, float height);
+    // ImGUI_Image(texture or web link, width, height, { onClick = function })
+    // Sizes are pixels at 1080p. A web link needs Network Access and is
+    // downloaded once a session, a grey box shows until it's there. True
+    // when it was clicked.
+    bool ImGUI_Image(sol::object image, float width, float height, sol::optional<sol::table> options);
+    // a web image's download size at most
+    inline const size_t ImageMaxBody = 4 * 1024 * 1024;
+    // downloads of one extension's web images at a time
+    inline const int ImageMaxWaiting = 8;
     bool ImGUI_Checkbox(const std::string& label, bool currentValue);
     // a muted line with a spinner, for something under way
     void ImGUI_Waiting(const std::string& text);
@@ -54,6 +62,9 @@ namespace LuaFunctions {
     int ImGUI_SliderInt(const std::string& label, int currentValue, int minValue, int maxValue);
     double ImGUI_Number(const std::string& label, double currentValue, sol::optional<sol::table> options);
     bool ImGUI_Toggle(const std::string& label, bool currentValue, sol::optional<sol::table> options);
+    sol::object ImGUI_Tabs(sol::table names, sol::this_state state);
+    bool ImGUI_Header(const std::string& label, sol::optional<sol::table> options);
+    void ImGUI_EndHeader();
     std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options);
     void ImGUI_SameLine();
     void ImGUI_Tooltip(const std::string& text);
@@ -68,6 +79,10 @@ namespace LuaFunctions {
     sol::variadic_results LoadTextureFromFileLua(const std::string& path, sol::this_state state);
     sol::object GetMapView(sol::this_state state);
     void FollowMapWhileMoving();
+    // left, right: the widest stretch across the map between y0 and y1 that
+    // the game's map UI and the floor picker leave free, nil while the map
+    // isn't open. In overlay pixels, like GetMapView.
+    sol::variadic_results FreeSpace(float y0, float y1, sol::this_state state);
     sol::object GetPlayerPosition(sol::this_state state);
     sol::object GetMapGrid(int mapId, sol::this_state state);
     GLuint GetMapTile(int mapId, int x, int y, int size);
@@ -79,11 +94,24 @@ namespace LuaFunctions {
     sol::object GetItemIcon(int type, sol::this_state state);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
-    void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color); // The "G" is only there because DrawText is already used by the Windows API
+    // DrawText(text, x, y, size, color, { wrap = width }), color is 0xRRGGBBAA
+    void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color,
+        sol::optional<sol::table> options); // The "G" is only there because DrawText is already used by the Windows API
     // the overlay's colours (0xRRGGBBAA) and sizes (pixels, from the font
     // size now) in the player's look, see Controls::Theme
     sol::table GetTheme(sol::this_state state);
     sol::table themeTable(const Controls::Theme& theme, sol::state_view lua);
+    // width, height of the text DrawText would draw
+    std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size, sol::optional<sol::table> options);
+    // filled, or { outline = thickness }; DrawRect also takes { rounding = radius }
+    void DrawRect(float x0, float y0, float x1, float y1, sol::optional<uint32_t> color, sol::optional<sol::table> options);
+    void DrawCircle(float x, float y, float radius, sol::optional<uint32_t> color, sol::optional<sol::table> options);
+    // DrawBadge(x, y, radius, icon, { ring = color, faded = true }): a round
+    // badge like the game's map icons, the icon a texture of its own or 0
+    void DrawBadge(float x, float y, float radius, sol::optional<GLuint> icon, sol::optional<sol::table> options);
+    // DrawBubble(x, y, radius, text, { color }): a small bubble with a count or a sign
+    void DrawBubble(float x, float y, float radius, const std::string& text, sol::optional<sol::table> options);
+    std::tuple<bool, bool> ClickArea(float x0, float y0, float x1, float y1);
     void PushClipRect(float x0, float y0, float x1, float y1);
     void PopClipRect();
     // Net_Get and Net_Post wait for the answer, at most 5 s. Net_Start doesn't:
@@ -123,6 +151,8 @@ namespace LuaFunctions {
     void UpdateNetRequests();
     // stops the extension's requests and drops their answers, see Extensions::unload
     void forgetNetRequests(Extensions::Extension* owner);
+    // its web images downloading, for the tests
+    int imageDownloadsOf(const Extensions::Extension* owner);
     // its requests waiting or not collected, for the tests
     int netRequestsOf(const Extensions::Extension* owner);
     sol::object JSONEncode(sol::object value, sol::this_state state);

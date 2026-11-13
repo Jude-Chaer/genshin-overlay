@@ -9,6 +9,15 @@
 
 namespace Helpers {
     extern GLuint loadTextureFromFile(const std::filesystem::path& filePath, int& width, int& height);
+    // a picture file's bytes, up to 4096 x 4096; name is for the log
+    extern GLuint loadTextureFromMemory(const std::string& bytes, const std::string& name, int& width, int& height);
+    // the same in two halves: unpacked as RGBA on any thread, then made a texture on the draw thread
+    struct Pixels {
+        std::vector<unsigned char> rgba;
+        int width = 0, height = 0;
+    };
+    extern bool decodePicture(const std::string& bytes, const std::string& name, Pixels& out);
+    extern GLuint textureFromPixels(const Pixels& pixels, int& width, int& height);
     // Path text as UTF-8, what Lua, ImGui and settings.json use. path::string()
     // gives the code page instead, which can't hold every folder name.
     extern std::string utf8(const std::filesystem::path& path);

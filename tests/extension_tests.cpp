@@ -20,6 +20,7 @@
 #include "helpers.hpp"
 #include "keybindings.hpp"
 #include "lua_functions.hpp"
+#include "overlay.hpp"
 #include "settings.hpp"
 #include "test_extension.hpp"
 
@@ -945,6 +946,66 @@ TEST_CASE("ImGui functions work only in their part of the frame") {
     TestExtension::unloadAll();
 }
 
+TEST_CASE("a badge and a bubble draw on the overlay, a badge only with its own icon") {
+    Extensions::Extension* ext = drawing("badges");
+    REQUIRE(ext != nullptr);
+    Frame frame;
+    ImDrawList* list = ImGui::GetBackgroundDrawList();
+    Extensions::InPhase update(Extensions::Phase::Update);
+
+    int drawn = list->VtxBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawBadge(100, 100, 20) DrawBadge(150, 100, 20, 0, { faded = true, ring = 0x4FB8FFFF })"));
+    CHECK(list->VtxBuffer.Size > drawn);
+    drawn = list->VtxBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawBubble(100, 100, 8, '+12') DrawBubble(120, 100, 8, '!', { color = 0xF2A33AFF })"));
+    CHECK(list->VtxBuffer.Size > drawn);
+
+    // another's texture: the badge without it
+    CaptureLog log;
+    int commands = list->CmdBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawBadge(100, 100, 20, 7)"));
+    CHECK(log.count("draws only textures it loaded itself") == 1);
+    CHECK(list->CmdBuffer.Size == commands);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("rectangles, circles and wrapped text draw on the overlay, TextSize measures") {
+    Extensions::Extension* ext = drawing("shapes");
+    REQUIRE(ext != nullptr);
+    Frame frame;
+    ImDrawList* list = ImGui::GetBackgroundDrawList();
+    Extensions::InPhase update(Extensions::Phase::Update);
+    sol::state& lua = *ext->luaState;
+
+    int drawn = list->VtxBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawRect(10, 10, 50, 30, 0xFF0000FF, { rounding = 4 })"));
+    CHECK(list->VtxBuffer.Size > drawn);
+    drawn = list->VtxBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawRect(10, 10, 50, 30, 0xFF0000FF, { outline = 2 })"));
+    CHECK(list->VtxBuffer.Size > drawn);
+    drawn = list->VtxBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawCircle(100, 100, 8) DrawCircle(100, 100, 8, 0x00FF00FF, { outline = 1 })"));
+    CHECK(list->VtxBuffer.Size > drawn);
+    drawn = list->VtxBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawCircle(100, 100, 0)"));
+    CHECK(list->VtxBuffer.Size == drawn);
+
+    REQUIRE(TestExtension::run(ext, R"(
+        _G.w, _G.h = TextSize("one two three four")
+        _G.ww, _G.wh = TextSize("one two three four", nil, { wrap = 40 })
+        _G.bw, _G.bh = TextSize("one", 26)
+    )"));
+    float width = lua["w"], height = lua["h"];
+    CHECK(width > 0);
+    CHECK(lua.get<float>("ww") <= 40);
+    CHECK(lua.get<float>("wh") > height);
+    CHECK(lua.get<float>("bh") > height);
+    drawn = list->VtxBuffer.Size;
+    REQUIRE(TestExtension::run(ext, "DrawText('one two three four', 10, 200, nil, nil, { wrap = 40 })"));
+    CHECK(list->VtxBuffer.Size > drawn);
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("an extension closes only its own clips") {
     Extensions::Extension* ext = drawing("clips");
     REQUIRE(ext != nullptr);
@@ -1001,6 +1062,76 @@ TEST_CASE("what an extension draws stays under the menu") {
     CHECK(front->VtxBuffer.Size == frontDrawn);
     CHECK(back->VtxBuffer.Size > backDrawn);
     ImGui::End();
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("ClickArea gives nothing over the overlay's windows or with the map and menu closed") {
+    Extensions::Extension* ext = drawing("click_area");
+    REQUIRE(ext != nullptr);
+    ext->extensionPermissions.insert(Permission::TakeClicks);
+    Frame frame;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigInputTrickleEventQueue = false;
+    bool menuWas = Overlay::MenuOpen();
+    Overlay::SetMenuOpen(true);
+    auto window = [] {
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2(300, 300));
+        ImGui::Begin("Genshin Overlay");
+        ImGui::End();
+    };
+    auto next = [&](ImVec2 mouse, bool down) {
+        ImGui::EndFrame();
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        ImGui::NewFrame();
+    };
+    auto click = [&](const char* box) {
+        Extensions::InPhase update(Extensions::Phase::Update);
+        REQUIRE(TestExtension::run(ext, std::string("_G.clicked, _G.hovered = ClickArea(") + box + ")"));
+        return std::make_pair((*ext->luaState)["clicked"].get_or(false), (*ext->luaState)["hovered"].get_or(false));
+    };
+
+    // a click on a box under the menu
+    window();
+    next(ImVec2(150, 150), false);
+    window();
+    next(ImVec2(150, 150), true);
+    CHECK(io.WantCaptureMouse);
+    CHECK(click("100, 100, 200, 200") == std::make_pair(false, false));
+
+    // away from the menu
+    next(ImVec2(450, 450), false);
+    next(ImVec2(450, 450), true);
+    CHECK(click("400, 400, 500, 500") == std::make_pair(true, true));
+    CHECK(click("0, 0, 10, 10") == std::make_pair(false, false));
+    Overlay::SetMenuOpen(false);
+    CHECK(click("400, 400, 500, 500") == std::make_pair(false, false));
+    // outside a frame it does nothing
+    Overlay::SetMenuOpen(true);
+    REQUIRE(TestExtension::run(ext, "_G.clicked = ClickArea(400, 400, 500, 500)"));
+    CHECK((*ext->luaState)["clicked"].get_or(true) == false);
+
+    Overlay::SetMenuOpen(menuWas);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("drawing alone doesn't take clicks, that's asked for") {
+    Extensions::Extension* ext = drawing("no_clicks");
+    REQUIRE(ext != nullptr);
+    CHECK(Extensions::defaultPermissions.count(Permission::TakeClicks) == 0);
+    Frame frame;
+    bool menuWas = Overlay::MenuOpen();
+    Overlay::SetMenuOpen(true);
+    CaptureLog log;
+    {
+        Extensions::InPhase update(Extensions::Phase::Update);
+        REQUIRE(TestExtension::run(ext, "_G.clicked, _G.hovered = ClickArea(0, 0, 800, 600)"));
+    }
+    CHECK_FALSE((*ext->luaState)["clicked"].valid());
+    CHECK_FALSE((*ext->luaState)["hovered"].valid());
+    CHECK(log.count("ClickArea") == 1);
+    Overlay::SetMenuOpen(menuWas);
     TestExtension::unloadAll();
 }
 
@@ -1274,6 +1405,127 @@ TEST_CASE("an error that repeats every frame is logged once") {
     }
     CHECK(log.count(": in update") == 1);
     CHECK(log.count(": in menu") == 1);
+    TestExtension::unloadAll();
+}
+
+namespace {
+    // frames of an extension's menu, with clicks at the middle of the item its code drew last
+    struct MenuFrames {
+        ImGuiContext* context = ImGui::CreateContext();
+        Extensions::Extension* ext;
+        ImVec2 last;
+        explicit MenuFrames(Extensions::Extension* ext) : ext(ext) {
+            ImGuiIO& io = ImGui::GetIO();
+            io.DisplaySize = ImVec2(800, 600);
+            io.DeltaTime = 1.0f / 60.0f;
+            io.IniFilename = nullptr;
+            io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+        }
+        ~MenuFrames() { ImGui::DestroyContext(context); }
+        void draw(const std::string& code) {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImVec2(800, 600));
+            ImGui::Begin("page");
+            {
+                Extensions::InPhase phase(Extensions::Phase::Menu);
+                REQUIRE(TestExtension::run(ext, code));
+            }
+            last = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) / 2,
+                (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) / 2);
+            ImGui::End();
+            ImGui::EndFrame();
+        }
+        void clickLast(const std::string& code) {
+            draw(code);
+            ImVec2 at = last;
+            ImGui::GetIO().AddMousePosEvent(at.x, at.y);
+            draw(code);
+            ImGui::GetIO().AddMouseButtonEvent(0, true);
+            draw(code);
+            ImGui::GetIO().AddMouseButtonEvent(0, false);
+            draw(code);
+            draw(code);
+        }
+    };
+}
+
+TEST_CASE("a header past the saved ones still opens and stays open for the session") {
+    Extensions::Extension* ext = TestExtension::load("headed", "function Init() end");
+    REQUIRE(ext != nullptr);
+    for (size_t i = 0; i < Extensions::MaxHeaders; i++) ext->openHeaders["header " + std::to_string(i)] = false;
+    MenuFrames frames(ext);
+    frames.clickLast("open = ImGUI_Header('One more')");
+    frames.draw("open = ImGUI_Header('One more')");
+    CHECK(ext->luaState->get<bool>("open"));
+    CHECK(ext->openHeaders.size() == Extensions::MaxHeaders);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("an open header's part is one card, ended by the next header, ImGUI_EndHeader or the end of the code") {
+    Extensions::Extension* ext = TestExtension::load("carded", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    // the windows the frame drew: the page and one card per open header
+    auto cards = [&](const std::string& code) {
+        frames.draw(code);
+        int count = 0;
+        for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
+            if (window->ParentWindow && window->LastFrameActive == ImGui::GetFrameCount()) count++;
+        return count;
+    };
+
+    const std::string two = R"(
+        ImGUI_Header('Sync', { open = true })
+        ImGUI_Text('Last synced')
+        ImGUI_Header('Filters', { open = true })
+        ImGUI_Text('Regions')
+    )";
+    CHECK(cards(two) == 2);
+    CHECK_FALSE(ext->headerCard);
+
+    // closed headers draw no card
+    CHECK(cards("ImGUI_Header('Closed') ImGUI_Text('not drawn')") == 0);
+
+    // ImGUI_EndHeader puts what follows back on the page, and does nothing with no header open
+    CHECK(cards("ImGUI_EndHeader() ImGUI_Header('Sync', { open = true }) ImGUI_EndHeader() ImGUI_EndHeader() ImGUI_Text('on the page')") == 1);
+    CHECK_FALSE(ext->headerCard);
+
+    // an error inside the part still ends the card, the next frame draws as before
+    frames.draw("x = 1");
+    ImGui::NewFrame();
+    ImGui::Begin("page");
+    {
+        Extensions::InPhase phase(Extensions::Phase::Menu);
+        CHECK_FALSE(TestExtension::run(ext, "ImGUI_Header('Sync', { open = true }) error('in the part')"));
+    }
+    CHECK_FALSE(ext->headerCard);
+    CHECK(std::string(ImGui::GetCurrentWindow()->Name) == "page");
+    ImGui::End();
+    ImGui::EndFrame();
+    CHECK(cards(two) == 2);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("a renamed tab keeps its row's open tab") {
+    Extensions::Extension* ext = TestExtension::load("tabbed", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    frames.clickLast("open = ImGUI_Tabs({ 'Regions', 'Types (3)' })");
+    CHECK(ext->luaState->get<std::string>("open") == "Types (3)");
+    frames.draw("open = ImGUI_Tabs({ 'Regions', 'Types (4)' })");
+    CHECK(ext->luaState->get<std::string>("open") == "Types (4)");
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("CompareImages compares only the extension's own textures") {
+    Extensions::Extension* ext = TestExtension::load("comparing", "function Init() end");
+    REQUIRE(ext != nullptr);
+    ext->extensionPermissions.insert(Permission::DisplayRead);
+    CaptureLog log;
+    REQUIRE(TestExtension::run(ext, "same = CompareImages(7, 8, 1)"));
+    CHECK(log.count("compares only textures it loaded itself") == 1);
+    CHECK(ext->luaState->get<double>("same") == 0.0);
     TestExtension::unloadAll();
 }
 

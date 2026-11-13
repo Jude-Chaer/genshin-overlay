@@ -278,24 +278,41 @@ namespace Overlay {
         SetWindowPos(glfwGetWin32Window(Overlay::Window), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
-    void MouseClaims::claim(float left, float top, float right, float bottom) {
-        boxes.push_back(ImVec4(left, top, right, bottom));
+    void MouseClaims::claim(float left, float top, float right, float bottom, const std::string& owner) {
+        boxes.push_back({ ImVec4(left, top, right, bottom), owner });
     }
 
     bool MouseClaims::takesMouse(ImVec2 at, const Screens::Up& up, bool overMenu) {
         bool overBox = false;
-        for (const ImVec4& r : boxes) {
+        for (const Box& box : boxes) {
+            const ImVec4& r = box.rect;
             if (at.x >= r.x && at.x < r.z && at.y >= r.y && at.y < r.w) overBox = true;
         }
+        last.swap(boxes);
         boxes.clear();
-        if (!up.any()) return false;
+        if (!up.any()) {
+            last.clear();
+            return false;
+        }
         return (up[Screens::Screen::Menu] && overMenu) || overBox;
     }
 
     static MouseClaims claims;
 
-    void ClaimMouse(float left, float top, float right, float bottom) {
-        claims.claim(left, top, right, bottom);
+    void ClaimMouse(float left, float top, float right, float bottom, const std::string& owner) {
+        claims.claim(left, top, right, bottom, owner);
+    }
+
+    // showClickBoxes: an outline round every box that takes the mouse now,
+    // over the extensions' drawing and under the menu
+    static void drawClickBoxes() {
+        ImDrawList* draw = ImGui::GetBackgroundDrawList();
+        const ImU32 colour = IM_COL32(255, 0, 255, 255);
+        for (const MouseClaims::Box& box : claims.counted()) {
+            ImVec2 min(box.rect.x, box.rect.y), max(box.rect.z, box.rect.w);
+            draw->AddRect(min, max, colour, 0.0f, 0, 2.0f);
+            if (!box.owner.empty()) draw->AddText(ImVec2(min.x + 3, min.y + 2), colour, box.owner.c_str());
+        }
     }
 
     // Only take the mouse while it's over the menu or a claimed box, everywhere
@@ -1066,6 +1083,7 @@ namespace Overlay {
                 Extensions::findNewExtensions(Helpers::exeDirectory() / "extensions", std::chrono::seconds(2));
             }
             Extensions::frameUpdateExtensions();
+            if (Settings::showClickBoxes) drawClickBoxes();
             DrawStartupHint();
 
             // without the game there's no map to follow, the menu stays as it is

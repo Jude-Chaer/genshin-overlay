@@ -163,3 +163,19 @@ TEST_CASE("an extension's setting that isn't UTF-8 is saved with the bad bytes r
     CHECK(Settings::ignoreSea == false);
     defaults();
 }
+
+TEST_CASE("an extension's open and closed headers come back, and Save keeps them") {
+    noFile();
+    Settings::SaveHeaders("markers", { { "Regions", true }, { "Types", false } });
+    Settings::SaveHeaders("example", { { "Clicks", true } });
+    Settings::Save();
+    auto open = Settings::LoadHeaders("markers");
+    CHECK(open.size() == 2);
+    CHECK(open["Regions"]);
+    CHECK_FALSE(open["Types"]);
+    CHECK(Settings::LoadHeaders("example").size() == 1);
+    Settings::SaveHeaders("example", {});
+    CHECK(Settings::LoadHeaders("example").empty());
+    CHECK(Settings::LoadHeaders("markers").size() == 2);
+    noFile();
+}

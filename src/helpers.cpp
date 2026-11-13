@@ -43,26 +43,21 @@ namespace Helpers {
             std::cerr << "Failed to load texture: " << utf8(filename) << ", bigger than 16 MB" << std::endl;
             return 0;
         }
+        return loadTextureFromMemory(bytes, utf8(filename), width, height);
+    }
+
+    static bool fitsSide(const std::string& bytes, const std::string& name) {
         int sideX = 0, sideY = 0, channels = 0;
         if (!bytes.empty() && (!stbi_info_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &sideX, &sideY, &channels)
             || sideX > MAX_IMAGE_SIDE || sideY > MAX_IMAGE_SIDE)) {
-            std::cerr << "Failed to load texture: " << utf8(filename) << ", not a picture up to "
+            std::cerr << "Failed to load texture: " << name << ", not a picture up to "
                 << MAX_IMAGE_SIDE << " x " << MAX_IMAGE_SIDE << std::endl;
-            return 0;
+            return false;
         }
-        GLuint textureID = bytes.empty() ? 0 : SOIL_load_OGL_texture_from_memory(
-            (const unsigned char*)bytes.data(),
-            (int)bytes.size(),
-            SOIL_LOAD_AUTO,
-            SOIL_CREATE_NEW_ID,
-            SOIL_FLAG_MIPMAPS
-        );
+        return true;
+    }
 
-        if (textureID == 0) {
-            std::cerr << "Failed to load texture: " << utf8(filename) << std::endl;
-            return 0;
-        }
-
+    static void textureLook(GLuint textureID, int& width, int& height) {
         glBindTexture(GL_TEXTURE_2D, textureID);
 
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -74,7 +69,50 @@ namespace Helpers {
         glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
 
         glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
+    bool decodePicture(const std::string& bytes, const std::string& name, Pixels& out) {
+        out = {};
+        if (bytes.empty() || !fitsSide(bytes, name)) return false;
+        int channels = 0;
+        unsigned char* data = SOIL_load_image_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(),
+            &out.width, &out.height, &channels, SOIL_LOAD_RGBA);
+        if (!data) {
+            std::cerr << "Failed to load texture: " << name << std::endl;
+            return false;
+        }
+        out.rgba.assign(data, data + (size_t)out.width * out.height * 4);
+        SOIL_free_image_data(data);
+        return true;
+    }
+
+    GLuint textureFromPixels(const Pixels& pixels, int& width, int& height) {
+        width = height = 0;
+        if (pixels.rgba.empty()) return 0;
+        int w = pixels.width, h = pixels.height;
+        GLuint textureID = SOIL_create_OGL_texture(pixels.rgba.data(), &w, &h, 4, SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS);
+        if (textureID == 0) return 0;
+        textureLook(textureID, width, height);
+        return textureID;
+    }
+
+    GLuint loadTextureFromMemory(const std::string& bytes, const std::string& name, int& width, int& height) {
+        width = height = 0;
+        if (!fitsSide(bytes, name)) return 0;
+        GLuint textureID = bytes.empty() ? 0 : SOIL_load_OGL_texture_from_memory(
+            (const unsigned char*)bytes.data(),
+            (int)bytes.size(),
+            SOIL_LOAD_AUTO,
+            SOIL_CREATE_NEW_ID,
+            SOIL_FLAG_MIPMAPS
+        );
+
+        if (textureID == 0) {
+            std::cerr << "Failed to load texture: " << name << std::endl;
+            return 0;
+        }
+
+        textureLook(textureID, width, height);
         return textureID;
     }
 

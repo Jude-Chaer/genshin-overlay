@@ -183,6 +183,11 @@ namespace Extensions {
 				ext->callDepth--;
 				// Lua's memory error can end the call before the guard's next step
 				noteMemoryHit(*ext);
+				// a header's card still open when Menu() returns or stops on an error
+				if (ext->callDepth == 0 && ext->headerCard) {
+					ext->headerCard = false;
+					Controls::EndSection();
+				}
 			}
 			// a clip left open would cut everything drawn after it
 			if (list) {
@@ -536,6 +541,7 @@ namespace Extensions {
 			glDeleteTextures((GLsizei)ext.textures.size(), ext.textures.data());
 			ext.textures.clear();
 		}
+		ext.webImages.clear();
 
 		ext.initializeFunction = nullptr;
 		ext.shutdownFunction = nullptr;
@@ -1420,6 +1426,7 @@ namespace Extensions {
 		ext->pickedKeys = grants.picked;
 		ext->refusedKeys.clear();
 		ext->refusedSettings.clear();
+		ext->openHeaders = Settings::LoadHeaders(ext->folderKey);
 		for (const auto& [name, time] : Settings::LoadLastUsed(ext->folderKey)) {
 			const PermissionInfo* permission = findPermission(name);
 			if (permission) ext->lastUsed[(int)permission->type] = std::max(ext->lastUsed[(int)permission->type], time);

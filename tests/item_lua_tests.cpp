@@ -182,6 +182,7 @@ TEST_CASE("an icon is made once and freed at the first frame of a new catalog") 
     CHECK(lua.run<GLuint>("GetItemIcon(239)") != first);
     CHECK(textures.made == 2);
     CHECK(ItemIcons::count() == 2);
+    CHECK(ItemIcons::owns(first));
     CHECK(textures.freed.empty());
 
     // a new catalog mid frame changes nothing until the next frame starts
@@ -196,6 +197,7 @@ TEST_CASE("an icon is made once and freed at the first frame of a new catalog") 
     CHECK(lua.run<uint64_t>("GetItemsVersion()") == version + 1);
     CHECK(textures.freed.size() == 2);
     CHECK(ItemIcons::count() == 0);
+    CHECK(!ItemIcons::owns(first));
     GLuint again = lua.run<GLuint>("GetItemIcon(231)");
     CHECK(again != first);
     CHECK(textures.made == 3);

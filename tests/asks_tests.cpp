@@ -665,12 +665,13 @@ TEST_CASE("the permissions an extension's code calls for are found, comments lef
     // fills the list of functions
     auto lua = Extensions::newLuaState(TestExtension::folder("calls"));
     using Extensions::callsFor;
+    CHECK(callsFor("ClickArea(1, 2, 3, 4)") == std::unordered_set<Permission>{ Permission::TakeClicks });
     CHECK(callsFor("local socket = WebSocket.new()") == std::unordered_set<Permission>{ Permission::NetworkAccess });
     CHECK(callsFor("RegisterKeybind(Keys.F5, f, KeybindModifiers.Alt)") == std::unordered_set<Permission>{ Permission::Keybinds });
     CHECK(callsFor("AskForPermission([[mouse_anywhere]])") == std::unordered_set<Permission>{ Permission::MouseAnywhere });
-    CHECK(callsFor("-- RegisterKeybind(Keys.F5, f)\n--[==[ Net_Get(x) ]==]\nlocal RegisterKeybinds = 1").empty());
-    CHECK(callsFor("print(\"RegisterKeybind \\\" Net_Get\")").empty());
-    CHECK(callsFor("x = 1 -- RegisterKeybind(Keys.F5, f)\nNet_Get(x)") == std::unordered_set<Permission>{ Permission::NetworkAccess });
+    CHECK(callsFor("-- ClickArea(1, 2, 3, 4)\n--[==[ Net_Get(x) ]==]\nlocal ClickAreas = 1").empty());
+    CHECK(callsFor("print(\"ClickArea \\\" Net_Get\")").empty());
+    CHECK(callsFor("x = 1 -- ClickArea(1, 2, 3, 4)\nNet_Get(x)") == std::unordered_set<Permission>{ Permission::NetworkAccess });
 }
 
 TEST_CASE("a permission refused while main.lua's top level runs is asked for once it has loaded") {
@@ -688,9 +689,9 @@ TEST_CASE("a permission refused while main.lua's top level runs is asked for onc
 TEST_CASE("the Permissions tab lists what any Lua file calls for") {
     Fresh fresh;
     Extensions::Extension* ext = TestExtension::load("calls", "require('draw')",
-        { { "draw.lua", "function draw() RegisterKeybind(Keys.F5, draw) end\nfunction connect() return WebSocket.new() end" } });
+        { { "draw.lua", "function draw() ClickArea(0, 0, 10, 10) end\nfunction connect() return WebSocket.new() end" } });
     REQUIRE(ext != nullptr);
-    CHECK(ext->uses == std::unordered_set<Permission>{ Permission::Keybinds, Permission::NetworkAccess });
+    CHECK(ext->uses == std::unordered_set<Permission>{ Permission::TakeClicks, Permission::NetworkAccess });
     // found in the files, not asked for until it's called
     CHECK(Asks::queue().empty());
     TestExtension::unloadAll();

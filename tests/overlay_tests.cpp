@@ -68,3 +68,17 @@ TEST_CASE("the menu takes the mouse only while it's open") {
     // closed that's the floor picker, and it claims its own box
     CHECK_FALSE(claims.takesMouse(ImVec2(10, 10), screens(true, false), true));
 }
+
+TEST_CASE("the boxes that took the mouse are kept with their owner, for showClickBoxes") {
+    Overlay::MouseClaims claims;
+    claims.claim(100, 100, 200, 200, "markers");
+    claims.claim(0, 0, 10, 10);
+    claims.takesMouse(ImVec2(150, 150), screens(true, false), false);
+    REQUIRE(claims.counted().size() == 2);
+    CHECK(claims.counted()[0].owner == "markers");
+    CHECK(claims.counted()[1].owner.empty());
+    // map and menu closed: none of them counts
+    claims.claim(100, 100, 200, 200, "markers");
+    claims.takesMouse(ImVec2(150, 150), screens(false, false), false);
+    CHECK(claims.counted().empty());
+}

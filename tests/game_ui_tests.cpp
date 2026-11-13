@@ -217,6 +217,24 @@ TEST_CASE("the game's UI boxes follow the panel", "[game_ui]") {
     CHECK(Boxes(game, { Seen::Unsure, PanelKind::None, -1 }).size() == 6);
 }
 
+TEST_CASE("the free stretch along the top of the map", "[game_ui]") {
+    // the game at its own layout size, every box there
+    const RECT game = { 0, 0, 2000, 1125 };
+    std::vector<RECT> boxes = Boxes(game, { Seen::Unsure, PanelKind::None, -1 });
+    float from = 0, to = 0;
+    // between the event banner (to 370) and the resource bar (from 1030)
+    FreeSpan(0, 2000, boxes, 18, 78, from, to);
+    CHECK(from == 370);
+    CHECK(to == 1030);
+    // under the resource bar only the banner is left of it
+    FreeSpan(0, 2000, boxes, 90, 150, from, to);
+    CHECK(from == 370);
+    // all of it covered: all of it
+    FreeSpan(0, 2000, { { 0, 0, 2000, 1125 } }, 18, 78, from, to);
+    CHECK(from == 0);
+    CHECK(to == 2000);
+}
+
 TEST_CASE("the floor picker's spot left of the layer switcher", "[game_ui]") {
     const RECT game = { 100, 50, 100 + 3840, 50 + 2160 };
     auto at4k = [](const char* name) {

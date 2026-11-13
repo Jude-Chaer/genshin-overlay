@@ -17,6 +17,7 @@
 #include "typing.hpp"
 #include "asks.hpp"
 #include "key_choices.hpp"
+#include "settings.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -137,6 +138,9 @@ namespace LuaFunctions {
 		global("ImGUI_SliderInt", None, ImGUI_SliderInt);
 		global("ImGUI_Number", None, ImGUI_Number);
 		global("ImGUI_Toggle", None, ImGUI_Toggle);
+		global("ImGUI_Tabs", None, ImGUI_Tabs);
+		global("ImGUI_Header", None, ImGUI_Header);
+		global("ImGUI_EndHeader", None, ImGUI_EndHeader);
 		global("ImGUI_InputText", None, ImGUI_InputText);
 		global("ImGUI_SameLine", None, ImGUI_SameLine);
 		global("ImGUI_Tooltip", None, ImGUI_Tooltip);
@@ -163,9 +167,15 @@ namespace LuaFunctions {
 		// drawing on the overlay
 		global("DrawImage", DisplayOverlay, DrawImage);
 		global("DrawText", DisplayOverlay, GDrawText);
+		global("DrawRect", DisplayOverlay, DrawRect);
+		global("DrawCircle", DisplayOverlay, DrawCircle);
+		global("DrawBadge", DisplayOverlay, DrawBadge);
+		global("DrawBubble", DisplayOverlay, DrawBubble);
+		global("TextSize", None, TextSize);
 		global("GetTheme", None, GetTheme);
 		global("PushClipRect", DisplayOverlay, PushClipRect);
 		global("PopClipRect", DisplayOverlay, PopClipRect);
+		global("ClickArea", Permission::TakeClicks, ClickArea);
 
 		// what's on the screen and the map
 		global("GetMapView", DisplayRead, GetMapView);
@@ -174,6 +184,7 @@ namespace LuaFunctions {
 		global("GetMapGrid", DisplayRead, GetMapGrid);
 		global("GetMapTile", DisplayRead, GetMapTile);
 		global("GetMapFloor", DisplayRead, GetMapFloor);
+		global("FreeSpace", DisplayRead, FreeSpace);
 		global("GetMousePosition", DisplayRead, GetMousePosition);
 		global("CompareImages", DisplayRead, CompareImages);
 		global("GetItemsVersion", DisplayRead, GetItemsVersion);
@@ -280,11 +291,6 @@ namespace LuaFunctions {
 		}
 	}
 
-	void ImGUI_Image(GLuint textureID, float width, float height) {
-		if (!inMenu("ImGUI_Image")) return;
-		ImGui::Image((ImTextureID)(intptr_t)textureID, ImVec2(width, height));
-	}
-
 	bool ImGUI_Checkbox(const std::string& label, bool currentValue)
 	{
 		bool value = currentValue;
@@ -293,10 +299,133 @@ namespace LuaFunctions {
 		return value;
 	}
 
-	// a texture the calling extension loaded itself
+	// a texture the calling extension loaded itself, or one the overlay gave
+	// out: a map tile or floor, an item icon
 	static bool ownsTexture(GLuint texture) {
 		auto* ext = Extensions::currentExtension;
-		return ext && std::find(ext->textures.begin(), ext->textures.end(), texture) != ext->textures.end();
+		if (!ext || texture == 0) return false;
+		if (std::find(ext->textures.begin(), ext->textures.end(), texture) != ext->textures.end()) return true;
+		return MapTiles::Owns(texture) || ItemIcons::owns(texture);
+	}
+
+	static GLuint webImage(const std::string& url);
+
+	bool ImGUI_Image(sol::object image, float width, float height, sol::optional<sol::table> table) {
+		if (!inMenu("ImGUI_Image")) return false;
+		GLuint texture = 0;
+		bool loading = false;
+		if (image.is<std::string>()) {
+			if (!Extensions::allowed("ImGUI_Image", Permission::NetworkAccess)) return false;
+			std::string url = image.as<std::string>();
+			texture = webImage(url);
+			auto found = Extensions::currentExtension->webImages.find(url);
+			loading = texture == 0 && (found == Extensions::currentExtension->webImages.end() || !found->second.failed);
+		}
+		else if (image.is<double>()) {
+			texture = (GLuint)image.as<double>();
+			if (!ownsTexture(texture)) {
+				Extensions::logOnce("ImGUI_Image", "draws only textures it loaded itself");
+				return false;
+			}
+		}
+		else return false;
+
+		float scale = ImGui::GetStyle().FontScaleDpi;
+		ImVec2 size(std::max(1.0f, width * scale), std::max(1.0f, height * scale));
+		sol::object onClick = table ? (*table)["onClick"] : sol::object(sol::lua_nil);
+		bool clickable = onClick.is<sol::protected_function>();
+
+		// one id per image drawn this frame, the same picture can be there twice
+		static int frame = -1, drawn = 0;
+		if (frame != ImGui::GetFrameCount()) { frame = ImGui::GetFrameCount(); drawn = 0; }
+		ImGui::PushID(drawn++);
+		ImVec2 at = ImGui::GetCursorScreenPos();
+		bool clicked = false;
+		bool hovered = false;
+		if (clickable) {
+			clicked = ImGui::InvisibleButton("image", size);
+			hovered = ImGui::IsItemHovered();
+			if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+		}
+		else ImGui::Dummy(size);
+		ImGui::PopID();
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImVec2 end(at.x + size.x, at.y + size.y);
+		if (texture != 0) draw->AddImage((ImTextureID)(intptr_t)texture, at, end);
+		else {
+			draw->AddRectFilled(at, end, ImGui::GetColorU32(ImGuiCol_FrameBg));
+			ImVec2 text = ImGui::CalcTextSize("...");
+			if (loading && text.x < size.x && text.y < size.y)
+				draw->AddText(ImVec2(at.x + (size.x - text.x) / 2, at.y + (size.y - text.y) / 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), "...");
+		}
+		if (hovered) draw->AddRect(at, end, ImGui::GetColorU32(ImGuiCol_ButtonHovered));
+
+		if (clicked) {
+			PlayerAction action(Extensions::currentExtension);
+			callLua(onClick.as<sol::protected_function>(), "image");
+		}
+		return clicked;
+	}
+
+	// ImGUI_Tabs({ "Markers", "Sync" }) draws the extension's own tab row and gives the open tab's name
+	sol::object ImGUI_Tabs(sol::table names, sol::this_state state) {
+		if (!inMenu("ImGUI_Tabs")) return sol::lua_nil;
+		std::vector<std::string> list;
+		for (size_t i = 1; i <= Extensions::MaxTabs; i++) {
+			sol::optional<std::string> name = names[i];
+			if (!name) break;
+			list.push_back(*name);
+		}
+		// the rows by their order in the frame, so a renamed tab keeps the row's open one
+		static int rowFrame = -1, row = 0;
+		if (rowFrame != ImGui::GetFrameCount()) {
+			rowFrame = ImGui::GetFrameCount();
+			row = 0;
+		}
+		std::string id = "##tabs" + std::to_string(row++);
+		if (list.empty()) return sol::lua_nil;
+		return sol::make_object(state, list[Controls::Segments(id.c_str(), list)]);
+	}
+
+	// ImGUI_Header(label, options) is true while the part under it is open. options is optional:
+	// { open = true } opens it until the player closes it. The player's choice is kept.
+	// What's drawn while it's open sits in a card under the header, up to the next
+	// header, ImGUI_EndHeader() or the end of Menu().
+	bool ImGUI_Header(const std::string& label, sol::optional<sol::table> table) {
+		if (!inMenu("ImGUI_Header")) return false;
+		bool open = table ? table->get_or("open", false) : false;
+		auto* ext = Extensions::currentExtension;
+		if (!ext) {
+			Controls::Header(label.c_str(), open);
+			return open;
+		}
+		ImGUI_EndHeader();
+		auto saved = ext->openHeaders.find(label);
+		bool known = saved != ext->openHeaders.end();
+		if (known) open = saved->second;
+		auto session = ext->sessionHeaders.find(label);
+		if (!known && session != ext->sessionHeaders.end()) open = session->second;
+		bool roomFor = known || (ext->openHeaders.size() < Extensions::MaxHeaders && label.size() <= Extensions::MaxHeaderLabel);
+		if (Controls::BeginHeader(label.c_str(), open).changed) {
+			if (roomFor) {
+				ext->openHeaders[label] = open;
+				Settings::SaveHeaders(ext->folderKey, ext->openHeaders);
+			}
+			else if (session != ext->sessionHeaders.end()) session->second = open;
+			else if (ext->sessionHeaders.size() < Extensions::MaxSessionHeaders) ext->sessionHeaders[label] = open;
+		}
+		ext->headerCard = open;
+		return open;
+	}
+
+	// ImGUI_EndHeader() ends the open header's card early, so what comes after
+	// sits on the page. Nothing happens when no header is open.
+	void ImGUI_EndHeader() {
+		auto* ext = Extensions::currentExtension;
+		if (!ext || !ext->headerCard) return;
+		ext->headerCard = false;
+		Controls::EndSection();
 	}
 
 	// ImGUI_Toggle(label, value, options), options is optional:
@@ -832,8 +961,87 @@ namespace LuaFunctions {
 		return answerTable(*request, sol::state_view(state));
 	}
 
+	// One of ImGUI_Image's web images on its way. The thread writes only
+	// into answer, the draw thread reads it once done is set.
+	struct ImageDownload {
+		Extensions::Extension* owner = nullptr;
+		std::string url;
+		std::shared_ptr<NetRequest::Answer> answer = std::make_shared<NetRequest::Answer>();
+		// unpacked on the download's thread, only made a texture on the draw thread
+		std::shared_ptr<Helpers::Pixels> pixels = std::make_shared<Helpers::Pixels>();
+		std::thread thread;
+
+		~ImageDownload() {
+			answer->stopper.stop();
+			if (thread.joinable()) thread.join();
+		}
+	};
+	static std::vector<std::unique_ptr<ImageDownload>> imageDownloads;
+
+	int imageDownloadsOf(const Extensions::Extension* owner) {
+		return (int)std::count_if(imageDownloads.begin(), imageDownloads.end(), [owner](const auto& each) { return each->owner == owner; });
+	}
+
+	// the texture for url, 0 while it downloads or when it failed
+	static GLuint webImage(const std::string& url) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return 0;
+		auto found = ext->webImages.find(url);
+		if (found != ext->webImages.end()) return found->second.texture;
+		if (ext->textures.size() + imageDownloadsOf(ext) >= Extensions::MaxTextures) {
+			Extensions::logOnce("ImGUI_Image", "has " + std::to_string(Extensions::MaxTextures) + " textures, no more are loaded");
+			return 0;
+		}
+		if (imageDownloadsOf(ext) >= ImageMaxWaiting) return 0;
+
+		ext->webImages[url] = {};
+		auto download = std::make_unique<ImageDownload>();
+		download->owner = ext;
+		download->url = url;
+		std::shared_ptr<NetRequest::Answer> answer = download->answer;
+		std::shared_ptr<Helpers::Pixels> pixels = download->pixels;
+		Net::Limits limits = limitsFor(ext, NetStartMs);
+		limits.maxBody = ImageMaxBody;
+		download->thread = std::thread([answer, pixels, url, limits]() {
+			answer->ok = Net::get(url, answer->response, false, nullptr, &answer->stopper, limits);
+			const Net::Response& response = answer->response;
+			if (answer->ok && response.status >= 200 && response.status < 300) Helpers::decodePicture(response.body, url, *pixels);
+			answer->done = true;
+		});
+		imageDownloads.push_back(std::move(download));
+		return 0;
+	}
+
+	// downloaded web images become textures, on the draw thread
+	static void updateImageDownloads() {
+		std::vector<std::unique_ptr<ImageDownload>> due;
+		for (auto it = imageDownloads.begin(); it != imageDownloads.end();) {
+			if ((*it)->answer->done) {
+				due.push_back(std::move(*it));
+				it = imageDownloads.erase(it);
+			}
+			else ++it;
+		}
+		for (auto& download : due) {
+			Extensions::Extension* owner = download->owner;
+			Extensions::runForExtension(owner, [&]() {
+				download->thread.join();
+				const Net::Response& response = download->answer->response;
+				logRefused("ImGUI_Image", response.refused, response.notListed);
+				if (response.tooBig) Extensions::logOnce("ImGUI_Image", "got a picture over " + std::to_string(ImageMaxBody / (1024 * 1024)) + " MB, it's dropped");
+				if (response.timedOut) Extensions::logOnce("ImGUI_Image", "waited too long for a picture");
+				Extensions::Extension::WebImage& image = owner->webImages[download->url];
+				int width = 0, height = 0;
+				image.texture = Helpers::textureFromPixels(*download->pixels, width, height);
+				if (image.texture != 0) owner->textures.push_back(image.texture);
+				else image.failed = true;
+			});
+		}
+	}
+
 	void UpdateNetRequests()
 	{
+		updateImageDownloads();
 		std::vector<std::unique_ptr<NetRequest>> due = netRequests.takeDue();
 		// a callback can start new requests, and its extension can be unloaded
 		for (auto& request : due) {
@@ -976,6 +1184,8 @@ namespace LuaFunctions {
 	void forgetNetRequests(Extensions::Extension* owner)
 	{
 		netRequests.forget(owner);
+		imageDownloads.erase(std::remove_if(imageDownloads.begin(), imageDownloads.end(),
+			[owner](const auto& each) { return each->owner == owner; }), imageDownloads.end());
 	}
 
 	// Where the in-game map is looking, or nil when it isn't open. Positions are
@@ -986,15 +1196,28 @@ namespace LuaFunctions {
 	// "picked" (the overlay's floor picker) or "guess" (from the map's picture). ui is the game's
 	// own UI as boxes to keep off, and the overlay's floor picker while it's
 	// there. panelLeft is where a panel on the right starts, only while one is open.
+	// the game in overlay pixels, and its map UI and the floor picker in them
+	static RECT gameOnOverlay(const MapTracking::MapView& view) {
+		int windowX = 0, windowY = 0;
+		glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+		RECT game = view.gameRect;
+		OffsetRect(&game, -windowX, -windowY);
+		return game;
+	}
+
+	static std::vector<RECT> mapUiBoxes(const MapTracking::MapView& view, const RECT& game) {
+		std::vector<RECT> boxes = GameUi::Boxes(game, view.panel);
+		RECT picker;
+		if (Overlay::PickerBox(picker)) boxes.push_back(picker);
+		return boxes;
+	}
+
 	sol::object GetMapView(sol::this_state state) {
 		MapTracking::MapView view = MapTracking::GetView();
 		if (!view.visible) return sol::lua_nil;
 
-		int windowX = 0, windowY = 0;
-		glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
-		// the game in overlay pixels, everything below is placed from it
-		RECT game = view.gameRect;
-		OffsetRect(&game, -windowX, -windowY);
+		// everything below is placed from the game
+		RECT game = gameOnOverlay(view);
 		float left = (float)game.left;
 		float top = (float)game.top;
 		float right = (float)game.right;
@@ -1009,9 +1232,7 @@ namespace LuaFunctions {
 				"right", (float)box.right,
 				"bottom", (float)box.bottom));
 		};
-		for (const RECT& box : GameUi::Boxes(game, view.panel)) addBox(box);
-		RECT picker;
-		if (Overlay::PickerBox(picker)) addBox(picker);
+		for (const RECT& box : mapUiBoxes(view, game)) addBox(box);
 		sol::table result = lua.create_table_with(
 			"mapId", view.result.mapId,
 			"groupId", view.result.groupId,
@@ -1039,6 +1260,21 @@ namespace LuaFunctions {
 	// cheaper, and found exactly when it stops.
 	void FollowMapWhileMoving() {
 		MapTracking::FollowWhileMoving();
+	}
+
+	sol::variadic_results FreeSpace(float y0, float y1, sol::this_state state) {
+		sol::variadic_results results;
+		MapTracking::MapView view = MapTracking::GetView();
+		if (!view.visible) {
+			results.push_back(sol::make_object(state, sol::lua_nil));
+			return results;
+		}
+		RECT game = gameOnOverlay(view);
+		float from = 0, to = 0;
+		GameUi::FreeSpan((float)game.left, (float)game.right, mapUiBoxes(view, game), y0, y1, from, to);
+		results.push_back(sol::make_object(state, from));
+		results.push_back(sol::make_object(state, to));
+		return results;
 	}
 
 	static const char* stateName(MiniMap::State state) {
@@ -1128,9 +1364,25 @@ namespace LuaFunctions {
 	// draws behind every ImGui window, straight onto the overlay
 	void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
 		if (textureID == 0 || !inFrame("DrawImage")) return;
+		if (!ownsTexture(textureID)) {
+			Extensions::logOnce("DrawImage", "draws only textures it loaded itself");
+			return;
+		}
 		int a = (int)(alpha.value_or(1.0f) * 255.0f);
 		ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)textureID, ImVec2(x0, y0), ImVec2(x1, y1),
 			ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+	}
+
+	// Clicks in the box go to the overlay from the next frame on, while the map
+	// or the menu is open. Nothing while the cursor is over the menu or another
+	// of the overlay's windows, so they always stay usable.
+	std::tuple<bool, bool> ClickArea(float x0, float y0, float x1, float y1) {
+		if (!inFrame("ClickArea")) return { false, false };
+		Overlay::ClaimMouse(x0, y0, x1, y1, Extensions::currentExtension ? Extensions::currentExtension->name : std::string());
+		if (!MapTracking::IsMapOpen() && !Overlay::MenuOpen()) return { false, false };
+		if (ImGui::GetIO().WantCaptureMouse) return { false, false };
+		bool hovered = ImGui::IsMouseHoveringRect(ImVec2(x0, y0), ImVec2(x1, y1), false);
+		return { hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left), hovered };
 	}
 
 	void PushClipRect(float x0, float y0, float x1, float y1) {
@@ -1657,6 +1909,10 @@ namespace LuaFunctions {
 	}
 
 	double CompareImages(GLuint textureID1, GLuint textureID2, int accuracy) {
+		if (!ownsTexture(textureID1) || !ownsTexture(textureID2)) {
+			Extensions::logOnce("CompareImages", "compares only textures it loaded itself");
+			return 0.0;
+		}
 		return Helpers::compareTextures(textureID1, textureID2, accuracy);
 	}
 
@@ -1829,26 +2085,83 @@ namespace LuaFunctions {
 		return table;
 	}
 
-	void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color)
+	static float optionOr(const sol::optional<sol::table>& options, const char* name, float otherwise) {
+		if (!options) return otherwise;
+		sol::optional<float> value = (*options)[name];
+		return value ? *value : otherwise;
+	}
+
+	void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color,
+		sol::optional<sol::table> options)
 	{
 		if (text.empty() || !inFrame("DrawText"))
 			return;
-
 		float fontSize = size.value_or(ImGui::GetFontSize());
-		uint32_t rgba = color.value_or(0xFFFFFFFF);
+		float wrap = std::max(0.0f, optionOr(options, "wrap", 0.0f));
+		ImGui::GetBackgroundDrawList()->AddText(ImGui::GetFont(), fontSize, ImVec2(x, y),
+			Controls::Color(color.value_or(0xFFFFFFFF)), text.c_str(), nullptr, wrap);
+	}
 
-		int r = (rgba >> 24) & 0xFF;
-		int g = (rgba >> 16) & 0xFF;
-		int b = (rgba >> 8) & 0xFF;
-		int a = rgba & 0xFF;
+	std::tuple<float, float> TextSize(const std::string& text, sol::optional<float> size, sol::optional<sol::table> options)
+	{
+		if (!inFrame("TextSize")) return { 0.0f, 0.0f };
+		float fontSize = size.value_or(ImGui::GetFontSize());
+		float wrap = std::max(0.0f, optionOr(options, "wrap", 0.0f));
+		ImVec2 measured = ImGui::GetFont()->CalcTextSizeA(fontSize, FLT_MAX, wrap, text.c_str());
+		return { measured.x, measured.y };
+	}
 
-		ImGui::GetBackgroundDrawList()->AddText(
-			ImGui::GetFont(),
-			fontSize,
-			ImVec2(x, y),
-			IM_COL32(r, g, b, a),
-			text.c_str()
-		);
+	void DrawRect(float x0, float y0, float x1, float y1, sol::optional<uint32_t> color, sol::optional<sol::table> options)
+	{
+		if (!inFrame("DrawRect")) return;
+		ImU32 colour = Controls::Color(color.value_or(0xFFFFFFFF));
+		float rounding = std::max(0.0f, optionOr(options, "rounding", 0.0f));
+		float outline = optionOr(options, "outline", 0.0f);
+		ImDrawList* draw = ImGui::GetBackgroundDrawList();
+		if (outline > 0.0f) draw->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), colour, rounding, 0, outline);
+		else draw->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), colour, rounding);
+	}
+
+	void DrawBadge(float x, float y, float radius, sol::optional<GLuint> icon, sol::optional<sol::table> options)
+	{
+		if (!inFrame("DrawBadge")) return;
+		GLuint texture = icon.value_or(0);
+		if (texture != 0 && !ownsTexture(texture)) {
+			Extensions::logOnce("DrawBadge", "draws only textures it loaded itself");
+			texture = 0;
+		}
+		Controls::BadgeOptions badge;
+		if (options) {
+			sol::optional<uint32_t> ring = (*options)["ring"];
+			if (ring) badge.ring = *ring;
+			badge.faded = options->get_or("faded", false);
+		}
+		Controls::Badge(ImGui::GetBackgroundDrawList(), ImVec2(x, y), radius, (ImTextureID)(intptr_t)texture, badge);
+	}
+
+	void DrawBubble(float x, float y, float radius, const std::string& text, sol::optional<sol::table> options)
+	{
+		if (!inFrame("DrawBubble")) return;
+		std::optional<unsigned int> fill;
+		if (options) {
+			sol::optional<uint32_t> color = (*options)["color"];
+			if (color) fill = *color;
+		}
+		// a count or a sign, not a sentence
+		std::string shown = text.substr(0, 8);
+		// never half a UTF-8 character
+		while (!shown.empty() && shown.size() < text.size() && (text[shown.size()] & 0xC0) == 0x80) shown.pop_back();
+		Controls::Bubble(ImGui::GetBackgroundDrawList(), ImVec2(x, y), radius, shown.c_str(), fill);
+	}
+
+	void DrawCircle(float x, float y, float radius, sol::optional<uint32_t> color, sol::optional<sol::table> options)
+	{
+		if (radius <= 0.0f || !inFrame("DrawCircle")) return;
+		ImU32 colour = Controls::Color(color.value_or(0xFFFFFFFF));
+		float outline = optionOr(options, "outline", 0.0f);
+		ImDrawList* draw = ImGui::GetBackgroundDrawList();
+		if (outline > 0.0f) draw->AddCircle(ImVec2(x, y), radius, colour, 0, outline);
+		else draw->AddCircleFilled(ImVec2(x, y), radius, colour);
 	}
 	// The map items, all read only from the catalog in memory. Unknown ids give
 	// nil. Take what you keep again when GetItemsVersion changes: a type or a

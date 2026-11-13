@@ -17,6 +17,7 @@ namespace Settings {
     bool followOnThread = true;
     bool shrinkOnGpu = true;
     bool findSmallFirst = true;
+    bool showClickBoxes = false;
     bool downloadItems = true;
     std::string menuKey = "Alt+`";
     std::string look = "Windows 11";
@@ -90,6 +91,7 @@ namespace Settings {
         followOnThread = settings.value("followOnThread", true);
         shrinkOnGpu = settings.value("shrinkOnGpu", true);
         findSmallFirst = settings.value("findSmallFirst", true);
+        showClickBoxes = settings.value("showClickBoxes", false);
         downloadItems = settings.value("downloadItems", true);
         menuKey = settings.value("menuKey", std::string("Alt+`"));
         look = settings.value("look", std::string("Windows 11"));
@@ -116,6 +118,7 @@ namespace Settings {
         settings["followOnThread"] = followOnThread;
         settings["shrinkOnGpu"] = shrinkOnGpu;
         settings["findSmallFirst"] = findSmallFirst;
+        settings["showClickBoxes"] = showClickBoxes;
         settings["downloadItems"] = downloadItems;
         settings["menuKey"] = menuKey;
         settings["look"] = look;
@@ -182,6 +185,29 @@ namespace Settings {
         if (names.empty()) all.erase(folder);
         else all[folder] = names;
         if (all.empty()) settings.erase("extensionCalls");
+        write(settings);
+    }
+
+    std::map<std::string, bool> LoadHeaders(const std::string& folder) {
+        std::map<std::string, bool> open;
+        nlohmann::json settings = read();
+        auto all = settings.find("extensionHeaders");
+        if (all == settings.end() || !all->is_object()) return open;
+        auto saved = all->find(folder);
+        if (saved == all->end() || !saved->is_object()) return open;
+        for (auto& [label, isOpen] : saved->items()) {
+            if (isOpen.is_boolean()) open[label] = isOpen.get<bool>();
+        }
+        return open;
+    }
+
+    void SaveHeaders(const std::string& folder, const std::map<std::string, bool>& open) {
+        nlohmann::json settings = read();
+        nlohmann::json& all = settings["extensionHeaders"];
+        if (!all.is_object()) all = nlohmann::json::object();
+        if (open.empty()) all.erase(folder);
+        else all[folder] = open;
+        if (all.empty()) settings.erase("extensionHeaders");
         write(settings);
     }
 

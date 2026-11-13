@@ -373,6 +373,30 @@ namespace GameUi {
         return toScreen(box, game);
     }
 
+    void FreeSpan(float left, float right, const std::vector<RECT>& boxes, float y0, float y1, float& from, float& to) {
+        std::vector<std::pair<float, float>> spans = { { left, right } };
+        for (const RECT& box : boxes) {
+            if (box.top >= y1 || box.bottom <= y0) continue;
+            std::vector<std::pair<float, float>> cut;
+            for (const auto& span : spans) {
+                if (box.right <= span.first || box.left >= span.second) {
+                    cut.push_back(span);
+                    continue;
+                }
+                if (box.left > span.first) cut.push_back({ span.first, (float)box.left });
+                if (box.right < span.second) cut.push_back({ (float)box.right, span.second });
+            }
+            spans = cut;
+        }
+        from = left;
+        to = right;
+        if (spans.empty()) return;
+        auto widest = std::max_element(spans.begin(), spans.end(),
+            [](const auto& a, const auto& b) { return a.second - a.first < b.second - b.first; });
+        from = widest->first;
+        to = widest->second;
+    }
+
     std::vector<RECT> Boxes(const RECT& game, const Panel& panel) {
         std::vector<RECT> boxes;
         // not sure there's one: all the boxes, they're generous anyway
