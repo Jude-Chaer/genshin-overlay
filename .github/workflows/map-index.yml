@@ -30,12 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # OpenCV takes a long time to build, keep the installed libraries between runs
-      - name: Cache vcpkg libraries
-        uses: actions/cache@v4
-        with:
-          path: vcpkg_installed
-          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+      - uses: ./.github/actions/vcpkg
 
       - uses: microsoft/setup-msbuild@v2
 
@@ -43,9 +38,6 @@ jobs:
         id: build
         shell: pwsh
         run: |
-          # the runner's vcpkg can be older than the baseline in vcpkg.json
-          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --quiet origin master
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
           # only the overlay: a test that doesn't compile shouldn't stop the weekly index
           msbuild genshin-overlay.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
