@@ -118,6 +118,7 @@ namespace LuaFunctions {
     // image is a texture the extension may draw, or a handle from GetWebImage
     void DrawImage(double image, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     sol::variadic_results GetWebImage(const std::string& url, sol::this_state state);
+    sol::object GetPointGuide(double pointId, sol::this_state state);
     // DrawText(text, x, y, size, color, { wrap = width }), color is 0xRRGGBBAA
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color,
         sol::optional<sol::table> options); // The "G" is only there because DrawText is already used by the Windows API

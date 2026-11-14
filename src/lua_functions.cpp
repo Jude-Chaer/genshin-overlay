@@ -31,6 +31,8 @@
 #include <iterator>
 #include <stdexcept>
 #include "web_images.hpp"
+#include "point_guides.hpp"
+#include "language.hpp"
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -176,6 +178,7 @@ namespace LuaFunctions {
 		// drawing on the overlay
 		global("DrawImage", DisplayOverlay, DrawImage);
 		global("GetWebImage", Network, GetWebImage);
+		global("GetPointGuide", Network, GetPointGuide);
 		global("DrawText", DisplayOverlay, GDrawText);
 		global("DrawRect", DisplayOverlay, DrawRect);
 		global("DrawCircle", DisplayOverlay, DrawCircle);
@@ -2385,6 +2388,56 @@ namespace LuaFunctions {
 		GLuint texture = ItemIcons::get(Items::frameCatalog.get(), type);
 		if (texture == 0) return sol::lua_nil;
 		return sol::make_object(state, texture);
+	}
+
+	// GetPointGuide(pointId): what the item files' point says about itself, in
+	// the overlay's language: { text, picture, summary, failed, comments }, each
+	// comment { author, date, text, original, from, translating, picture, likes },
+	// the most liked first. nil while it's on its way, false for a point the
+	// item files don't have, or when the extension's sites leave out the
+	// guide's. Asked every frame it's shown, the answer can change (a
+	// translation comes in, it's fetched again after 10 minutes).
+	sol::object GetPointGuide(double pointId, sol::this_state state) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext || !ext->listRead) return sol::lua_nil;
+		Net::Sites sites = sitesFor(ext);
+		if (sites.only) {
+			for (const std::string& site : PointGuides::sites()) {
+				if (Net::onSites(site, sites)) continue;
+				Extensions::logOnce("GetPointGuide", "needs " + Helpers::joined(PointGuides::sites()) + " in its main.lua's sites");
+				return sol::make_object(state, false);
+			}
+		}
+		const ItemCatalog::Catalog* catalog = Items::frameCatalog.get();
+		if (!catalog) return sol::lua_nil;
+		const ItemCatalog::Point* point = catalog->point((int64_t)pointId);
+		if (!point) return sol::make_object(state, false);
+
+		PointGuides::Guide guide;
+		if (!PointGuides::get({ point->id, point->map, point->type, point->appsample }, Language::current(), guide)) return sol::lua_nil;
+		Extensions::markUsed(*ext, Permission::NetworkAccess);
+		sol::state_view lua(state);
+		sol::table comments = lua.create_table((int)guide.comments.size(), 0);
+		for (size_t i = 0; i < guide.comments.size(); i++) {
+			const PointGuides::Comment& comment = guide.comments[i];
+			sol::table each = lua.create_table();
+			each["author"] = comment.author;
+			each["date"] = comment.date;
+			each["text"] = comment.text;
+			each["original"] = comment.original;
+			if (!comment.from.empty()) each["from"] = comment.from;
+			each["translating"] = comment.translating;
+			if (!comment.picture.empty()) each["picture"] = comment.picture;
+			each["likes"] = comment.likes;
+			comments[i + 1] = each;
+		}
+		sol::table result = lua.create_table();
+		result["text"] = guide.text;
+		if (!guide.picture.empty()) result["picture"] = guide.picture;
+		if (!guide.summary.empty()) result["summary"] = guide.summary;
+		result["failed"] = guide.failed;
+		result["comments"] = comments;
+		return result;
 	}
 
 	// Reading the game's traffic, for what needs it. on is the player's switch

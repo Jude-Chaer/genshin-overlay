@@ -168,6 +168,7 @@
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\npcap_download.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\point_guides.cpp" />
     <ClCompile Include="src\packets\frames.cpp" />
     <ClCompile Include="src\game_traffic_text.cpp" />
     <ClCompile Include="src\packets\game_traffic.cpp" />
@@ -198,6 +199,7 @@
     <ClCompile Include="tests\item_patch_tests.cpp" />
     <ClCompile Include="tests\item_lua_tests.cpp" />
     <ClCompile Include="tests\net_tests.cpp" />
+    <ClCompile Include="tests\point_guides_tests.cpp" />
     <ClCompile Include="tests\web_images_tests.cpp" />
     <ClCompile Include="tests\key_choices_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
@@ -237,6 +239,7 @@
     <ClInclude Include="src\item_patch.hpp" />
     <ClInclude Include="src\key_choices.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
+    <ClInclude Include="src\language.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
     <ClInclude Include="src\locator\lit_floor.hpp" />
     <ClInclude Include="src\locator\map_locator.hpp" />
@@ -253,6 +256,7 @@
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\point_guides.hpp" />
     <ClInclude Include="src\packets\frames.hpp" />
     <ClInclude Include="src\game_traffic_text.hpp" />
     <ClInclude Include="src\npcap_download.hpp" />
