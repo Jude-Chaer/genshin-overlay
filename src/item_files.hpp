@@ -110,7 +110,9 @@ namespace ItemFiles {
     extern Fetch fromRelease(Net::Stopper* stopper = nullptr);
 
     // One check: with download on, gets the release's pack when items.pack
-    // isn't that one; then publishes the catalog of the best pack there is.
+    // isn't that one, by its patches when they lead there from items.pack and
+    // come to less than half the pack; then publishes the catalog of the best
+    // pack there is.
     // Tells onChange about every change on the way and returns the last one.
     // stop makes it give up at the next piece of a download or a load.
     // inUse is the catalog published now: a check never replaces it with the
