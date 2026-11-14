@@ -110,3 +110,16 @@ Counted off the positions files: points, types with a point there, points with a
 - bad-dotdot.pack (`../escaped.txt`), bad-absolute.pack (`C:/escaped.txt`), bad-size.pack (size
   50, 2 bytes left): all refused. Each starts with a good `tree.json`, so a test can check the old
   items folder is untouched and nothing was written outside.
+
+## Updates (update/)
+
+Real files of four more types: `before/` from the build of 2026-10-26 11:03, `after/` from the
+release of 2026-11-14 13:30, written one point per line as the builder writes them. Added to
+folder/, each side is a pack of its own. What changed, read off the files:
+
+- 294: 113 points both times. Point 60111 lost its appsample pair (60809 before, none after).
+- 443: 42 points both times. Points 48113, 48114 and 48110 went underground: point_group null
+  before, group 43 floor 53 after. Their pairs stay (48694, 48693, 48697).
+- 292: 28 points before, 27 after. Point 93667 is gone.
+- 830: new after, one point, 105949 (map 2, area 16, pair 106770), with its icon (7570 bytes).
+  830 isn't in folder/'s tree.json, so it has points but no place in the type list.
