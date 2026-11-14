@@ -144,12 +144,12 @@ namespace ItemFiles {
     extern std::map<int, MapCount> countMaps(const ItemCatalog::Catalog& catalog);
 
     // The builder's check of a raw pack before it's published: what would keep
-    // it from loading in the overlay, a map of maps with no points, and a map
-    // whose points, types or pairs fell sharply against the published
-    // items.json (unless allowDrop). Empty when it can go out; counts is filled
-    // when it loads.
-    extern std::vector<std::string> checkBuilt(const std::string& raw, const std::vector<int>& maps,
-        const nlohmann::json& published, bool allowDrop, std::map<int, MapCount>& counts);
+    // it from loading in the overlay, and a published map whose points, types
+    // or pairs fell sharply or are gone (unless allowDrop). A map with no
+    // points that was never published goes out. Empty when it can go out;
+    // counts is filled when it loads.
+    extern std::vector<std::string> checkBuilt(const std::string& raw, const nlohmann::json& published, bool allowDrop,
+        std::map<int, MapCount>& counts);
 
     // --make-items <folder> [--allow-drop]: downloads everything into
     // folder/items, checks it, then writes the pack and items.json to

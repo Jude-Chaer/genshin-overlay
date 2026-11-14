@@ -245,16 +245,12 @@ namespace ItemFiles {
 		return count >= 0 && count <= std::numeric_limits<int>::max() ? (int)count : -1;
 	}
 
-	std::vector<std::string> checkBuilt(const std::string& raw, const std::vector<int>& maps, const json& published, bool allowDrop,
-		std::map<int, MapCount>& counts) {
+	std::vector<std::string> checkBuilt(const std::string& raw, const json& published, bool allowDrop, std::map<int, MapCount>& counts) {
 		std::vector<std::string> problems;
 		std::string problem;
 		std::shared_ptr<ItemCatalog::Catalog> catalog = loadAll(raw, nullptr, problem);
 		if (!catalog) return { "the overlay would refuse it: " + problem };
 		counts = countMaps(*catalog);
-		for (int map : maps) {
-			if (!counts.count(map)) problems.push_back("map " + std::to_string(map) + " has no points");
-		}
 		if (allowDrop || !published.is_object() || !published.contains("maps") || !published["maps"].is_object()) return problems;
 		for (const auto& [id, was] : published["maps"].items()) {
 			int map = std::atoi(id.c_str());
@@ -744,7 +740,12 @@ namespace ItemFiles {
 		std::cout << "Reading HoYoLAB's map items..." << std::endl;
 		Source source;
 		std::map<int, std::string> icons;
-		for (int map : MapData::MAP_IDS) {
+		std::vector<int> maps;
+		if (!MapData::mapIds(maps)) {
+			std::cerr << "HoYoLAB's map list didn't answer" << std::endl;
+			return 1;
+		}
+		for (int map : maps) {
 			if (!downloadMap(map, source)) return 1;
 			findIcons(source.trees[map], icons);
 		}
@@ -769,8 +770,7 @@ namespace ItemFiles {
 
 		// what's published is what the overlay will load, so it's loaded here first the same way
 		std::map<int, MapCount> counts;
-		std::vector<int> maps(std::begin(MapData::MAP_IDS), std::end(MapData::MAP_IDS));
-		std::vector<std::string> problems = checkBuilt(raw, maps, published, allowDrop, counts);
+		std::vector<std::string> problems = checkBuilt(raw, published, allowDrop, counts);
 		for (const auto& [map, count] : counts) {
 			std::cout << "[items] map " << map << ": " << count.points << " points, " << count.types << " types, " << count.pairs << " pairs" << std::endl;
 		}
@@ -778,7 +778,7 @@ namespace ItemFiles {
 			for (const std::string& problem : problems) std::cerr << "[items] " << problem << std::endl;
 			// the hint only when dropping is all that's wrong
 			std::map<int, MapCount> ignored;
-			bool onlyDrops = !allowDrop && checkBuilt(raw, maps, published, true, ignored).empty();
+			bool onlyDrops = !allowDrop && checkBuilt(raw, published, true, ignored).empty();
 			std::cerr << "The item files aren't published" << (onlyDrops ? " (--allow-drop publishes a drop that's meant)" : "") << std::endl;
 			return 1;
 		}

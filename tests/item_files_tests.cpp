@@ -206,8 +206,6 @@ TEST_CASE("a pack that checks out but whose points don't load is refused") {
 
 namespace {
     using Counts = std::map<int, ItemFiles::MapCount>;
-    const std::vector<int> TEST_MAPS = { 2, 7, 9, 34 };
-
     // an items.json as the builder publishes it, with these counts for map 2
     json publishedWith(int points, int types, int pairs) {
         json published = meta();
@@ -224,7 +222,7 @@ namespace {
 
 TEST_CASE("the builder counts each map's points, types and pairs") {
     Counts counts;
-    CHECK(ItemFiles::checkBuilt(rawOf(DATA / "folder"), TEST_MAPS, meta(), false, counts).empty());
+    CHECK(ItemFiles::checkBuilt(rawOf(DATA / "folder"), meta(), false, counts).empty());
     // answers.md, per map
     REQUIRE(counts.size() == 4);
     auto is = [&](int map, int points, int types, int pairs) {
@@ -246,19 +244,17 @@ TEST_CASE("the builder doesn't publish a pack whose points HoYoLAB renamed a fie
     for (size_t at; (at = positions.find("\"x_pos\"")) != std::string::npos;) positions.replace(at, 7, "\"x\"");
     REQUIRE(Files::writeFile(folder / "positions" / "189.json", positions));
     Counts counts;
-    auto problems = ItemFiles::checkBuilt(rawOf(folder), TEST_MAPS, meta(), false, counts);
+    auto problems = ItemFiles::checkBuilt(rawOf(folder), meta(), false, counts);
     REQUIRE(problems.size() == 1);
     // the field is named, so the workflow's log says what changed
     CHECK(problems[0].find("11 without a good x_pos") != std::string::npos);
 }
 
-TEST_CASE("the builder doesn't publish a pack with a map that has no points") {
+TEST_CASE("the builder publishes a pack without a map that was never published") {
     Counts counts;
-    std::vector<int> maps = TEST_MAPS;
-    maps.push_back(40);
-    auto problems = ItemFiles::checkBuilt(rawOf(DATA / "folder"), maps, meta(), false, counts);
-    REQUIRE(problems.size() == 1);
-    CHECK(problems[0] == "map 40 has no points");
+    // the published items.json has map 2's counts only, a new map with no points yet isn't in either
+    CHECK(ItemFiles::checkBuilt(rawOf(DATA / "folder"), publishedWith(31, 4, 23), false, counts).empty());
+    CHECK(!counts.count(40));
 }
 
 TEST_CASE("the builder doesn't publish a map that lost many points, types or pairs") {
@@ -266,26 +262,26 @@ TEST_CASE("the builder doesn't publish a map that lost many points, types or pai
     Counts counts;
     // map 2 has 31 points, 4 types and 23 pairs
     SECTION("a few less than published goes out") {
-        CHECK(ItemFiles::checkBuilt(raw, TEST_MAPS, publishedWith(35, 5, 26), false, counts).empty());
+        CHECK(ItemFiles::checkBuilt(raw, publishedWith(35, 5, 26), false, counts).empty());
     }
     SECTION("points") {
-        auto problems = ItemFiles::checkBuilt(raw, TEST_MAPS, publishedWith(40, 4, 23), false, counts);
+        auto problems = ItemFiles::checkBuilt(raw, publishedWith(40, 4, 23), false, counts);
         REQUIRE(problems.size() == 1);
         CHECK(problems[0] == "map 2 has 31 points, the published pack 40");
     }
     SECTION("types") {
-        CHECK(ItemFiles::checkBuilt(raw, TEST_MAPS, publishedWith(31, 6, 23), false, counts).size() == 1);
+        CHECK(ItemFiles::checkBuilt(raw, publishedWith(31, 6, 23), false, counts).size() == 1);
     }
     SECTION("pairs") {
-        CHECK(ItemFiles::checkBuilt(raw, TEST_MAPS, publishedWith(31, 4, 30), false, counts).size() == 1);
+        CHECK(ItemFiles::checkBuilt(raw, publishedWith(31, 4, 30), false, counts).size() == 1);
     }
     SECTION("a published map that's gone") {
         json published = meta();
         published["maps"]["37"] = { { "points", 807 }, { "types", 70 }, { "pairs", 753 } };
-        CHECK(ItemFiles::checkBuilt(raw, TEST_MAPS, published, false, counts).size() == 3);
+        CHECK(ItemFiles::checkBuilt(raw, published, false, counts).size() == 3);
     }
     SECTION("unless the drop is meant") {
-        CHECK(ItemFiles::checkBuilt(raw, TEST_MAPS, publishedWith(400, 40, 300), true, counts).empty());
+        CHECK(ItemFiles::checkBuilt(raw, publishedWith(400, 40, 300), true, counts).empty());
     }
 }
 
