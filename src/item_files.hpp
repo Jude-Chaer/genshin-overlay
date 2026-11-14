@@ -31,9 +31,10 @@
 // what's in it: its file (items-<sha256 12>.pack.gz, also as items.pack.gz),
 // and the patches of the last days, each from one pack to the next
 // ({from, to, file, size, rawSize, built}, oldest first, item_patch.hpp).
-// The overlay keeps the one it uses as a single file, items/items.pack: the release's items.json on the first line, then the
-// gzipped pack as it came. It's written only after the pack has loaded, and in
-// one go (temp file and rename), so it's never half old, half new.
+// The overlay keeps the one it uses as a single file, items/items.pack: the
+// release's items.json on the first line, then the gzipped pack (as it came,
+// or gzipped here when patches made it). It's written only after the pack has
+// loaded, and in one go (temp file and rename), so it's never half old, half new.
 
 namespace ItemFiles {
     inline constexpr int FORMAT = 2;

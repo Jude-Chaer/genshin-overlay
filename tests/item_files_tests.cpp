@@ -884,6 +884,26 @@ TEST_CASE("when the patches don't lead to the release's pack, the whole pack com
     installedIs(items, { to.raw, to.packed, published });
 }
 
+TEST_CASE("a patched pack that doesn't load is refused without fetching the whole pack") {
+    Side from = before();
+    fs::path folder = copyOfFolder();
+    fs::copy(DATA / "update" / "before", folder, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    for (const auto& entry : fs::directory_iterator(folder / "positions")) REQUIRE(Files::writeFile(entry.path(), "[]"));
+    Side empty;
+    REQUIRE(ItemFiles::pack(folder, empty.raw));
+    asReleased(empty.raw, empty.packed, empty.meta);
+    empty.meta["file"] = ItemFiles::packName(empty.meta["sha256"].get<std::string>());
+    fs::path items = installed(from);
+    Release release = releasedSide(empty);
+    json published = empty.meta;
+    addPatch(release, published, from, empty);
+    Run run = update(items, release);
+    CHECK(run.status.state == State::Old);
+    CHECK(run.status.reason == Reason::BrokenPack);
+    CHECK(release.asked == std::vector<std::string>{ ItemFiles::META_FILE, published["patches"][0]["file"].get<std::string>() });
+    installedIs(items, from);
+}
+
 TEST_CASE("a pack name in items.json that the builder doesn't make is taken as items.pack.gz") {
     fs::path items = noItems();
     Release release = released();

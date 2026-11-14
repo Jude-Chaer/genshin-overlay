@@ -493,6 +493,13 @@ namespace ItemFiles {
 		if (stop.stopped()) return Status();
 
 		auto start = std::chrono::steady_clock::now();
+		// what's in use stays; the one on disk is only loaded when nothing is
+		auto kept = [&](Reason reason) {
+			if (inUse) return finish(State::Old, reason, nullptr, json{ { "built", inUse->built } }, start);
+			if (loadInstalled()) return finish(State::Old, reason, installed, installedMeta, start);
+			if (stop.stopped()) return Status();
+			return finish(State::None, reason, nullptr, json(), start);
+		};
 		std::string releasedHash = Files::stringField(published, "sha256");
 		if (!published.is_null() && !installedHash.empty() && releasedHash == installedHash) {
 			if (inUseHash == installedHash) return finish(State::Ready, Reason::None, nullptr, installedMeta, start);
@@ -525,7 +532,11 @@ namespace ItemFiles {
 				if (ok && releasedHash != inUseHash) {
 					fresh = loadAll(raw, &stop, problem);
 					if (stop.stopped()) return Status();
-					ok = fresh != nullptr;
+					// it's the release's pack byte for byte, the whole one wouldn't load either
+					if (!fresh) {
+						std::cerr << "[items] the patched pack is refused: " << problem << std::endl;
+						return kept(Reason::BrokenPack);
+					}
 				}
 				if (ok && Files::gzip(raw, packed)) {
 					std::cout << "[items] " << chain.size() << " patches, " << patchBytes << " bytes" << std::endl;
@@ -569,11 +580,7 @@ namespace ItemFiles {
 			}
 		}
 
-		// what's in use stays; the one on disk is only loaded when nothing is
-		if (inUse) return finish(State::Old, reason, nullptr, json{ { "built", inUse->built } }, start);
-		if (loadInstalled()) return finish(State::Old, reason, installed, installedMeta, start);
-		if (stop.stopped()) return Status();
-		return finish(State::None, reason, nullptr, json(), start);
+		return kept(reason);
 	}
 
 	bool waitsForNetwork(const Status& status) {
