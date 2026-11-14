@@ -2,46 +2,131 @@
 # "map-index" release. The app downloads it instead of ~120 MB of map images.
 # The item files (HoYoLAB's map items as one pack) go on the same release.
 # What is already current isn't uploaded again.
+#
+# Every hour a quick check hashes the sources (.github/scripts/map_sources.py)
+# and only the part whose sources changed is built: the index for a map change,
+# the item files for an items or appsample change. Monday's run and a manual
+# run build both.
 
 name: Map index
 
 on:
   workflow_dispatch:
     inputs:
+      only_changed:
+        description: "Build only the parts whose sources changed, like the hourly run"
+        type: boolean
+        default: false
       allow_drop:
         description: "Publish the item files even when a map lost many points, types or pairs (when the drop is meant)"
         type: boolean
         default: false
   schedule:
+    - cron: "37 * * * *"
     - cron: "0 6 * * 1"
 
 permissions:
   contents: write
+  actions: read
 
-# a manual run while the weekly one is going waits for it, so two never upload at once
+# a run while another is going waits for it, so two never upload at once
 concurrency:
   group: map-index
   cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      map: ${{ steps.decide.outputs.map }}
+      items: ${{ steps.decide.outputs.items }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Check the sources
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          ONLY_CHANGED: ${{ inputs.only_changed }}
+        run: |
+          set -uo pipefail
+          if gh release view map-index --json assets --jq '.assets[].name' 2>/dev/null | grep -qx map-sources.json; then
+            gh release download map-index -p map-sources.json -O published.json
+          fi
+          fetched=true
+          python3 -I .github/scripts/map_sources.py fetch current.json || fetched=false
+
+          if [ "$EVENT" = "workflow_dispatch" -a "$ONLY_CHANGED" != "true" ] || [ "$SCHEDULE" = "0 6 * * 1" ]; then
+            echo "map=true" >> "$GITHUB_OUTPUT"
+            echo "items=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$fetched" != "true" ]; then
+            echo "::warning::The sources didn't answer, nothing is built this hour"
+            exit 0
+          fi
+          python3 -I .github/scripts/map_sources.py compare current.json published.json > changed.txt
+          # no hourly build within 6 hours of a failed one
+          if grep -q "=true" changed.txt; then
+            failed=$(gh run list --workflow map-index.yml --status failure --limit 1 --json createdAt --jq '.[0].createdAt // ""')
+            if [ -n "$failed" ] && [ $(( $(date +%s) - $(date -d "$failed" +%s) )) -lt 21600 ]; then
+              echo "::warning::A build failed at $failed, the next one waits until 6 hours after it"
+              exit 0
+            fi
+          fi
+          cat changed.txt >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('current.json') != '' }}
+        with:
+          name: map-sources
+          path: current.json
+          retention-days: 1
+
   build:
+    needs: check
+    if: ${{ needs.check.outputs.map == 'true' || needs.check.outputs.items == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
+      # the exe is kept per hash of the code and built only when there's none
+      - name: Restore the overlay
+        id: exe
+        uses: actions/cache/restore@v4
+        with:
+          path: build/Release/genshin-overlay.exe
+          key: overlay-exe-${{ hashFiles('src/**', 'third_party/**', 'genshin-overlay.vcxproj', 'vcpkg.json') }}
+
       - uses: ./.github/actions/vcpkg
+        if: steps.exe.outputs.cache-hit != 'true'
 
       - uses: microsoft/setup-msbuild@v2
+        if: steps.exe.outputs.cache-hit != 'true'
 
       - name: Build
         id: build
+        if: steps.exe.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          # only the overlay: a test that doesn't compile shouldn't stop the weekly index
+          # only the overlay: a test that doesn't compile shouldn't stop the index
           msbuild genshin-overlay.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
+      - name: Save the overlay
+        if: steps.build.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: build/Release/genshin-overlay.exe
+          key: overlay-exe-${{ hashFiles('src/**', 'third_party/**', 'genshin-overlay.vcxproj', 'vcpkg.json') }}
+
       - name: Make sure the release is there
+        id: release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,6 +138,7 @@ jobs:
 
       - name: Make the index
         id: index
+        if: needs.check.outputs.map == 'true'
         shell: pwsh
         run: |
           & build\Release\genshin-overlay.exe --make-index map_index
@@ -61,6 +147,7 @@ jobs:
           "changed=true" >> $env:GITHUB_OUTPUT
 
       - name: Upload
+        id: upload
         if: steps.index.outputs.changed == 'true'
         shell: pwsh
         env:
@@ -75,7 +162,7 @@ jobs:
       # going (the run is still red)
       - name: Make the item files
         id: items
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && needs.check.outputs.items == 'true' && steps.release.outcome == 'success' }}
         shell: pwsh
         run: |
           if ("${{ inputs.allow_drop }}" -eq "true") { & build\Release\genshin-overlay.exe --make-items item_files --allow-drop }
@@ -85,6 +172,7 @@ jobs:
           "changed=true" >> $env:GITHUB_OUTPUT
 
       - name: Upload the item files
+        id: upload_items
         if: ${{ !cancelled() && steps.items.outputs.changed == 'true' }}
         shell: pwsh
         env:
@@ -93,3 +181,29 @@ jobs:
           # the pack first, then the file that points to it
           gh release upload map-index item_files\out\items.pack.gz --clobber
           gh release upload map-index item_files\out\items.json --clobber
+
+      - uses: actions/download-artifact@v4
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          name: map-sources
+
+      # only the parts that were published get their new hashes
+      - name: Keep the sources that are published
+        if: ${{ !cancelled() && hashFiles('current.json') != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INDEX: ${{ steps.index.outcome }}
+          UPLOAD: ${{ steps.upload.outcome }}
+          ITEMS: ${{ steps.items.outcome }}
+          UPLOAD_ITEMS: ${{ steps.upload_items.outcome }}
+        run: |
+          $done = @()
+          if ($env:INDEX -eq "success" -and $env:UPLOAD -ne "failure") { $done += "map" }
+          if ($env:ITEMS -eq "success" -and $env:UPLOAD_ITEMS -ne "failure") { $done += "items" }
+          if ($done.Count -eq 0) { exit 0 }
+          gh release download map-index -p map-sources.json -O published.json 2>$null
+          python -I .github\scripts\map_sources.py merge published.json current.json map-sources.json @done
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release upload map-index map-sources.json --clobber
