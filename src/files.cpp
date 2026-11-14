@@ -94,9 +94,9 @@ namespace Files {
 		return out;
 	}
 
-	std::string utcNow() {
+	std::string utcNow(long long secondsAgo) {
 		char built[32];
-		std::time_t now = std::time(nullptr);
+		std::time_t now = std::time(nullptr) - (std::time_t)secondsAgo;
 		std::tm utc;
 		gmtime_s(&utc, &now);
 		std::strftime(built, sizeof(built), "%Y-%m-%dT%H:%M:%SZ", &utc);

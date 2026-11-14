@@ -178,9 +178,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # the pack first, then the file that points to it
-          gh release upload map-index item_files\out\items.pack.gz --clobber
+          # the pack and the patch first, then the file that points to them
+          gh release upload map-index (Get-ChildItem item_files\out\items*.gz).FullName --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gh release upload map-index item_files\out\items.json --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # the packs and patches neither this items.json nor the one before it points to
+          $keep = Get-Content item_files\out\keep.txt
+          $names = gh release view map-index --json assets --jq '.assets[].name'
+          foreach ($name in $names) {
+            if ($name -match '^items-[0-9a-f]{12}(-[0-9a-f]{12})?\.(pack|patch)\.gz$' -and $keep -notcontains $name) {
+              gh release delete-asset map-index $name -y
+            }
+          }
 
       - uses: actions/download-artifact@v4
         if: ${{ !cancelled() }}

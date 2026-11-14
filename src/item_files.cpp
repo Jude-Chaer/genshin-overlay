@@ -2,6 +2,7 @@
 #include "files.hpp"
 #include "appsample.hpp"
 #include "item_catalog.hpp"
+#include "item_patch.hpp"
 #include "map_data.hpp"
 #include "net.hpp"
 #include <algorithm>
@@ -35,6 +36,8 @@ namespace ItemFiles {
 	// appsample's side than a real one, so the builder stops and keeps last
 	// week's (the smallest map has 48 types, so this is about 10 of them).
 	static constexpr int MAX_DROP_PERCENT = 20;
+	// how long a patch stays on the release, so an overlay off for longer takes the whole pack
+	static constexpr int PATCH_DAYS = 7;
 
 	static std::string dump(const ordered& data) {
 		return data.dump(-1, ' ', false, ordered::error_handler_t::replace);
@@ -101,13 +104,37 @@ namespace ItemFiles {
 		// a point id once, under the first type that has it (never seen, HoYoLAB's ids are unique)
 		std::set<int64_t> pointsSeen;
 		for (const auto& [type, points] : source.points) {
-			ordered list = ordered::array();
+			// one point per line, so a patch carries only the points that changed
+			std::string list;
 			for (const json& point : points) {
-				if (hasId(point) && pointsSeen.insert(point["id"].get<int64_t>()).second) list.push_back(trimPoint(point, source.pairs));
+				if (!hasId(point) || !pointsSeen.insert(point["id"].get<int64_t>()).second) continue;
+				list += (list.empty() ? "[\n" : ",\n") + dump(trimPoint(point, source.pairs));
 			}
-			if (!Files::writeFile(folder / "positions" / (std::to_string(type) + ".json"), dump(list))) return false;
+			list = list.empty() ? "[]" : list + "\n]";
+			if (!Files::writeFile(folder / "positions" / (std::to_string(type) + ".json"), list)) return false;
 		}
 		return true;
+	}
+
+	std::string packName(const std::string& sha256) {
+		return "items-" + sha256.substr(0, 12) + ".pack.gz";
+	}
+
+	std::string patchName(const std::string& from, const std::string& to) {
+		return "items-" + from.substr(0, 12) + "-" + to.substr(0, 12) + ".patch.gz";
+	}
+
+	// a release file named in items.json: one the builder makes, nothing else
+	static bool releaseName(const std::string& name) {
+		if (name == PACK_FILE) return true;
+		auto hex = [&](size_t at) {
+			for (size_t i = at; i < at + 12; i++) {
+				if (!std::isxdigit((unsigned char)name[i]) || std::isupper((unsigned char)name[i])) return false;
+			}
+			return true;
+		};
+		if (name.size() == 26 && name.compare(0, 6, "items-") == 0 && name.compare(18, 8, ".pack.gz") == 0) return hex(6);
+		return name.size() == 40 && name.compare(0, 6, "items-") == 0 && name[18] == '-' && name.compare(31, 9, ".patch.gz") == 0 && hex(6) && hex(19);
 	}
 
 	bool pack(const fs::path& folder, std::string& raw) {
@@ -639,16 +666,37 @@ namespace ItemFiles {
 		}
 	}
 
+	// the published raw pack, empty when there's none or it can't be read
+	static std::string fetchPublishedPack(const json& published) {
+		if (published.is_null()) return std::string();
+		std::string file = Files::stringField(published, "file", PACK_FILE), raw, problem;
+		if (!releaseName(file)) file = PACK_FILE;
+		if (!Files::getChecked(file, published, MAX_RAW_SIZE, raw, problem)) {
+			std::cerr << "[items] couldn't read the published pack: " << problem << std::endl;
+			return std::string();
+		}
+		return raw;
+	}
+
 	// An icon that didn't come is taken from the published pack, so a bad
 	// week neither loses icons nor makes everyone download a new pack.
-	static void keepPublishedIcons(const json& published, const std::vector<int>& failed, const fs::path& folder) {
-		if (failed.empty() || published.is_null()) return;
-		std::string raw, problem;
-		if (!Files::getChecked(PACK_FILE, published, MAX_RAW_SIZE, raw, problem)) {
-			std::cerr << "[items] couldn't read the published pack for the missing icons: " << problem << std::endl;
-			return;
+	static void keepPublishedIcons(const std::string& publishedRaw, const std::vector<int>& failed, const fs::path& folder) {
+		if (failed.empty() || publishedRaw.empty()) return;
+		std::cout << "[items] " << keepIcons(publishedRaw, failed, folder) << " of " << failed.size() << " missing icons kept from the published pack" << std::endl;
+	}
+
+	// the release files an items.json points to
+	static std::set<std::string> filesOf(const json& meta) {
+		std::set<std::string> names;
+		std::string file = Files::stringField(meta, "file");
+		if (releaseName(file)) names.insert(file);
+		if (meta.is_object() && meta.contains("patches") && meta["patches"].is_array()) {
+			for (const json& step : meta["patches"]) {
+				std::string name = Files::stringField(step, "file");
+				if (releaseName(name)) names.insert(name);
+			}
 		}
-		std::cout << "[items] " << keepIcons(raw, failed, folder) << " of " << failed.size() << " missing icons kept from the published pack" << std::endl;
+		return names;
 	}
 
 	static bool downloadMap(int map, Source& source) {
@@ -764,7 +812,8 @@ namespace ItemFiles {
 			std::cerr << "The item files aren't made: the published ones can't be compared with" << std::endl;
 			return 1;
 		}
-		keepPublishedIcons(published, downloadIcons(icons, items / "icons"), items);
+		std::string publishedRaw = fetchPublishedPack(published);
+		keepPublishedIcons(publishedRaw, downloadIcons(icons, items / "icons"), items);
 		// without appsample the pack would lose every pair for a week, so the published one stays
 		if (!pairWithAppsample(source) || !write(source, items)) return 1;
 
@@ -796,9 +845,11 @@ namespace ItemFiles {
 
 		std::string packed;
 		if (!Files::gzip(raw, packed)) return 1;
+		std::string built = Files::utcNow();
 		ordered meta;
 		meta["format"] = FORMAT;
-		meta["built"] = Files::utcNow();
+		meta["built"] = built;
+		meta["file"] = packName(hash);
 		meta["size"] = packed.size();
 		meta["rawSize"] = raw.size();
 		meta["sha256"] = hash;
@@ -806,9 +857,35 @@ namespace ItemFiles {
 		for (const auto& [map, count] : counts) {
 			meta["maps"][std::to_string(map)] = { { "points", count.points }, { "types", count.types }, { "pairs", count.pairs } };
 		}
+
+		// the published patches of the last PATCH_DAYS, and one from the published pack to this one
 		fs::path out = folder / "out";
-		if (!Files::writeFile(out / PACK_FILE, packed) || !Files::writeFile(out / META_FILE, meta.dump(1))) return 1;
-		std::cout << "Wrote " << PACK_FILE << " (" << packed.size() / 1000000.0 << " MB) and " << META_FILE << std::endl;
+		meta["patches"] = ordered::array();
+		std::string from = Files::stringField(published, "sha256");
+		if (!publishedRaw.empty() && !from.empty()) {
+			std::string cutoff = Files::utcNow(PATCH_DAYS * 24 * 3600);
+			if (published.contains("patches") && published["patches"].is_array()) {
+				for (const json& step : published["patches"]) {
+					if (step.is_object() && Files::stringField(step, "built") >= cutoff) meta["patches"].push_back(ordered(step));
+				}
+			}
+			std::string steps = ItemPatch::make(publishedRaw, raw), patch;
+			if (!Files::gzip(steps, patch) || !Files::writeFile(out / patchName(from, hash), patch)) return 1;
+			meta["patches"].push_back({ { "from", from }, { "to", hash }, { "file", patchName(from, hash) }, { "size", patch.size() },
+				{ "rawSize", steps.size() }, { "built", built } });
+			std::cout << "Wrote " << patchName(from, hash) << " (" << patch.size() / 1000.0 << " KB)" << std::endl;
+		}
+
+		// what the workflow keeps on the release: this items.json's files and the published one's,
+		// so a download that started before this goes up still finishes
+		std::set<std::string> keep = filesOf(json::parse(meta.dump())), before = filesOf(published);
+		keep.insert(before.begin(), before.end());
+		std::string keepList;
+		for (const std::string& name : keep) keepList += name + "\n";
+
+		if (!Files::writeFile(out / PACK_FILE, packed) || !Files::writeFile(out / packName(hash), packed)
+			|| !Files::writeFile(out / "keep.txt", keepList) || !Files::writeFile(out / META_FILE, meta.dump(1))) return 1;
+		std::cout << "Wrote " << packName(hash) << " (" << packed.size() / 1000000.0 << " MB) and " << META_FILE << std::endl;
 		return 0;
 	}
 }

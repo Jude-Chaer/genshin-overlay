@@ -703,3 +703,10 @@ TEST_CASE("a pack bigger than its items.json says, or with no size, is stopped a
     CHECK(run.status.reason == Reason::BrokenPack);
     CHECK_FALSE(fs::exists(items));
 }
+
+TEST_CASE("the release's names for packs and patches are by sha256") {
+    std::string a = "815f9c5bbb30a6f6a7b372bf8488c9295c554772c0f7b9ba394c982517197974";
+    std::string b = "ac538e57928e3760420081450c971d8b1c474d279d5eed89344a0162393f2434";
+    CHECK(ItemFiles::packName(a) == "items-815f9c5bbb30.pack.gz");
+    CHECK(ItemFiles::patchName(a, b) == "items-815f9c5bbb30-ac538e57928e.patch.gz");
+}
