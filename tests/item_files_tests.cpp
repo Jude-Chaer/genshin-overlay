@@ -905,3 +905,41 @@ TEST_CASE("the release's names for packs and patches are by sha256") {
     CHECK(ItemFiles::packName(a) == "items-815f9c5bbb30.pack.gz");
     CHECK(ItemFiles::patchName(a, b) == "items-815f9c5bbb30-ac538e57928e.patch.gz");
 }
+
+TEST_CASE("a check nobody asked for shows only a new list, and when the next one runs") {
+    ItemFiles::Status shown;
+    shown.state = State::Ready;
+    shown.started = true;
+    SECTION("a failed check leaves what's shown") {
+        for (Reason reason : { Reason::NoNetwork, Reason::BrokenPack, Reason::NewerFormat, Reason::CantSave }) {
+            ItemFiles::Status result;
+            result.state = State::Old;
+            result.reason = reason;
+            ItemFiles::Status now = ItemFiles::afterQuietCheck(shown, result);
+            CHECK(now.state == State::Ready);
+            CHECK(now.reason == Reason::None);
+        }
+        CHECK(ItemFiles::nextCheck(shown) == ItemFiles::HOURLY);
+    }
+    SECTION("an old list with no internet gets the new one once it's back") {
+        shown.state = State::Old;
+        shown.reason = Reason::NoNetwork;
+        shown.built = "2026-10-26";
+        CHECK(ItemFiles::nextCheck(shown) == ItemFiles::RETRY);
+        ItemFiles::Status result;
+        result.state = State::Ready;
+        result.built = "2026-11-14";
+        ItemFiles::Status now = ItemFiles::afterQuietCheck(shown, result);
+        CHECK(now.state == State::Ready);
+        CHECK(now.reason == Reason::None);
+        CHECK(now.built == "2026-11-14");
+        CHECK(now.started);
+        CHECK(ItemFiles::nextCheck(now) == ItemFiles::HOURLY);
+    }
+    SECTION("the player's check that's waiting stays shown as checking") {
+        shown.checking = true;
+        ItemFiles::Status result;
+        result.state = State::Ready;
+        CHECK(ItemFiles::afterQuietCheck(shown, result).checking);
+    }
+}

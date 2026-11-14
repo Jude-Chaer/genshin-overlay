@@ -582,6 +582,18 @@ namespace ItemFiles {
 		return status.reason == Reason::NoNetwork;
 	}
 
+	std::chrono::seconds nextCheck(const Status& shown) {
+		return waitsForNetwork(shown) ? RETRY : HOURLY;
+	}
+
+	Status afterQuietCheck(const Status& shown, const Status& result) {
+		if (result.state != State::Ready || result.reason != Reason::None) return shown;
+		Status now = result;
+		now.started = true;
+		now.checking = shown.checking;
+		return now;
+	}
+
 	static std::thread worker;
 	static std::mutex mutex;
 	static std::condition_variable wake;
@@ -626,16 +638,25 @@ namespace ItemFiles {
 				status.started = true;
 				status.checking = checking;
 			};
+			bool quiet = false;
 			for (;;) {
-				Status result = updateCaught(folder, fetch, onChange);
+				if (!quiet) updateCaught(folder, fetch, onChange);
+				else {
+					Status result = updateCaught(folder, fetch, [](const Status&) {});
+					std::lock_guard<std::mutex> lock(mutex);
+					status = afterQuietCheck(status, result);
+				}
 				std::unique_lock<std::mutex> lock(mutex);
 				status.checking = false;
 				auto asked = []() { return stopper->stopped() || checkAgain; };
-				if (waitsForNetwork(result)) wake.wait_for(lock, RETRY, asked);
-				else wake.wait(lock, asked);
+				// with the download off, only the player starts a check
+				do wake.wait_for(lock, nextCheck(status), asked);
+				while (!asked() && !downloadOn);
 				if (stopper->stopped()) return;
+				// on its own with a list in use, nothing shows until there's a new one
+				quiet = !checkAgain && ItemCatalog::current() != nullptr;
 				checkAgain = false;
-				status.checking = true;
+				if (!quiet) status.checking = true;
 			}
 		});
 	}
