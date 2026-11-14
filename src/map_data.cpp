@@ -75,6 +75,16 @@ namespace MapData {
 			if (tab != std::string::npos) urls[line.substr(0, tab)] = line.substr(tab + 1);
 		}
 
+		std::map<int, std::pair<std::string, std::string>> names;
+		std::ifstream nameFile(folder / "floor_names.tsv");
+		while (std::getline(nameFile, line)) {
+			std::istringstream fields(line);
+			std::string id, shortName, name;
+			if (!std::getline(fields, id, '\t') || !std::getline(fields, shortName, '\t')) continue;
+			std::getline(fields, name);
+			names[std::atoi(id.c_str())] = { shortName, name };
+		}
+
 		std::ifstream manifest(folder / "manifest.tsv");
 		while (std::getline(manifest, line)) {
 			std::istringstream fields(line);
@@ -94,6 +104,11 @@ namespace MapData {
 				if (!(fields >> floor.mapId >> floor.groupId >> floor.floorId >> floor.left >> floor.top >> path >> floor.right >> floor.bottom)) continue;
 				floor.path = folder / fs::u8path(path);
 				floor.url = urls[path];
+				auto named = names.find(floor.floorId);
+				if (named != names.end()) {
+					floor.shortName = named->second.first;
+					floor.name = named->second.second;
+				}
 				out.floors.push_back(floor);
 			}
 		}
@@ -233,6 +248,13 @@ namespace MapData {
 		std::vector<std::string> lines = { "# genshin-overlay map manifest v1" };
 		plan.files.clear();
 		plan.tileDirs.clear();
+		plan.floorNames.clear();
+		// a name on one line, without the file's tabs
+		auto oneLine = [](const json& floor, const char* key) {
+			std::string text = floor.contains(key) && floor[key].is_string() ? floor[key].get<std::string>() : "";
+			for (char& c : text) if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+			return text;
+		};
 
 		try {
 			for (int id : MAP_IDS) {
@@ -279,6 +301,8 @@ namespace MapData {
 						std::string fileName = url.substr(url.find_last_of('/') + 1);
 						std::string path = "overlays/" + number(floor["id"]) + "_" + fileName;
 						plan.files.push_back({ url, path });
+						plan.floorNames += number(floor["id"]) + "\t" + oneLine(floor, "floor_name_short") + "\t"
+							+ oneLine(floor, "floor_name") + "\n";
 						lines.push_back("image\t" + std::to_string(id) + "\t" + number(group["id"]) + "\t" + number(floor["id"]) + "\t"
 							+ number(overlay["l_x"]) + "\t" + number(overlay["l_y"]) + "\t" + path + "\t"
 							+ number(overlay["r_x"]) + "\t" + number(overlay["r_y"]));
@@ -413,6 +437,7 @@ namespace MapData {
 			}
 		}
 		Files::writeFile(folder / "overlay_urls.tsv", overlayUrls);
+		Files::writeFile(folder / "floor_names.tsv", plan.floorNames);
 
 		bool ready = MapLocator::IndexMatchesManifest(folder / "index.bin", plan.manifest) || downloadPrebuiltIndex(folder, plan, progress, stop);
 		if (!ready) {

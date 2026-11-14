@@ -34,24 +34,27 @@ namespace MapLocator {
     static constexpr double LOCAL_RADIUS = 6000.0;
     static constexpr uint32_t INDEX_MAGIC = 0x494C5747;  // "GWLI"
     static constexpr uint32_t INDEX_VERSION = 2;
+    static constexpr size_t FLOOR_ART_KEPT = 32;
     static cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
     static cv::Mat m_matchMask;
     static int m_maskWidth = 0;
     static int m_maskHeight = 0;
 
     // Game UI to leave out of the match, in a 2000x1125 frame. Each rect is
-    // anchored to the edge it sits on so other aspect ratios still line up.
+    // anchored to the edge it sits on so other aspect ratios still line up:
+    // x to the left or right, each y to the top (0), middle (1) or bottom (2).
     struct UiRect {
         int x0, y0, x1, y1;
         bool right;
+        int top, bottom;
     };
     static constexpr UiRect UI_RECTS[] = {
-        { 0, 0, 370, 440, false },       // event banner and list
-        { 0, 430, 90, 690, false },      // zoom slider
-        { 0, 1015, 100, 1115, false },
-        { 1030, 15, 2000, 85, true },    // resource bar
-        { 1530, 1015, 2000, 1125, true },// region name
-        { 1930, 600, 2000, 800, true },  // layer switcher
+        { 0, 0, 370, 440, false, 0, 1 },        // event banner and list
+        { 0, 430, 90, 690, false, 1, 1 },       // zoom slider
+        { 0, 1015, 100, 1115, false, 2, 2 },    // gear
+        { 1030, 15, 2000, 85, true, 0, 0 },     // resource bar
+        { 1530, 1015, 2000, 1125, true, 2, 2 }, // region name
+        { 1930, 600, 2000, 800, true, 1, 1 },   // layer switcher
     };
 
     // manifest paths can use either slash
@@ -304,6 +307,8 @@ namespace MapLocator {
         m_points.clear();
         m_pieceOf.clear();
         m_pieces.clear();
+        m_floorImages.clear();
+        m_floorArt.clear();
         m_hasLast = false;
     }
 
@@ -320,8 +325,61 @@ namespace MapLocator {
         }
         if (cancelled(cancel)) return false;
 
+        ReadFloorImages(manifest, bytes);
         m_kd = std::make_shared<Kd>(m_descriptors);
         return true;
+    }
+
+    void Index::ReadFloorImages(const fs::path& manifest, const std::vector<uchar>& bytes) {
+        m_floorImages.clear();
+        m_floorArt.clear();
+        std::string text(bytes.begin(), bytes.end());
+        for (const std::string& line : split(text, '\n')) {
+            auto f = split(line, '\t');
+            if (f.size() < 9 || f[0] != "image") continue;
+            FloorImage image;
+            image.piece = Piece{ std::atoi(f[1].c_str()), std::atoi(f[2].c_str()), std::atoi(f[3].c_str()) };
+            image.left = std::atof(f[4].c_str());
+            image.top = std::atof(f[5].c_str());
+            image.path = manifest.parent_path() / fromUtf8(f[6]);
+            image.right = std::atof(f[7].c_str());
+            image.bottom = std::atof(f[8].c_str());
+            if (image.right > image.left && image.bottom > image.top) m_floorImages.push_back(image);
+        }
+    }
+
+    // the floor image in view the game draws lit, null when none is
+    const Index::FloorImage* Index::LitFloorAt(const cv::Mat& gray, const cv::Mat& mask, const cv::Mat& transform, int mapId) {
+        ScreenView view;
+        view.left = transform.at<double>(0, 2);
+        view.top = transform.at<double>(1, 2);
+        view.unitsPerPixel = std::hypot(transform.at<double>(0, 0), transform.at<double>(1, 0));
+        double right = view.left + gray.cols * view.unitsPerPixel;
+        double bottom = view.top + gray.rows * view.unitsPerPixel;
+
+        std::vector<size_t> inView;
+        for (size_t i = 0; i < m_floorImages.size(); i++) {
+            const FloorImage& image = m_floorImages[i];
+            if (image.piece.mapId != mapId) continue;
+            if (image.right < view.left || image.left > right || image.bottom < view.top || image.top > bottom) continue;
+            inView.push_back(i);
+        }
+        if (inView.empty()) return nullptr;
+
+        size_t missing = std::count_if(inView.begin(), inView.end(), [&](size_t i) { return !m_floorArt.count(i); });
+        if (m_floorArt.size() + missing > FLOOR_ART_KEPT) m_floorArt.clear();
+        std::vector<const FloorArt*> arts;
+        for (size_t i : inView) {
+            auto art = m_floorArt.find(i);
+            if (art == m_floorArt.end()) {
+                const FloorImage& image = m_floorImages[i];
+                art = m_floorArt.emplace(i, MakeFloorArt(readImage(image.path, cv::IMREAD_UNCHANGED), image.piece.groupId,
+                    image.piece.floorId, image.left, image.top, image.right, image.bottom)).first;
+            }
+            arts.push_back(&art->second);
+        }
+        int lit = LitFloor(gray, mask, view, arts);
+        return lit < 0 ? nullptr : &m_floorImages[inView[lit]];
     }
 
     // Manifest is tab separated, paths relative to its folder:
@@ -561,40 +619,48 @@ namespace MapLocator {
         }
     }
 
+    cv::Mat GameUiMask(int w, int h) {
+        cv::Mat mask(h, w, CV_8U, cv::Scalar(255));
+        // the game UI scales with the height, or the width when narrower than 16:9
+        double s = (std::min)(h / 1125.0, w / 2000.0);
+        auto toY = [&](int y, int edge) {
+            if (edge == 0) return (int)(y * s);
+            if (edge == 2) return (int)(h - (1125 - y) * s);
+            return (int)(h / 2.0 + (y - 562.5) * s);
+        };
+
+        for (const auto& r : UI_RECTS) {
+            int x0, x1;
+
+            if (r.right) {
+                x0 = (int)(w - (2000 - r.x0) * s);
+                x1 = (int)(w - (2000 - r.x1) * s);
+            }
+            else {
+                x0 = (int)(r.x0 * s);
+                x1 = (int)(r.x1 * s);
+            }
+
+            int y0 = toY(r.y0, r.top);
+            int y1 = toY(r.y1, r.bottom);
+
+            cv::Rect rect(
+                cv::Point((std::max)(0, x0), (std::max)(0, y0)),
+                cv::Point((std::min)(w, x1), (std::min)(h, y1))
+            );
+
+            if (rect.area() > 0)
+                mask(rect).setTo(0);
+        }
+        return mask;
+    }
+
     Result Index::MatchImpl(const cv::Mat& screen, double cx, double cy, bool fast, bool searchNearLast) {
         int w = screen.cols, h = screen.rows;
         if (w < 64 || h < 64) return Result();
 
-        // the game UI scales with the screen height
         if (m_maskWidth != w || m_maskHeight != h) {
-            m_matchMask = cv::Mat(h, w, CV_8U, cv::Scalar(255));
-
-            double s = h / 1125.0;
-
-            for (const auto& r : UI_RECTS) {
-                int x0, x1;
-
-                if (r.right) {
-                    x0 = (int)(w - (2000 - r.x0) * s);
-                    x1 = (int)(w - (2000 - r.x1) * s);
-                }
-                else {
-                    x0 = (int)(r.x0 * s);
-                    x1 = (int)(r.x1 * s);
-                }
-
-                int y0 = (int)(r.y0 * s);
-                int y1 = (int)(r.y1 * s);
-
-                cv::Rect rect(
-                    cv::Point((std::max)(0, x0), (std::max)(0, y0)),
-                    cv::Point((std::min)(w, x1), (std::min)(h, y1))
-                );
-
-                if (rect.area() > 0)
-                    m_matchMask(rect).setTo(0);
-            }
-
+            m_matchMask = GameUiMask(w, h);
             m_maskWidth = w;
             m_maskHeight = h;
         }
@@ -715,6 +781,14 @@ namespace MapLocator {
         best.unitsPerPixel = std::hypot(a.at<double>(0, 0), a.at<double>(1, 0));
         best.lng = a.at<double>(0, 0) * cx + a.at<double>(0, 1) * cy + a.at<double>(0, 2);
         best.lat = a.at<double>(1, 0) * cx + a.at<double>(1, 1) * cy + a.at<double>(1, 2);
+
+        // The floor the game draws lit. A faded floor around it can have more
+        // matches, it's bigger.
+        if (const FloorImage* lit = LitFloorAt(grayFull, mask, a, best.mapId)) {
+            best.groupId = lit->piece.groupId;
+            best.floorId = lit->piece.floorId;
+            best.drawnLit = true;
+        }
         m_hasLast = true;
         m_last = best;
         return best;

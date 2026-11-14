@@ -8,6 +8,7 @@
 #include "item_catalog.hpp"
 #include "item_files.hpp"
 #include "item_icons.hpp"
+#include "extensions.hpp"
 #include "lua_functions.hpp"
 
 // What extensions see of the map items, on the test pack (answers in
@@ -24,17 +25,25 @@ namespace {
         return ItemCatalog::load(raw);
     }
 
-    // a Lua state with every function an extension gets, and the test pack published and
-    // taken for the frame
+    // a Lua state with every function an extension gets, run as an extension with the
+    // default permissions, and the test pack published and taken for the frame
     struct Lua {
         sol::state lua;
+        Extensions::Extension ext;
+        Extensions::Extension* previous = Extensions::currentExtension;
         Lua() {
+            ext.name = "item tests";
+            ext.extensionPermissions = Extensions::defaultPermissions;
+            Extensions::currentExtension = &ext;
             lua.open_libraries(sol::lib::base, sol::lib::table);
             LuaFunctions::registerLuaFunctions(lua);
             auto catalog = loadFolder();
             REQUIRE(catalog);
             ItemCatalog::publish(catalog);
             LuaFunctions::Items::beginFrame();
+        }
+        ~Lua() {
+            Extensions::currentExtension = previous;
         }
         template <typename T> T run(const std::string& code) {
             auto result = lua.safe_script("return " + code, sol::script_pass_on_error);
@@ -65,7 +74,7 @@ namespace {
 
 TEST_CASE("extensions get the type list from the catalog in memory") {
     Lua lua;
-    CHECK(lua.run<uint64_t>("GetItemsVersion()") == ItemCatalog::version());
+    CHECK(lua.run<uint64_t>("GetItems().version") == ItemCatalog::version());
     CHECK(lua.run<int>("#GetItemTypes()") == 4);
 
     lua.lua.script("groups = GetItemTypes()");
@@ -140,7 +149,7 @@ TEST_CASE("the download state reads as words") {
     status.state = ItemFiles::State::Old;
     status.reason = ItemFiles::Reason::NoNetwork;
     status.built = "2026-10-17";
-    sol::table old = LuaFunctions::Items::state(status, lua);
+    sol::table old = LuaFunctions::Items::table(3, status, lua);
     CHECK(old.get<std::string>("state") == "old");
     CHECK(old.get<std::string>("reason") == "no_network");
     CHECK(old.get<std::string>("built") == "2026-10-17");
@@ -149,19 +158,19 @@ TEST_CASE("the download state reads as words") {
     status.state = ItemFiles::State::Downloading;
     status.percent = 40;
     status.started = true;
-    sol::table downloading = LuaFunctions::Items::state(status, lua);
+    sol::table downloading = LuaFunctions::Items::table(3, status, lua);
     CHECK(downloading.get<std::string>("state") == "downloading");
     CHECK(downloading.get<std::string>("reason") == "none");
     CHECK(downloading.get<int>("percent") == 40);
 
     CHECK_FALSE(downloading.get<bool>("checking"));
     status.checking = true;
-    CHECK(LuaFunctions::Items::state(status, lua).get<bool>("checking"));
+    CHECK(LuaFunctions::Items::table(3, status, lua).get<bool>("checking"));
 
     // nothing started in the tests: none, and still waiting on the first check
     Lua withFunctions;
-    CHECK(withFunctions.run<std::string>("GetItemsState().state") == "none");
-    CHECK(withFunctions.run<bool>("GetItemsState().checking"));
+    CHECK(withFunctions.run<std::string>("GetItems().state") == "none");
+    CHECK(withFunctions.run<bool>("GetItems().checking"));
 }
 
 TEST_CASE("an icon is made once and freed at the first frame of a new catalog") {
@@ -173,20 +182,22 @@ TEST_CASE("an icon is made once and freed at the first frame of a new catalog") 
     CHECK(lua.run<GLuint>("GetItemIcon(239)") != first);
     CHECK(textures.made == 2);
     CHECK(ItemIcons::count() == 2);
+    CHECK(ItemIcons::owns(first));
     CHECK(textures.freed.empty());
 
     // a new catalog mid frame changes nothing until the next frame starts
-    uint64_t version = lua.run<uint64_t>("GetItemsVersion()");
+    uint64_t version = lua.run<uint64_t>("GetItems().version");
     ItemCatalog::publish(loadFolder());
-    CHECK(lua.run<uint64_t>("GetItemsVersion()") == version);
+    CHECK(lua.run<uint64_t>("GetItems().version") == version);
     CHECK(lua.run<GLuint>("GetItemIcon(231)") == first);
     CHECK(textures.freed.empty());
 
     // the next frame frees the old icons, even with nobody asking for one
     LuaFunctions::Items::beginFrame();
-    CHECK(lua.run<uint64_t>("GetItemsVersion()") == version + 1);
+    CHECK(lua.run<uint64_t>("GetItems().version") == version + 1);
     CHECK(textures.freed.size() == 2);
     CHECK(ItemIcons::count() == 0);
+    CHECK(!ItemIcons::owns(first));
     GLuint again = lua.run<GLuint>("GetItemIcon(231)");
     CHECK(again != first);
     CHECK(textures.made == 3);

@@ -9,25 +9,55 @@
 #include <opencv2/opencv.hpp>
 #include <cmath>
 #include <fstream>
+#include <iterator>
 #include <iomanip>
 #include <sstream>
 #include <vector>
 #include <array>
 
-namespace Helpers {
-    GLuint loadTextureFromFile(const std::string& filename, int& width, int& height) {
-        GLuint textureID = SOIL_load_OGL_texture(
-            filename.c_str(),
-            SOIL_LOAD_AUTO,
-            SOIL_CREATE_NEW_ID,
-            SOIL_FLAG_MIPMAPS
-        );
+// in SOIL2's library, only the size from a picture's header
+extern "C" int stbi_info_from_memory(unsigned char const* buffer, int len, int* x, int* y, int* comp);
 
-        if (textureID == 0) {
-            std::cerr << "Failed to load texture: " << filename << std::endl;
+namespace Helpers {
+    std::string utf8(const std::filesystem::path& path) {
+        return path.u8string();
+    }
+
+    std::filesystem::path fromUtf8(const std::string& text) {
+        return std::filesystem::u8path(text);
+    }
+
+    // Read here, SOIL opens files by code page names. A file or a picture over
+    // these is refused before it's unpacked: a small file can say 60000 x 60000.
+    static const std::uintmax_t MAX_IMAGE_FILE = 16 * 1024 * 1024;
+    static const int MAX_IMAGE_SIDE = 4096;
+
+    GLuint loadTextureFromFile(const std::filesystem::path& filename, int& width, int& height) {
+        width = height = 0;
+        // one byte more than allowed is read, so a file that grows while it's read is caught too
+        std::ifstream file(filename, std::ios::binary);
+        std::string bytes(MAX_IMAGE_FILE + 1, '\0');
+        file.read(bytes.data(), (std::streamsize)bytes.size());
+        bytes.resize((size_t)file.gcount());
+        if (bytes.size() > MAX_IMAGE_FILE) {
+            std::cerr << "Failed to load texture: " << utf8(filename) << ", bigger than 16 MB" << std::endl;
             return 0;
         }
+        return loadTextureFromMemory(bytes, utf8(filename), width, height);
+    }
 
+    static bool fitsSide(const std::string& bytes, const std::string& name) {
+        int sideX = 0, sideY = 0, channels = 0;
+        if (!bytes.empty() && (!stbi_info_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(), &sideX, &sideY, &channels)
+            || sideX > MAX_IMAGE_SIDE || sideY > MAX_IMAGE_SIDE)) {
+            std::cerr << "Failed to load texture: " << name << ", not a picture up to "
+                << MAX_IMAGE_SIDE << " x " << MAX_IMAGE_SIDE << std::endl;
+            return false;
+        }
+        return true;
+    }
+
+    static void textureLook(GLuint textureID, int& width, int& height) {
         glBindTexture(GL_TEXTURE_2D, textureID);
 
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -39,8 +69,57 @@ namespace Helpers {
         glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
 
         glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
+    bool decodePicture(const std::string& bytes, const std::string& name, Pixels& out) {
+        out = {};
+        if (bytes.empty() || !fitsSide(bytes, name)) return false;
+        int channels = 0;
+        unsigned char* data = SOIL_load_image_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(),
+            &out.width, &out.height, &channels, SOIL_LOAD_RGBA);
+        if (!data) {
+            std::cerr << "Failed to load texture: " << name << std::endl;
+            return false;
+        }
+        out.rgba.assign(data, data + (size_t)out.width * out.height * 4);
+        SOIL_free_image_data(data);
+        return true;
+    }
+
+    GLuint textureFromPixels(const Pixels& pixels, int& width, int& height) {
+        width = height = 0;
+        if (pixels.rgba.empty()) return 0;
+        int w = pixels.width, h = pixels.height;
+        GLuint textureID = SOIL_create_OGL_texture(pixels.rgba.data(), &w, &h, 4, SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS);
+        if (textureID == 0) return 0;
+        textureLook(textureID, width, height);
         return textureID;
+    }
+
+    GLuint loadTextureFromMemory(const std::string& bytes, const std::string& name, int& width, int& height) {
+        width = height = 0;
+        if (!fitsSide(bytes, name)) return 0;
+        GLuint textureID = bytes.empty() ? 0 : SOIL_load_OGL_texture_from_memory(
+            (const unsigned char*)bytes.data(),
+            (int)bytes.size(),
+            SOIL_LOAD_AUTO,
+            SOIL_CREATE_NEW_ID,
+            SOIL_FLAG_MIPMAPS
+        );
+
+        if (textureID == 0) {
+            std::cerr << "Failed to load texture: " << name << std::endl;
+            return 0;
+        }
+
+        textureLook(textureID, width, height);
+        return textureID;
+    }
+
+    std::string joined(const std::vector<std::string>& list) {
+        std::string text;
+        for (const std::string& each : list) text += (text.empty() ? "" : ", ") + each;
+        return text;
     }
 
     // so files next to the exe are found no matter where it's started from
@@ -407,5 +486,65 @@ namespace Helpers {
             return std::string(szGuid);
         }
         return "";
+    }
+
+    bool systemDark() {
+        DWORD light = 1, size = sizeof(light);
+        LSTATUS status = RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+        return status == ERROR_SUCCESS && light == 0;
+    }
+
+    static const wchar_t* accentKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent";
+
+    std::optional<std::array<unsigned int, 7>> accentShades() {
+        // 8 colours of 4 bytes, red, green, blue and one unused; the 8th isn't a shade
+        BYTE palette[32] = {};
+        DWORD size = sizeof(palette);
+        LSTATUS status = RegGetValueW(HKEY_CURRENT_USER, accentKey, L"AccentPalette", RRF_RT_REG_BINARY, nullptr, palette, &size);
+        if (status != ERROR_SUCCESS || size < 28) return std::nullopt;
+        std::array<unsigned int, 7> shades{};
+        for (int i = 0; i < 7; i++) {
+            const BYTE* colour = palette + i * 4;
+            shades[i] = ((unsigned int)colour[0] << 24) | ((unsigned int)colour[1] << 16) | ((unsigned int)colour[2] << 8) | 0xFF;
+        }
+        return shades;
+    }
+
+    bool accentChanged() {
+        // Windows sets the event when anything under the key is written, once
+        // per RegNotifyChangeKeyValue, so it's asked again after each change
+        // A key that isn't there yet (no accent ever picked) is tried again every
+        // 2 s, and counts as a change once it opens.
+        static HKEY key = nullptr;
+        static HANDLE written = nullptr;
+        static bool asked = false;
+        static ULONGLONG tried = 0;
+        if (!written) written = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        bool changed = !asked;
+        asked = true;
+        if (!written) return changed;
+        if (!key) {
+            ULONGLONG now = GetTickCount64();
+            if (tried && now - tried < 2000) return changed;
+            tried = now;
+            if (RegOpenKeyExW(HKEY_CURRENT_USER, accentKey, 0, KEY_NOTIFY | KEY_READ, &key) != ERROR_SUCCESS) {
+                key = nullptr;
+                return changed;
+            }
+            changed = true;
+        }
+        else if (WaitForSingleObject(written, 0) == WAIT_OBJECT_0) changed = true;
+        if (changed) RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET, written, TRUE);
+        return changed;
+    }
+
+    std::filesystem::path systemFont() {
+        wchar_t windows[MAX_PATH];
+        UINT length = GetWindowsDirectoryW(windows, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) return {};
+        std::filesystem::path font = std::filesystem::path(windows) / "Fonts" / "SegUIVar.ttf";
+        std::error_code ec;
+        return std::filesystem::exists(font, ec) ? font : std::filesystem::path();
     }
 }

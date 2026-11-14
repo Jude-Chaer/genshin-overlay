@@ -55,7 +55,7 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PreprocessorDefinitions>GLEW_STATIC;GLFW_INCLUDE_NONE;SOL_ALL_SAFETIES_ON=1;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(VcpkgInstalledDir)$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(IntDir);$(MSBuildProjectDirectory)\third_party\material-color-utilities;$(VcpkgInstalledDir)$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -63,8 +63,13 @@
       <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\extensions" "$(OutDir)extensions" &gt;nul</Command>
+      <Command>xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\extensions" "$(OutDir)extensions" &gt;nul
+xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\fonts" "$(OutDir)fonts" &gt;nul
+xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\LICENSE" "$(OutDir)licenses\material-color-utilities\" &gt;nul</Command>
     </PostBuildEvent>
+    <PreBuildEvent>
+      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildProjectDirectory)\tools\official_extensions.ps1" "$(MSBuildProjectDirectory)\extensions" "$(IntDir)official_extensions.inc"</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -89,19 +94,76 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="third_party\material-color-utilities\cpp\cam\cam.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\cam\hct.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\cam\hct_solver.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\cam\viewing_conditions.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\contrast\contrast.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\dislike\dislike.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\dynamiccolor\dynamic_color.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\dynamiccolor\dynamic_scheme.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\dynamiccolor\material_dynamic_colors.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\palettes\tones.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\scheme\scheme_tonal_spot.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\material-color-utilities\cpp\utils\utils.cc">
+      <PreprocessorDefinitions>_USE_MATH_DEFINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DisableSpecificWarnings>4576;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="src\appsample.cpp" />
     <ClCompile Include="src\capture.cpp" />
+    <ClCompile Include="src\asks.cpp" />
+    <ClCompile Include="src\controls.cpp" />
+    <ClCompile Include="src\notices.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
+    <ClCompile Include="src\file_dialogs.cpp" />
     <ClCompile Include="src\game_ui.cpp" />
     <ClCompile Include="src\helpers.cpp" />
     <ClCompile Include="src\item_catalog.cpp" />
     <ClCompile Include="src\item_icons.cpp" />
     <ClCompile Include="src\item_files.cpp" />
+    <ClCompile Include="src\key_choices.cpp" />
     <ClCompile Include="src\keybindings.cpp" />
     <ClCompile Include="src\layer_choice.cpp" />
+    <ClCompile Include="src\locator\lit_floor.cpp" />
     <ClCompile Include="src\locator\map_locator.cpp" />
     <ClCompile Include="src\lua_functions.cpp" />
+    <ClCompile Include="src\lua_patterns.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\map_check.cpp" />
     <ClCompile Include="src\map_data.cpp" />
@@ -111,23 +173,34 @@
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\screen_pictures.cpp" />
+    <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\stats.cpp" />
+    <ClCompile Include="src\triggers.cpp" />
+    <ClCompile Include="src\typing.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\appsample.hpp" />
     <ClInclude Include="src\capture.hpp" />
+    <ClInclude Include="src\asks.hpp" />
+    <ClInclude Include="src\controls.hpp" />
+    <ClInclude Include="src\notices.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\game_ui.hpp" />
     <ClInclude Include="src\helpers.hpp" />
     <ClInclude Include="src\files.hpp" />
+    <ClInclude Include="src\file_dialogs.hpp" />
     <ClInclude Include="src\item_catalog.hpp" />
     <ClInclude Include="src\item_icons.hpp" />
     <ClInclude Include="src\item_files.hpp" />
+    <ClInclude Include="src\key_choices.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
+    <ClInclude Include="src\locator\lit_floor.hpp" />
     <ClInclude Include="src\locator\map_locator.hpp" />
     <ClInclude Include="src\lua_functions.hpp" />
+    <ClInclude Include="src\lua_patterns.hpp" />
     <ClInclude Include="src\map_check.hpp" />
     <ClInclude Include="src\map_data.hpp" />
     <ClInclude Include="src\map_follow.hpp" />
@@ -139,8 +212,12 @@
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\screen_pictures.hpp" />
+    <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\stats.hpp" />
+    <ClInclude Include="src\triggers.hpp" />
+    <ClInclude Include="src\typing.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extensions\example\main.lua" />

@@ -18,6 +18,7 @@
 #include "map_data.hpp"
 #include "map_check.hpp"
 #include "map_tiles.hpp"
+#include "screen_pictures.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
@@ -226,12 +227,14 @@ int main(int argc, char** argv) {
     Extensions::destroyExtensions();
     // told first so it winds down while the others are joined
     ItemFiles::AskToStop();
+    ScreenPictures::stop();
     // first, it grabs the game and asks the map matching, which the tracker closes
     MiniMap::Stop();
     MapTracking::Stop();
     ItemFiles::Stop();
     MapCheck::Stop();
     MapTiles::Shutdown();
+    ScreenPictures::clear();
     Overlay::Shutdown();
 
     return 0;

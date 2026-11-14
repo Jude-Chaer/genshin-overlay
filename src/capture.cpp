@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <iostream>
 #include <mutex>
 #include <vector>
@@ -21,12 +22,16 @@ namespace wd3d = winrt::Windows::Graphics::DirectX::Direct3D11;
 using winrt::Windows::Graphics::DirectX::DirectXPixelFormat;
 
 namespace Capture {
-    HWND findGameWindow() {
+    HWND findRunningGame() {
         HWND window = FindWindowW(L"UnityWndClass", L"Genshin Impact");
         if (!window) {
             window = FindWindowW(L"UnityWndClass", L"原神");
         }
+        return window;
+    }
 
+    HWND findGameWindow() {
+        HWND window = findRunningGame();
         if (!window) return nullptr;
 
         if (!IsWindowVisible(window) || IsIconic(window)) {
@@ -84,6 +89,21 @@ namespace Capture {
     static ComPtr<ID3D11Texture2D> partHalves;
     static ComPtr<ID3D11ShaderResourceView> partHalvesView;
     static ComPtr<ID3D11Texture2D> allStaging;
+    // What grabGameScaled halves, apart from the follower's: the game window
+    // and its halves, made once per frame for every width. Each width has its
+    // own staging, a copy is read back on a later grab once the GPU is done.
+    static ComPtr<ID3D11Texture2D> scaledHalves;
+    static ComPtr<ID3D11ShaderResourceView> scaledView;
+    static uint64_t scaledFrame = 0;
+    struct Scaled {
+        int width = 0;
+        ComPtr<ID3D11Texture2D> staging;
+        // what the copy in it is: its size, the frame, 0 with none on its way
+        int sw = 0, sh = 0, w = 0, h = 0;
+        uint64_t frame = 0;
+        double seconds = 0.0;
+    };
+    static std::vector<Scaled> scaled;
     // frames the game handed over so far, with the ones skipped for a newer one
     static uint64_t frameCount = 0;
     // when the game drew the one in latest
@@ -343,6 +363,83 @@ namespace Capture {
         cv::Mat bgra(sh, sw, CV_8UC4, mapped.pData, mapped.RowPitch);
         cv::cvtColor(bgra, out, cv::COLOR_BGRA2GRAY);
         context->Unmap(smallStaging.Get(), 0);
+        return true;
+    }
+
+    // Orders a copy of rect, halved on the GPU as often as it stays at least
+    // slot.width wide, into the slot's staging.
+    static bool orderScaled(HWND game, const RECT& rect, Scaled& slot) {
+        RECT bounds;
+        if (FAILED(DwmGetWindowAttribute(game, DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds)))) return false;
+        int left = rect.left - bounds.left, top = rect.top - bounds.top;
+        int w = rect.right - rect.left, h = rect.bottom - rect.top;
+        if (w <= 0 || h <= 0 || left < 0 || top < 0 || left + w > latestSize.Width || top + h > latestSize.Height) return false;
+        int width = std::clamp(slot.width, 1, w);
+        int level = 0;
+        while ((w >> (level + 1)) >= width) level++;
+        int sw = std::max(1, w >> level), sh = std::max(1, h >> level);
+        D3D11_BOX box = { UINT(left), UINT(top), 0, UINT(left + w), UINT(top + h), 1 };
+
+        D3D11_TEXTURE2D_DESC have = {};
+        if (slot.staging) slot.staging->GetDesc(&have);
+        if (!slot.staging || have.Width != UINT(sw) || have.Height != UINT(sh)) {
+            D3D11_TEXTURE2D_DESC desc = {};
+            desc.Width = sw;
+            desc.Height = sh;
+            desc.MipLevels = 1;
+            desc.ArraySize = 1;
+            desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_STAGING;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            slot.staging.Reset();
+            if (FAILED(device->CreateTexture2D(&desc, nullptr, &slot.staging))) return false;
+        }
+
+        if (level == 0) {
+            context->CopySubresourceRegion(slot.staging.Get(), 0, 0, 0, 0, latest.Get(), 0, &box);
+        }
+        else {
+            // as many halves as the smallest width asked for needs
+            UINT levels = level + 1;
+            for (const Scaled& other : scaled) {
+                UINT need = 1;
+                while ((w >> need) >= std::clamp(other.width, 1, w)) need++;
+                levels = std::max(levels, need);
+            }
+            D3D11_TEXTURE2D_DESC had = {};
+            if (scaledHalves) scaledHalves->GetDesc(&had);
+            if (!scaledHalves || had.Width != UINT(w) || had.Height != UINT(h) || had.MipLevels < UINT(level + 1)) {
+                D3D11_TEXTURE2D_DESC desc = {};
+                desc.Width = w;
+                desc.Height = h;
+                desc.MipLevels = levels;
+                desc.ArraySize = 1;
+                desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+                desc.SampleDesc.Count = 1;
+                desc.Usage = D3D11_USAGE_DEFAULT;
+                desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+                desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+                scaledHalves.Reset();
+                scaledView.Reset();
+                scaledFrame = 0;
+                if (FAILED(device->CreateTexture2D(&desc, nullptr, &scaledHalves))) return false;
+                if (FAILED(device->CreateShaderResourceView(scaledHalves.Get(), nullptr, &scaledView))) return false;
+            }
+            if (scaledFrame != frameCount) {
+                context->CopySubresourceRegion(scaledHalves.Get(), 0, 0, 0, 0, latest.Get(), 0, &box);
+                context->GenerateMips(scaledView.Get());
+                scaledFrame = frameCount;
+            }
+            context->CopySubresourceRegion(slot.staging.Get(), 0, 0, 0, 0, scaledHalves.Get(), level, nullptr);
+        }
+        context->Flush();
+        slot.sw = sw;
+        slot.sh = sh;
+        slot.w = width;
+        slot.h = std::max(1, (int)std::lround((double)h * width / w));
+        slot.frame = frameCount;
+        slot.seconds = latestSeconds;
         return true;
     }
 
@@ -626,6 +723,69 @@ namespace Capture {
         return grab(game, rects, cv::COLOR_BGRA2GRAY, out, &frame, true, &both);
     }
 
+    bool grabGameScaled(HWND game, const RECT& rect, int width, cv::Mat& out, Frame& frame) {
+        cv::Mat read;
+        Frame got;
+        int outWidth = 0, outHeight = 0;
+        {
+            std::lock_guard<std::mutex> lock(gameMutex);
+            if (!open(game)) return false;
+            try {
+                takeNewestFrame();
+                auto slot = std::find_if(scaled.begin(), scaled.end(), [&](const Scaled& each) { return each.width == width; });
+                if (slot == scaled.end()) {
+                    scaled.push_back({ width });
+                    slot = scaled.end() - 1;
+                }
+
+                if (slot->frame != 0) {
+                    D3D11_MAPPED_SUBRESOURCE mapped;
+                    HRESULT result = context->Map(slot->staging.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+                    if (SUCCEEDED(result)) {
+                        cv::Mat(slot->sh, slot->sw, CV_8UC4, mapped.pData, mapped.RowPitch).copyTo(read);
+                        context->Unmap(slot->staging.Get(), 0);
+                        got = { slot->frame, slot->seconds };
+                        outWidth = slot->w;
+                        outHeight = slot->h;
+                        slot->frame = 0;
+                    }
+                    else if (result != DXGI_ERROR_WAS_STILL_DRAWING) {
+                        slot->frame = 0;
+                    }
+                }
+                uint64_t have = read.empty() ? frame.number : got.number;
+                if (slot->frame == 0 && latest && frameCount != have) orderScaled(game, rect, *slot);
+            }
+            catch (...) {
+                // the window closed or the device was lost, opened again next time
+                closeSession();
+                return false;
+            }
+        }
+        if (read.empty() || got.number == frame.number) return false;
+        if (read.cols == outWidth && read.rows == outHeight) out = read;
+        else cv::resize(read, out, cv::Size(outWidth, outHeight), 0, 0, cv::INTER_AREA);
+        frame = got;
+        return true;
+    }
+
+    static void releaseScaled() {
+        scaled.clear();
+        scaledView.Reset();
+        scaledHalves.Reset();
+        scaledFrame = 0;
+    }
+
+    void dropScaled() {
+        std::lock_guard<std::mutex> lock(gameMutex);
+        releaseScaled();
+    }
+
+    void dropScaled(int width) {
+        std::lock_guard<std::mutex> lock(gameMutex);
+        scaled.erase(std::remove_if(scaled.begin(), scaled.end(), [&](const Scaled& slot) { return slot.width == width; }), scaled.end());
+    }
+
     bool isCapturing() {
         return capturing;
     }
@@ -662,6 +822,7 @@ namespace Capture {
         allStaging.Reset();
         partHalvesView.Reset();
         partHalves.Reset();
+        releaseScaled();
         captureDevice = nullptr;
         context.Reset();
         device.Reset();

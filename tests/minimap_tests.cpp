@@ -94,7 +94,7 @@ static cv::Mat miniOnFloor(double x, double y, double zoom = 1.0) {
     return miniOf(floorMap(), x - FLOOR_LEFT, y - FLOOR_TOP, zoom);
 }
 
-TEST_CASE("the minimap's square grows with the game's height", "[minimap]") {
+TEST_CASE("the minimap's square grows with the game's size", "[minimap]") {
     RECT small = MiniMap::rect({ 0, 0, 1920, 1080 });
     CHECK(small.left == 64);
     CHECK(small.top == 21);
@@ -105,6 +105,12 @@ TEST_CASE("the minimap's square grows with the game's height", "[minimap]") {
     CHECK(big.left == 100 + 128);
     CHECK(big.top == 50 + 42);
     CHECK(big.right - big.left == 416);
+
+    // a 1600x1200 window fits the width: the circle is at 52-228, 12-190 there
+    RECT narrow = MiniMap::rect({ 0, 0, 1600, 1200 });
+    CHECK(narrow.left == 53);
+    CHECK(narrow.top == 18);
+    CHECK(narrow.right - narrow.left == 173);
 }
 
 TEST_CASE("a grab of the minimap is shrunk to the compare size", "[minimap]") {
