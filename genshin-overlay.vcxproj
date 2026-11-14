@@ -191,6 +191,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClCompile Include="src\stats.cpp" />
     <ClCompile Include="src\triggers.cpp" />
     <ClCompile Include="src\typing.cpp" />
+    <ClCompile Include="src\web_images.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\appsample.hpp" />
@@ -241,6 +242,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClInclude Include="src\stats.hpp" />
     <ClInclude Include="src\triggers.hpp" />
     <ClInclude Include="src\typing.hpp" />
+    <ClInclude Include="src\web_images.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extensions\example\main.lua" />

@@ -23,6 +23,7 @@
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
 #include "packets/game_traffic.hpp"
+#include "web_images.hpp"
 
 // genshin-overlay.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -233,6 +234,7 @@ int main(int argc, char** argv) {
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
+    WebImages::clear();
     // told first so it winds down while the others are joined
     ItemFiles::AskToStop();
     ScreenPictures::stop();

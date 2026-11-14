@@ -6,6 +6,8 @@
 #include <wincrypt.h>
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <mutex>
 #include <chrono>
@@ -15,6 +17,7 @@
 #include <imgui.h>
 #include "net.hpp"
 #include "extensions.hpp"
+#include "web_images.hpp"
 #include "lua_functions.hpp"
 #include "test_extension.hpp"
 
@@ -994,7 +997,7 @@ TEST_CASE("an answer past the memory cap stops the extension, not the overlay") 
     TestExtension::unloadAll();
 }
 
-// ImGUI_Image: a web link is downloaded once a session, with Network Access.
+// ImGUI_Image: a web link is downloaded once while it's drawn, with Network Access.
 
 namespace {
     // an ImGui frame in a window, Menu()'s part of it
@@ -1028,7 +1031,7 @@ namespace {
     };
 }
 
-TEST_CASE("a web image is downloaded once, and only with Network Access") {
+TEST_CASE("a web image is downloaded once while it's drawn, and only with Network Access") {
     Replier proxy([](const std::string&) { return closing("not a picture"); });
     Proxy use(proxy.address());
     Extensions::Extension* ext = netExtension("web_image", "function Init() end");
@@ -1039,27 +1042,73 @@ TEST_CASE("a web image is downloaded once, and only with Network Access") {
 
     REQUIRE(frame.draw(ext, draw));
     REQUIRE(frame.draw(ext, draw));
-    CHECK(LuaFunctions::imageDownloadsOf(ext) == 1);
+    CHECK(WebImages::downloading(ext) == 1);
     // the grey box takes the image's place meanwhile
     CHECK(frame.last.x == 32);
     CHECK(frame.last.y == 16);
-    CHECK(framesUntil([&]() { return LuaFunctions::imageDownloadsOf(ext) == 0; }));
-    REQUIRE(ext->webImages.count(url) == 1);
-    CHECK(ext->webImages[url].failed);
-    CHECK(ext->webImages[url].texture == 0);
+    CHECK(framesUntil([&]() { return WebImages::downloading(ext) == 0; }));
+    CHECK(WebImages::kept(ext) == 1);
+    CHECK(WebImages::get(ext, url, {}).state == WebImages::State::Failed);
     CHECK(ext->textures.empty());
 
-    // kept for the session, failed or not
+    // kept while it's drawn, failed or not
     REQUIRE(frame.draw(ext, draw));
-    CHECK(LuaFunctions::imageDownloadsOf(ext) == 0);
+    CHECK(WebImages::downloading(ext) == 0);
     CHECK(proxy.requests == 1);
+
+    // a refused one is logged under the call that asked for it
+    ext->sitesOnly = true;
+    ext->sites = { "hoyoverse.com" };
+    REQUIRE(frame.draw(ext, "ImGUI_Image('http://example.com/c.png', 32, 16)"));
+    CHECK(framesUntil([&]() { return WebImages::downloading(ext) == 0; }));
+    CHECK(ext->refusalsLogged.count("ImGUI_Image can't reach example.com: its main.lua lists only hoyoverse.com") == 1);
+    CHECK(proxy.requests == 1);
+    ext->sitesOnly = false;
+    ext->sites.clear();
 
     Extensions::switchPermission(*ext, Permission::NetworkAccess, false);
     REQUIRE(frame.draw(ext, "ImGUI_Image('http://example.com/b.png', 32, 16)"));
-    CHECK(ext->webImages.count("http://example.com/b.png") == 0);
-    CHECK(LuaFunctions::imageDownloadsOf(ext) == 0);
+    CHECK(WebImages::kept(ext) == 2);
+    CHECK(WebImages::downloading(ext) == 0);
 
     TestExtension::unloadAll();
+}
+
+TEST_CASE("GetWebImage gives nil, then a handle and the size that ImGUI_Image draws") {
+    std::ifstream in(std::filesystem::path(__FILE__).parent_path() / "data" / "map_screen" / "custom_pin.png", std::ios::binary);
+    std::string png((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE(!png.empty());
+    Replier proxy([&](const std::string&) { return closing(png); });
+    Proxy use(proxy.address());
+    // no GL in the tests: each texture is a number
+    auto realMake = WebImages::make;
+    auto realRelease = WebImages::release;
+    WebImages::make = [](const Helpers::Pixels& pixels) { return pixels.rgba.empty() ? 0u : 77u; };
+    WebImages::release = [](GLuint) {};
+    Extensions::Extension* ext = netExtension("get_web_image", "function Init() end");
+    REQUIRE(ext != nullptr);
+    // the view lets go of the state before the extension closes it
+    {
+        sol::state_view lua(*ext->luaState);
+        const std::string ask = "_G.image, _G.w, _G.h = GetWebImage('http://example.com/pin.png')";
+
+        REQUIRE(TestExtension::run(ext, ask));
+        CHECK(lua["image"] == sol::lua_nil);
+        CHECK(framesUntil([&]() { return TestExtension::run(ext, ask) && lua["image"] != sol::lua_nil; }));
+        REQUIRE(lua["image"].get_type() == sol::type::number);
+        CHECK(WebImages::isHandle(lua["image"].get<double>()));
+        CHECK(lua["w"].get_or(0) == 428);
+        CHECK(lua["h"].get_or(0) == 640);
+        CHECK(proxy.requests == 1);
+
+        MenuFrame frame;
+        REQUIRE(frame.draw(ext, "ImGUI_Image(_G.image, 21, 32)"));
+        CHECK(frame.last.x == 21);
+    }
+
+    TestExtension::unloadAll();
+    WebImages::make = realMake;
+    WebImages::release = realRelease;
 }
 
 TEST_CASE("an image is drawn only from the extension's own textures, sized by the font and clickable") {

@@ -30,6 +30,7 @@
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
+#include "web_images.hpp"
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -174,6 +175,7 @@ namespace LuaFunctions {
 
 		// drawing on the overlay
 		global("DrawImage", DisplayOverlay, DrawImage);
+		global("GetWebImage", Network, GetWebImage);
 		global("DrawText", DisplayOverlay, GDrawText);
 		global("DrawRect", DisplayOverlay, DrawRect);
 		global("DrawCircle", DisplayOverlay, DrawCircle);
@@ -334,7 +336,21 @@ namespace LuaFunctions {
 		return ScreenPictures::owns(texture) && ext->extensionPermissions.count(Permission::DisplayRead) > 0;
 	}
 
-	static GLuint webImage(const std::string& url);
+	static WebImages::Image webImage(const char* function, const std::string& url);
+
+	// a number from Lua as a texture to draw: a web image's handle, or a texture
+	// the extension may draw; 0 for anything else
+	static GLuint textureOf(const char* function, double value) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (WebImages::isHandle(value)) return WebImages::texture(ext, value);
+		if (value < 0 || value != (double)(GLuint)value) return 0;
+		GLuint texture = (GLuint)value;
+		if (!ownsTexture(texture)) {
+			Extensions::logOnce(function, "draws only textures it loaded itself");
+			return 0;
+		}
+		return texture;
+	}
 
 	bool ImGUI_Image(sol::object image, float width, float height, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Image")) return false;
@@ -342,17 +358,13 @@ namespace LuaFunctions {
 		bool loading = false;
 		if (image.is<std::string>()) {
 			if (!Extensions::allowed("ImGUI_Image", Permission::NetworkAccess)) return false;
-			std::string url = image.as<std::string>();
-			texture = webImage(url);
-			auto found = Extensions::currentExtension->webImages.find(url);
-			loading = texture == 0 && (found == Extensions::currentExtension->webImages.end() || !found->second.failed);
+			WebImages::Image web = webImage("ImGUI_Image", image.as<std::string>());
+			texture = WebImages::texture(Extensions::currentExtension, web.handle);
+			loading = web.state == WebImages::State::Loading;
 		}
 		else if (image.is<double>()) {
-			texture = (GLuint)image.as<double>();
-			if (!ownsTexture(texture)) {
-				Extensions::logOnce("ImGUI_Image", "draws only textures it loaded itself");
-				return false;
-			}
+			texture = textureOf("ImGUI_Image", image.as<double>());
+			if (texture == 0) return false;
 		}
 		else return false;
 
@@ -1076,82 +1088,47 @@ namespace LuaFunctions {
 		return answerTable(*request, sol::state_view(state));
 	}
 
-	// One of ImGUI_Image's web images on its way. The thread writes only
-	// into answer, the draw thread reads it once done is set.
-	struct ImageDownload {
-		Extensions::Extension* owner = nullptr;
-		std::string url;
-		std::shared_ptr<NetRequest::Answer> answer = std::make_shared<NetRequest::Answer>();
-		// unpacked on the download's thread, only made a texture on the draw thread
-		std::shared_ptr<Helpers::Pixels> pixels = std::make_shared<Helpers::Pixels>();
-		std::thread thread;
-
-		~ImageDownload() {
-			answer->stopper.stop();
-			if (thread.joinable()) thread.join();
-		}
-	};
-	static std::vector<std::unique_ptr<ImageDownload>> imageDownloads;
-
-	int imageDownloadsOf(const Extensions::Extension* owner) {
-		return (int)std::count_if(imageDownloads.begin(), imageDownloads.end(), [owner](const auto& each) { return each->owner == owner; });
-	}
-
-	// the texture for url, 0 while it downloads or when it failed
-	static GLuint webImage(const std::string& url) {
+	// The picture at url for the running extension, held to its sites. Logged
+	// once when it has as many as it may keep.
+	static WebImages::Image webImage(const char* function, const std::string& url) {
 		Extensions::Extension* ext = Extensions::currentExtension;
-		if (!ext) return 0;
-		auto found = ext->webImages.find(url);
-		if (found != ext->webImages.end()) return found->second.texture;
-		if (ext->textures.size() + imageDownloadsOf(ext) >= Extensions::MaxTextures) {
-			Extensions::logOnce("ImGUI_Image", "has " + std::to_string(Extensions::MaxTextures) + " textures, no more are loaded");
-			return 0;
-		}
-		if (imageDownloadsOf(ext) >= ImageMaxWaiting) return 0;
-
-		ext->webImages[url] = {};
-		auto download = std::make_unique<ImageDownload>();
-		download->owner = ext;
-		download->url = url;
-		std::shared_ptr<NetRequest::Answer> answer = download->answer;
-		std::shared_ptr<Helpers::Pixels> pixels = download->pixels;
+		if (!ext) return {};
 		Net::Limits limits = limitsFor(ext, NetStartMs);
 		limits.maxBody = ImageMaxBody;
-		download->thread = std::thread([answer, pixels, url, limits]() {
-			answer->ok = Net::get(url, answer->response, false, nullptr, &answer->stopper, limits);
-			const Net::Response& response = answer->response;
-			if (answer->ok && response.status >= 200 && response.status < 300) Helpers::decodePicture(response.body, url, *pixels);
-			answer->done = true;
-		});
-		imageDownloads.push_back(std::move(download));
-		return 0;
+		WebImages::Image image = WebImages::get(ext, url, limits, function);
+		if (image.state == WebImages::State::Refused && WebImages::kept(ext) >= WebImages::MaxKept) {
+			Extensions::logOnce(function, "has " + std::to_string(WebImages::MaxKept) + " web images, no more are loaded");
+		}
+		return image;
+	}
+
+	// GetWebImage(url): the handle for DrawImage and ImGUI_Image, and the size;
+	// nil while it downloads, false when it couldn't be had. Asked every frame
+	// it's drawn, it's freed 30 s after the last ask.
+	sol::variadic_results GetWebImage(const std::string& url, sol::this_state state) {
+		sol::variadic_results out;
+		WebImages::Image image = webImage("GetWebImage", url);
+		if (image.state == WebImages::State::Ready) {
+			out.push_back(sol::make_object(state, image.handle));
+			out.push_back(sol::make_object(state, image.width));
+			out.push_back(sol::make_object(state, image.height));
+		}
+		else if (image.state == WebImages::State::Loading) out.push_back(sol::make_object(state, sol::lua_nil));
+		else out.push_back(sol::make_object(state, false));
+		return out;
 	}
 
 	// downloaded web images become textures, on the draw thread
 	static void updateImageDownloads() {
-		std::vector<std::unique_ptr<ImageDownload>> due;
-		for (auto it = imageDownloads.begin(); it != imageDownloads.end();) {
-			if ((*it)->answer->done) {
-				due.push_back(std::move(*it));
-				it = imageDownloads.erase(it);
-			}
-			else ++it;
-		}
-		for (auto& download : due) {
-			Extensions::Extension* owner = download->owner;
+		WebImages::endFrame([](const WebImages::Done& done) {
+			Extensions::Extension* owner = (Extensions::Extension*)done.owner;
 			Extensions::runForExtension(owner, [&]() {
-				download->thread.join();
-				const Net::Response& response = download->answer->response;
-				logRefused("ImGUI_Image", response.refused, response.notListed);
-				if (response.tooBig) Extensions::logOnce("ImGUI_Image", "got a picture over " + std::to_string(ImageMaxBody / (1024 * 1024)) + " MB, it's dropped");
-				if (response.timedOut) Extensions::logOnce("ImGUI_Image", "waited too long for a picture");
-				Extensions::Extension::WebImage& image = owner->webImages[download->url];
-				int width = 0, height = 0;
-				image.texture = Helpers::textureFromPixels(*download->pixels, width, height);
-				if (image.texture != 0) owner->textures.push_back(image.texture);
-				else image.failed = true;
+				const char* function = done.function.c_str();
+				logRefused(function, done.response.refused, done.response.notListed);
+				if (done.response.tooBig) Extensions::logOnce(function, "got a picture over " + std::to_string(ImageMaxBody / (1024 * 1024)) + " MB, it's dropped");
+				if (done.response.timedOut) Extensions::logOnce(function, "waited too long for a picture");
 			});
-		}
+		});
 	}
 
 	void UpdateNetRequests()
@@ -1299,8 +1276,7 @@ namespace LuaFunctions {
 	void forgetNetRequests(Extensions::Extension* owner)
 	{
 		netRequests.forget(owner);
-		imageDownloads.erase(std::remove_if(imageDownloads.begin(), imageDownloads.end(),
-			[owner](const auto& each) { return each->owner == owner; }), imageDownloads.end());
+		WebImages::forget(owner);
 	}
 
 	// Where the in-game map is looking, or nil when it isn't open. Positions are
@@ -1485,12 +1461,10 @@ namespace LuaFunctions {
 	}
 
 	// draws behind every ImGui window, straight onto the overlay
-	void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
-		if (textureID == 0 || !inFrame("DrawImage")) return;
-		if (!ownsTexture(textureID)) {
-			Extensions::logOnce("DrawImage", "draws only textures it loaded itself");
-			return;
-		}
+	void DrawImage(double image, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
+		if (image == 0 || !inFrame("DrawImage")) return;
+		GLuint textureID = textureOf("DrawImage", image);
+		if (textureID == 0) return;
 		int a = (int)(alpha.value_or(1.0f) * 255.0f);
 		ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)textureID, ImVec2(x0, y0), ImVec2(x1, y1),
 			ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));

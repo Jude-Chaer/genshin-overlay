@@ -47,14 +47,12 @@ namespace LuaFunctions {
     void ImGUI_Text(const std::string& str);
     void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> options);
     // ImGUI_Image(texture or web link, width, height, { onClick = function })
-    // Sizes are pixels at 1080p. A web link needs Network Access and is
-    // downloaded once a session, a grey box shows until it's there. True
-    // when it was clicked.
+    // Sizes are pixels at 1080p. image is a texture, a handle from GetWebImage
+    // or a web link; a link needs Network Access and goes through WebImages,
+    // a grey box shows until it's there. True when it was clicked.
     bool ImGUI_Image(sol::object image, float width, float height, sol::optional<sol::table> options);
     // a web image's download size at most
     inline const size_t ImageMaxBody = 4 * 1024 * 1024;
-    // downloads of one extension's web images at a time
-    inline const int ImageMaxWaiting = 8;
     bool ImGUI_Checkbox(const std::string& label, bool currentValue);
     // a muted line with a spinner, for something under way
     void ImGUI_Waiting(const std::string& text);
@@ -117,7 +115,9 @@ namespace LuaFunctions {
     sol::table GetGameTraffic(sol::this_state state);
     // what GetGameTraffic and the GameTraffic trigger give
     sol::table gameTrafficTable(bool on, const GameTraffic::Status& status, sol::state_view lua);
-    void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
+    // image is a texture the extension may draw, or a handle from GetWebImage
+    void DrawImage(double image, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
+    sol::variadic_results GetWebImage(const std::string& url, sol::this_state state);
     // DrawText(text, x, y, size, color, { wrap = width }), color is 0xRRGGBBAA
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color,
         sol::optional<sol::table> options); // The "G" is only there because DrawText is already used by the Windows API
@@ -175,8 +175,6 @@ namespace LuaFunctions {
     void UpdateNetRequests();
     // stops the extension's requests and drops their answers, see Extensions::unload
     void forgetNetRequests(Extensions::Extension* owner);
-    // its web images downloading, for the tests
-    int imageDownloadsOf(const Extensions::Extension* owner);
     // its requests waiting or not collected, for the tests
     int netRequestsOf(const Extensions::Extension* owner);
     sol::object JSONEncode(sol::object value, sol::this_state state);

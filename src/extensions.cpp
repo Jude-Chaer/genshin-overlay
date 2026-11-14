@@ -558,7 +558,6 @@ namespace Extensions {
 			glDeleteTextures((GLsizei)ext.textures.size(), ext.textures.data());
 			ext.textures.clear();
 		}
-		ext.webImages.clear();
 		ext.dots.clear();
 
 		ext.initializeFunction = nullptr;

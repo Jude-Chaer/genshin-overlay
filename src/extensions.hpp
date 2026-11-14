@@ -324,12 +324,6 @@ namespace Extensions {
 		std::vector<HeldKey> keys;
 		// the textures it loaded with LoadTexture or from a web link, freed with it
 		std::vector<GLuint> textures;
-		// ImGUI_Image's web links this session, 0 while downloading
-		struct WebImage {
-			GLuint texture = 0;
-			bool failed = false;
-		};
-		std::map<std::string, WebImage> webImages;
 		std::filesystem::path folder;
 		// its folder's name, the key for everything it keeps in settings.json
 		std::string folderKey;

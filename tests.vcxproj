@@ -183,6 +183,7 @@
     <ClCompile Include="src\stats.cpp" />
     <ClCompile Include="src\triggers.cpp" />
     <ClCompile Include="src\typing.cpp" />
+    <ClCompile Include="src\web_images.cpp" />
     <ClCompile Include="tests\asks_tests.cpp" />
     <ClCompile Include="tests\controls_tests.cpp" />
     <ClCompile Include="tests\notices_tests.cpp" />
@@ -197,6 +198,7 @@
     <ClCompile Include="tests\item_patch_tests.cpp" />
     <ClCompile Include="tests\item_lua_tests.cpp" />
     <ClCompile Include="tests\net_tests.cpp" />
+    <ClCompile Include="tests\web_images_tests.cpp" />
     <ClCompile Include="tests\key_choices_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\layer_choice_tests.cpp" />
@@ -267,6 +269,7 @@
     <ClInclude Include="src\stats.hpp" />
     <ClInclude Include="src\triggers.hpp" />
     <ClInclude Include="src\typing.hpp" />
+    <ClInclude Include="src\web_images.hpp" />
     <ClInclude Include="tests\test_extension.hpp" />
     <ClInclude Include="tests\test_map.hpp" />
     <ClInclude Include="tests\map_screen.hpp" />
