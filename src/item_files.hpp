@@ -134,7 +134,8 @@ namespace ItemFiles {
     // when the next check runs on its own after one that left shown
     extern std::chrono::seconds nextCheck(const Status& shown);
     // A check nobody asked for, with a list in use, shows nothing while it
-    // runs. Its result is shown only when it's Ready, else shown stays.
+    // runs. Its result is shown when it's Ready, or when shown is a problem
+    // already; a failure over a list with nothing wrong leaves shown.
     extern Status afterQuietCheck(const Status& shown, const Status& result);
 
     // update on a thread of its own: at start, again every minute while the

@@ -592,7 +592,8 @@ namespace ItemFiles {
 	}
 
 	Status afterQuietCheck(const Status& shown, const Status& result) {
-		if (result.state != State::Ready || result.reason != Reason::None) return shown;
+		bool nothingWrong = shown.state == State::Ready && shown.reason == Reason::None;
+		if (result.state != State::Ready && nothingWrong) return shown;
 		Status now = result;
 		now.started = true;
 		now.checking = shown.checking;

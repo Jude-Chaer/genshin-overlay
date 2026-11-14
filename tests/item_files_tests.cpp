@@ -952,6 +952,26 @@ TEST_CASE("a check nobody asked for shows only a new list, and when the next one
         CHECK(now.started);
         CHECK(ItemFiles::nextCheck(now) == ItemFiles::HOURLY);
     }
+    SECTION("a problem shown gives way to the next check's") {
+        shown.state = State::Old;
+        shown.reason = Reason::NoNetwork;
+        ItemFiles::Status result;
+        result.state = State::Old;
+        result.reason = Reason::BrokenPack;
+        ItemFiles::Status now = ItemFiles::afterQuietCheck(shown, result);
+        CHECK(now.reason == Reason::BrokenPack);
+        CHECK(ItemFiles::nextCheck(now) == ItemFiles::HOURLY);
+    }
+    SECTION("a new list that couldn't be saved shows, with its date") {
+        shown.built = "2026-10-26";
+        ItemFiles::Status result;
+        result.state = State::Ready;
+        result.reason = Reason::CantSave;
+        result.built = "2026-11-14";
+        ItemFiles::Status now = ItemFiles::afterQuietCheck(shown, result);
+        CHECK(now.reason == Reason::CantSave);
+        CHECK(now.built == "2026-11-14");
+    }
     SECTION("the player's check that's waiting stays shown as checking") {
         shown.checking = true;
         ItemFiles::Status result;
