@@ -9,6 +9,7 @@
 #include "extensions.hpp"
 #include "controls.hpp"
 #include "screens.hpp"
+#include "packets/game_traffic.hpp"
 
 namespace ItemCatalog { class Catalog; }
 namespace ItemFiles { struct Status; }
@@ -114,6 +115,8 @@ namespace LuaFunctions {
     sol::object GetItemIcon(int type, sol::this_state state);
     sol::object GetMapFloor(int groupId, int floorId, sol::this_state state);
     sol::table GetGameTraffic(sol::this_state state);
+    // what GetGameTraffic and the GameTraffic trigger give
+    sol::table gameTrafficTable(bool on, const GameTraffic::Status& status, sol::state_view lua);
     void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     // DrawText(text, x, y, size, color, { wrap = width }), color is 0xRRGGBBAA
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color,

@@ -2419,13 +2419,16 @@ namespace LuaFunctions {
 	// needs_relog and no_key (npcap_missing, started_late, unknown_key_id and so
 	// on), "" otherwise. Codes, not sentences: the menu says what they mean.
 	// Needs no permission, it's only a status. An extension can't turn it on.
-	sol::table GetGameTraffic(sol::this_state state)
+	sol::table gameTrafficTable(bool on, const GameTraffic::Status& status, sol::state_view lua)
 	{
-		GameTraffic::Status status = GameTraffic::GetStatus();
-		sol::state_view lua(state);
 		return lua.create_table_with(
-			"on", Settings::readGameTraffic,
+			"on", on,
 			"state", std::string(GameTraffic::StateCode(status)),
 			"reason", std::string(GameTraffic::ReasonCode(status)));
+	}
+
+	sol::table GetGameTraffic(sol::this_state state)
+	{
+		return gameTrafficTable(Settings::readGameTraffic, GameTraffic::GetStatus(), state);
 	}
 }
