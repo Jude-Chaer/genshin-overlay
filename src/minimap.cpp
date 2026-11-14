@@ -22,9 +22,9 @@
 #include "minimap_door.hpp"
 
 namespace MiniMap {
-    // Where the minimap is in a 1080 high game: the square around its circle.
-    // It grows with the game's height.
-    static constexpr double LEFT = 64.0, TOP = 21.0, SIDE = 208.0, HEIGHT = 1080.0;
+    // Where the minimap is in a 1920x1080 game: the square around its circle.
+    // It grows with the game's height, or its width when narrower than 16:9.
+    static constexpr double LEFT = 64.0, TOP = 21.0, SIDE = 208.0, HEIGHT = 1080.0, WIDTH = 1920.0;
     // The minimap is searched this many compared pixels each way around the
     // last spot, WIDE when that didn't find it.
     static constexpr int REACH = 16, WIDE = 64;
@@ -458,7 +458,7 @@ namespace MiniMap {
     }
 
     RECT rect(const RECT& game) {
-        double scale = (game.bottom - game.top) / HEIGHT;
+        double scale = std::min((game.bottom - game.top) / HEIGHT, (game.right - game.left) / WIDTH);
         RECT out;
         out.left = game.left + (LONG)std::lround(LEFT * scale);
         out.top = game.top + (LONG)std::lround(TOP * scale);

@@ -119,6 +119,18 @@ namespace MapTracking {
     // Zoombar Detector thread.
     static std::atomic<bool> mapOpen{ false };
     static std::atomic<bool> detectorStopping{ false };
+    // the first and last game frame the zoom bar was seen on since the map
+    // opened, 0 while it's closed
+    static std::mutex openFramesMutex;
+    static uint64_t openFirst = 0, openLast = 0;
+    static void seenOpen(bool open, uint64_t frame) {
+        std::lock_guard<std::mutex> lock(openFramesMutex);
+        if (!open || frame == 0) openFirst = openLast = 0;
+        else {
+            if (openFirst == 0) openFirst = frame;
+            openLast = std::max(openLast, frame);
+        }
+    }
 
     static std::thread detectorWorker;
     static std::mutex detectorMutex;
@@ -210,6 +222,41 @@ namespace MapTracking {
         view.pickerGroup = view.visible ? layers.Area(view.result.lng, view.result.lat) : 0;
         view.opening = session;
         view.pickerFloors = view.pickerGroup ? MapData::groupFloors(loadedFloors, view.result.mapId, view.pickerGroup) : std::vector<int>{};
+        // The short name is the floor's count from the ground's button, L1
+        // up and B1 down, as the game's buttons sit. The whole one is
+        // HoYoLAB's, the short one when it has none.
+        auto place = [](bool above, int count) { return (above ? "L" : "B") + std::to_string(count); };
+        auto names = [&](int groupId, const std::vector<int>& area, int floorId, std::string& shortName, std::string& name) {
+            auto at = std::find(area.begin(), area.end(), floorId);
+            int i = (int)(at - area.begin());
+            bool above = layers.Over(groupId);
+            shortName = at == area.end() ? "Underground" : place(above, above ? (int)area.size() - i : i + 1);
+            name = shortName;
+            for (const MapData::Floor& floor : loadedFloors) {
+                if (floor.mapId != view.result.mapId || floor.floorId != floorId) continue;
+                if (!floor.name.empty()) name = floor.name;
+            }
+        };
+        view.floorShort = view.floorName = "Above ground";
+        view.aboveGround = !(view.visible && view.result.groupId);
+        bool unmappedAbove = false;
+        int unmappedPlace = 0;
+        view.noMapFloor = view.visible && layers.Unmapped(unmappedAbove, unmappedPlace);
+        if (view.noMapFloor) {
+            view.aboveGround = false;
+            view.floorShort = place(unmappedAbove, unmappedPlace);
+            view.floorName = view.floorShort + ", no map for this floor";
+        }
+        else if (view.visible && view.result.groupId)
+            names(view.result.groupId, MapData::groupFloors(loadedFloors, view.result.mapId, view.result.groupId), view.result.floorId, view.floorShort, view.floorName);
+        view.pickerGround = view.pickerGroup && layers.Over(view.pickerGroup) ? (int)view.pickerFloors.size() : 0;
+        view.pickerNames.clear();
+        for (int floorId : view.pickerFloors) {
+            std::string shortName, name;
+            names(view.pickerGroup, view.pickerFloors, floorId, shortName, name);
+            view.pickerNames.push_back(name);
+        }
+        view.pickerNames.insert(view.pickerNames.begin() + view.pickerGround, "Above ground");
         lastUpdate = now;
         answers++;
         answered.notify_all();
@@ -274,7 +321,7 @@ namespace MapTracking {
 
         double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
         if (gotMatch && sentSession == session && match.found && (follower.Visible() || match.inliers >= FIRST_FIX_INLIERS)) {
-            layers.Guess({ match.mapId, match.groupId, match.floorId });
+            layers.Guess({ match.mapId, match.groupId, match.floorId }, match.drawnLit);
             LayerChoice::Layer layer = layers.Now();
             if (layer.mapId == match.mapId) {
                 match.groupId = layer.groupId;
@@ -334,7 +381,7 @@ namespace MapTracking {
                     switcherReadAt = now;
                     const MapLocator::Result& at = follower.View();
                     GameUi::Switcher read = GameUi::ReadSwitcher(picture, panel);
-                    layers.Read(read, at.mapId);
+                    layers.Read(read, at.mapId, at.lng, at.lat);
                     useLayer();
                 }
             }
@@ -506,6 +553,11 @@ namespace MapTracking {
         return mapOpen.load(std::memory_order_acquire);
     }
 
+    bool MapOpenOn(uint64_t frame) {
+        std::lock_guard<std::mutex> lock(openFramesMutex);
+        return frame != 0 && openFirst != 0 && openFirst <= frame && frame <= openLast;
+    }
+
     void FollowWhileMoving() {
         followAskedAt = std::chrono::steady_clock::now().time_since_epoch().count();
     }
@@ -615,14 +667,18 @@ namespace MapTracking {
         if (!Capture::getClientRectOnScreen(game, client))
             return false;
 
+        int w = client.right - client.left;
         int h = client.bottom - client.top;
 
-        double scale = h / 1125.0;
+        // Narrower than 16:9 the game's UI fits the width, the zoom bar stays
+        // in the middle of the height
+        double scale = std::min(h / 1125.0, w / 2000.0);
+        double middle = h / 2.0;
 
         out.left = client.left + (LONG)(37.5 * scale);
-        out.top = client.top + (LONG)(450 * scale);
+        out.top = client.top + (LONG)(middle + (450 - 562.5) * scale);
         out.right = client.left + (LONG)(62.5 * scale);
-        out.bottom = client.top + (LONG)(475 * scale);
+        out.bottom = client.top + (LONG)(middle + (475 - 562.5) * scale);
 
         return out.right > out.left && out.bottom > out.top;
     }
@@ -653,15 +709,25 @@ namespace MapTracking {
         else
             detectorGreyscaleMatCache = image;
 
-        if (detectorGreyscaleMatCache.cols < zoomTemplate.cols ||
-            detectorGreyscaleMatCache.rows < zoomTemplate.rows)
+        return zoomBarShows(detectorGreyscaleMatCache, zoomTemplate);
+    }
+
+    // The template is the zoom bar in a 2160 high game. getZoomBarRect's
+    // part scales with the game's UI, so other sizes scale the template.
+    bool zoomBarShows(const cv::Mat& grey, const cv::Mat& zoomTemplate)
+    {
+        if (grey.empty() || zoomTemplate.empty())
             return false;
+
+        cv::Mat scaled = zoomTemplate;
+        if (grey.size() != zoomTemplate.size())
+            cv::resize(zoomTemplate, scaled, grey.size(), 0, 0, cv::INTER_AREA);
 
         cv::Mat result;
 
         cv::matchTemplate(
-            detectorGreyscaleMatCache,
-            zoomTemplate,
+            grey,
+            scaled,
             result,
             cv::TM_CCOEFF_NORMED
         );
@@ -706,6 +772,7 @@ namespace MapTracking {
                     previousOpen = false;
                     mapOpen = false;
                     Capture::setLight(true);
+                    seenOpen(false, 0);
 
                     std::lock_guard<std::mutex> lock(mutex);
                     view.visible = false;
@@ -717,8 +784,10 @@ namespace MapTracking {
 
             cv::Mat zoomScreenshot;
 
-            if (Capture::grabGame(detectorGameWindowCache, detectorRectCache, zoomScreenshot)) {
+            Capture::Frame zoomFrame;
+            if (Capture::grabGame(detectorGameWindowCache, detectorRectCache, zoomScreenshot, &zoomFrame)) {
                 bool open = detectZoomBar(zoomScreenshot);
+                seenOpen(open, zoomFrame.number);
                 if (open != previousOpen) {
                     previousOpen = open;
                     mapOpen = open;

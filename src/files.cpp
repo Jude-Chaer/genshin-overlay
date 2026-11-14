@@ -42,7 +42,12 @@ namespace Files {
 			std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
 			if (!file) return false;
 			file.write(data.data(), (std::streamsize)data.size());
-			if (!file) return false;
+			// the last part only reaches the disk on close, a full disk shows there
+			file.close();
+			if (!file) {
+				fs::remove(tmp, ec);
+				return false;
+			}
 		}
 		fs::rename(tmp, path, ec);
 		if (!ec) return true;

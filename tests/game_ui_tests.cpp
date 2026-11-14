@@ -12,6 +12,7 @@
 #include <opencv2/imgproc.hpp>
 #include "game_ui.hpp"
 #include "map_screen.hpp"
+#include "map_tracking.hpp"
 
 namespace fs = std::filesystem;
 using namespace GameUi;
@@ -105,6 +106,25 @@ TEST_CASE("the mouse's ring on a floor isn't that floor lit", "[game_ui]") {
     CHECK(seen.switcher.lit == 0);
 }
 
+TEST_CASE("above ground in the middle of the buttons", "[game_ui]") {
+    // 5 floors over it, 1 under, above ground lit: its button is bigger
+    Answer seen = read("ground_in_the_middle");
+    CHECK(seen.switcher.seen == GameUi::Seen::Read);
+    CHECK(seen.switcher.count == 7);
+    CHECK(seen.switcher.ground == 5);
+    CHECK(seen.switcher.lit == 5);
+}
+
+TEST_CASE("a dark map underground isn't the region list", "[game_ui]") {
+    // Kresnik Kristall Mines lit: the map round the strip is dark and flat
+    Answer seen = read("dark_underground");
+    CHECK(seen.panel.seen == GameUi::Seen::None);
+    CHECK(seen.switcher.seen == GameUi::Seen::Read);
+    CHECK(seen.switcher.count == 2);
+    CHECK(seen.switcher.ground == 0);
+    CHECK(seen.switcher.lit == 1);
+}
+
 TEST_CASE("the same at the game's size", "[game_ui]") {
     cv::Mat frame = screen("info_panel"), big;
     cv::resize(frame, big, cv::Size(3840, 2160), 0, 0, cv::INTER_CUBIC);
@@ -117,7 +137,8 @@ TEST_CASE("the same at the game's size", "[game_ui]") {
 }
 
 static const char* const SHOTS[] = { "custom_pin", "five_floors_bottom_lit", "five_floors_top_lit", "info_panel",
-    "info_panel_top_lit", "mouse_on_a_floor", "no_panel", "pier", "region_list", "snow", "statue_panel", "two_floors" };
+    "info_panel_top_lit", "mouse_on_a_floor", "no_panel", "pier", "region_list", "snow", "statue_panel", "two_floors",
+    "ground_in_the_middle", "dark_underground" };
 
 // only the parts the follower copies out of the game's frame
 static Picture parts(const cv::Mat& frame) {
@@ -149,6 +170,7 @@ TEST_CASE("the follower's parts of a frame read the same as all of it", "[game_u
             CHECK(switcher.seen == all.seen);
             CHECK(switcher.count == all.count);
             CHECK(switcher.lit == all.lit);
+            CHECK(switcher.ground == all.ground);
         }
     }
 }
@@ -195,6 +217,24 @@ TEST_CASE("the game's UI boxes follow the panel", "[game_ui]") {
     CHECK(Boxes(game, { Seen::Unsure, PanelKind::None, -1 }).size() == 6);
 }
 
+TEST_CASE("the free stretch along the top of the map", "[game_ui]") {
+    // the game at its own layout size, every box there
+    const RECT game = { 0, 0, 2000, 1125 };
+    std::vector<RECT> boxes = Boxes(game, { Seen::Unsure, PanelKind::None, -1 });
+    float from = 0, to = 0;
+    // between the event banner (to 370) and the resource bar (from 1030)
+    FreeSpan(0, 2000, boxes, 18, 78, from, to);
+    CHECK(from == 370);
+    CHECK(to == 1030);
+    // under the resource bar only the banner is left of it
+    FreeSpan(0, 2000, boxes, 90, 150, from, to);
+    CHECK(from == 370);
+    // all of it covered: all of it
+    FreeSpan(0, 2000, { { 0, 0, 2000, 1125 } }, 18, 78, from, to);
+    CHECK(from == 0);
+    CHECK(to == 2000);
+}
+
 TEST_CASE("the floor picker's spot left of the layer switcher", "[game_ui]") {
     const RECT game = { 100, 50, 100 + 3840, 50 + 2160 };
     auto at4k = [](const char* name) {
@@ -227,7 +267,7 @@ TEST_CASE("the lit button is HoYoLAB's floor in its order", "[game_ui]") {
     // Pardis Dhyai, the game showed 5 buttons
     auto lit = [&](int button) {
         group = floor = -1;
-        return SwitcherFloor({ GameUi::Seen::Read, 5, button }, floors(), 2, 19, group, floor);
+        return SwitcherFloor({ GameUi::Seen::Read, 5, button, 0 }, floors(), 2, 19, 0, 0, group, floor);
     };
     REQUIRE(lit(0));
     CHECK((group == 0 && floor == 0));
@@ -239,23 +279,41 @@ TEST_CASE("the lit button is HoYoLAB's floor in its order", "[game_ui]") {
     CHECK((group == 19 && floor == 109));
 
     // Dragonspine, 2 buttons
-    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 2, 1 }, floors(), 2, 26, group, floor));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 2, 1, 0 }, floors(), 2, 26, 0, 0, group, floor));
     CHECK((group == 26 && floor == 46));
 
     // The Fortress of Meropide, 7 buttons, SIFT on Fontaine's underwater
     // floor round it. HoYoLAB lists its floors out of id order.
-    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 1 }, floors(), 2, 90, group, floor));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 1, 0 }, floors(), 2, 90, 0, 0, group, floor));
     CHECK((group == 20 && floor == 122));
-    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 2 }, floors(), 2, 90, group, floor));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 2, 0 }, floors(), 2, 90, 0, 0, group, floor));
     CHECK((group == 20 && floor == 42));
+}
+
+TEST_CASE("floors over above ground", "[game_ui]") {
+    // Kuuvahki Experimental Design Bureau: 5 floors over above ground, 1 under
+    int group = -1, floor = -1;
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 0, 5 }, floors(), 2, 185, 0, 0, group, floor));
+    CHECK((group == 185 && floor == 252));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 4, 5 }, floors(), 2, 185, 0, 0, group, floor));
+    CHECK((group == 185 && floor == 257));
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 5, 5 }, floors(), 2, 185, 0, 0, group, floor));
+    CHECK((group == 0 && floor == 0));
+    // SIFT taking a lit floor for the ground: the group under the map's middle
+    REQUIRE(SwitcherFloor({ GameUi::Seen::Read, 7, 2, 5 }, floors(), 2, 0, -10700.6, -973.7, group, floor));
+    CHECK((group == 185 && floor == 255));
+    // the one under isn't in HoYoLAB
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 7, 6, 5 }, floors(), 2, 0, -10700.6, -973.7, group, floor));
+    // the one under isn't one of the 5
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 7, 6, 5 }, floors(), 2, 185, 0, 0, group, floor));
 }
 
 TEST_CASE("no floor when the buttons don't fit SIFT's area", "[game_ui]") {
     int group = -1, floor = -1;
-    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 3, 1 }, floors(), 2, 19, group, floor));
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 3, 1, 0 }, floors(), 2, 19, 0, 0, group, floor));
     // above ground, SIFT has no area to go by
-    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 2, 1 }, floors(), 2, 0, group, floor));
-    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Unsure, 5, -1 }, floors(), 2, 19, group, floor));
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Read, 2, 1, 0 }, floors(), 2, 0, 0, 0, group, floor));
+    CHECK_FALSE(SwitcherFloor({ GameUi::Seen::Unsure, 5, -1 }, floors(), 2, 19, 0, 0, group, floor));
 }
 
 // All the screenshots kept for the readers, full size. Not part of the normal
@@ -297,10 +355,67 @@ TEST_CASE("score on every screenshot", "[.][score]") {
         int count = switcher.seen == GameUi::Seen::Read ? switcher.count : 0;
         bool good = kind == f[1] && left == wantLeft && count == wantCount && (wantCount == 0 || switcher.lit == wantLit);
         if (!good) misses++;
-        std::cout << f[0] << "  panel " << kind << " " << left << "  buttons " << count << " lit " << switcher.lit
+        const char* buttons = switcher.seen == GameUi::Seen::Read ? "" : switcher.seen == GameUi::Seen::Unsure ? " (unsure)" : " (none)";
+        std::cout << f[0] << "  panel " << kind << " " << left << "  buttons " << count << buttons << " lit " << switcher.lit << " ground " << switcher.ground
             << (good ? "" : "   MISS") << "\n";
     }
     std::cout << shots << " shots, " << misses << " missed, " << (shots ? took / shots : 0.0) << " ms a shot to read both\n";
     CHECK(shots > 0);
     CHECK(misses == 0);
+}
+
+// The part getZoomBarRect gives, cut from the game's frames
+static bool zoomBar(const std::string& name) {
+    cv::Mat zoomTemplate, grey;
+    cv::cvtColor(readPicture(fs::path(__FILE__).parent_path().parent_path() / "zoombar_template.png"), zoomTemplate, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(readPicture(MapScreen::DATA / "zoom_bar" / (name + ".png")), grey, cv::COLOR_BGR2GRAY);
+    return MapTracking::zoomBarShows(grey, zoomTemplate);
+}
+
+TEST_CASE("the zoom bar at the game's height", "[game_ui]") {
+    // the map open at 3840x2160, in a 1920x1080 window and a 1600x1200 one
+    CHECK(zoomBar("open_2160"));
+    CHECK(zoomBar("open_1080"));
+    CHECK(zoomBar("open_4_3"));
+    // the map closed in the 1920x1080 window
+    CHECK_FALSE(zoomBar("closed_1080"));
+}
+
+// A 1600x1200 window: its right side, 536 wide, back in a black frame
+static cv::Mat screen43(const std::string& name) {
+    cv::Mat part = readPicture(MapScreen::DATA / "map_screen" / (name + ".png"));
+    REQUIRE_FALSE(part.empty());
+    cv::Mat frame(1200, 1600, CV_8UC3, cv::Scalar::all(0));
+    part.copyTo(frame(cv::Rect(1600 - part.cols, 0, part.cols, part.rows)));
+    return frame;
+}
+
+TEST_CASE("the layer switcher in a 4:3 window", "[game_ui]") {
+    cv::Mat frame = screen43("two_floors_4_3");
+    Panel panel = ReadPanel(frame);
+    CHECK(panel.seen == GameUi::Seen::None);
+    Switcher switcher = ReadSwitcher(frame, panel);
+    CHECK(switcher.seen == GameUi::Seen::Read);
+    CHECK(switcher.count == 2);
+    CHECK(switcher.lit == 1);
+}
+
+TEST_CASE("the game's UI boxes in a 4:3 window", "[game_ui]") {
+    // the UI fits the width (0.8), pieces in the middle of a side stay there
+    RECT game = { 0, 0, 1600, 1200 };
+    std::vector<RECT> boxes = Boxes(game, Panel{});
+    REQUIRE(boxes.size() == 6);
+    // event list from the top to above the zoom bar
+    CHECK(boxes[0].top == 0);
+    CHECK(boxes[0].bottom == 502);
+    // zoom bar around the window's middle
+    CHECK(boxes[1].top == 494);
+    CHECK(boxes[1].bottom == 702);
+    // gear and region name at the bottom
+    CHECK(boxes[2].bottom == 1192);
+    CHECK(boxes[4].bottom == 1200);
+    CHECK(boxes[4].left == 1224);
+    // resource bar at the top right
+    CHECK(boxes[3].top == 12);
+    CHECK(boxes[3].right == 1600);
 }

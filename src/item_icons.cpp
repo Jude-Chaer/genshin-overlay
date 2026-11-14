@@ -1,6 +1,7 @@
 #include "item_icons.hpp"
 #include <SOIL2/SOIL2.h>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace ItemIcons {
 	static GLuint makeTexture(std::string_view png) {
@@ -24,6 +25,7 @@ namespace ItemIcons {
 	static uint64_t madeFor = 0;
 	// 0 is kept too, so a type with no icon or a broken one isn't tried every frame
 	static std::unordered_map<int, GLuint> textures;
+	static std::unordered_set<GLuint> kept;
 
 	void keepFor(const ItemCatalog::Catalog* catalog) {
 		uint64_t version = catalog ? catalog->version : 0;
@@ -42,7 +44,12 @@ namespace ItemIcons {
 		std::string_view png = catalog->icon(type);
 		GLuint texture = png.empty() ? 0 : make(png);
 		textures[type] = texture;
+		if (texture != 0) kept.insert(texture);
 		return texture;
+	}
+
+	bool owns(GLuint texture) {
+		return texture != 0 && kept.count(texture) > 0;
 	}
 
 	size_t count() {
@@ -54,5 +61,6 @@ namespace ItemIcons {
 	void clear() {
 		for (const auto& [type, texture] : textures) if (texture != 0) release(texture);
 		textures.clear();
+		kept.clear();
 	}
 }

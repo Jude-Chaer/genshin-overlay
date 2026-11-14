@@ -13,6 +13,8 @@ namespace ItemIcons {
 	void keepFor(const ItemCatalog::Catalog* catalog);
 	// the type's texture, 0 when it has no icon or there's no catalog
 	GLuint get(const ItemCatalog::Catalog* catalog, int type);
+	// one of the textures kept right now
+	bool owns(GLuint texture);
 	// textures made and kept right now
 	size_t count();
 	// frees every texture it keeps

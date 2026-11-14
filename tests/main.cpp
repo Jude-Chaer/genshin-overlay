@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <catch2/catch_session.hpp>
+#include "extensions.hpp"
 #include "settings.hpp"
 
 int main(int argc, char* argv[]) {
@@ -8,5 +9,8 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(folder);
     Settings::file = folder / "settings.json";
 
-    return Catch::Session().run(argc, argv);
+    int failed = Catch::Session().run(argc, argv);
+    // the extensions' Lua states close here, while what their unload uses still exists
+    Extensions::registeredExtensions.clear();
+    return failed;
 }

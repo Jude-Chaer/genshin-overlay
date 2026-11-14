@@ -51,10 +51,16 @@ jobs:
           $folder = "genshin-overlay"
           New-Item -ItemType Directory $folder | Out-Null
           Copy-Item build\Release\genshin-overlay.exe $folder
-          Copy-Item -Recurse extensions $folder
+          # the example is for extension authors, it uses the internet at every start
+          New-Item -ItemType Directory "$folder\extensions" | Out-Null
+          Get-ChildItem extensions -Directory | Where-Object Name -ne "example" | Copy-Item -Recurse -Destination "$folder\extensions"
           Copy-Item README.md $folder
           # the zoom bar detector looks for it next to the exe
           Copy-Item zoombar_template.png $folder
+          # Roboto for the Material You look and Inter for Apple, with their licences, and the colour library's licence
+          Copy-Item -Recurse fonts $folder
+          New-Item -ItemType Directory "$folder\licenses\material-color-utilities" | Out-Null
+          Copy-Item third_party\material-color-utilities\LICENSE "$folder\licenses\material-color-utilities"
           $beta = $version -like "*-*"
           if ($beta) { Copy-Item BETA.md $folder }
           $zip = "genshin-overlay-$version.zip"

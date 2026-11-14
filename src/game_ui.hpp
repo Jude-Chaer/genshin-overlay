@@ -19,13 +19,15 @@ namespace GameUi {
         int left = -1;
     };
 
-    // The layer switcher: the top button is above ground, the floors follow in
-    // HoYoLAB's order.
+    // The layer switcher: above ground is the button with the mountain, the
+    // floors over it and under it each in HoYoLAB's order.
     struct Switcher {
         Seen seen = Seen::None;
         int count = 0;
-        // 0 above ground, 1 and on the floors from the top, -1 when it can't tell
+        // the lit button from the top, -1 when it can't tell
         int lit = -1;
+        // the above ground button from the top
+        int ground = -1;
     };
 
     // Parts of one game picture, each where it sits in it, BGR or BGRA. The
@@ -37,7 +39,8 @@ namespace GameUi {
         std::vector<cv::Point> at;
     };
     extern Picture Whole(const cv::Mat& frame);
-    // What each reader looks at, in the pixels of a picture that big
+    // What the readers look at, in the pixels of a picture that big. The
+    // panel needs PanelParts, the switcher both.
     extern std::vector<cv::Rect> PanelParts(cv::Size size);
     extern std::vector<cv::Rect> SwitcherParts(cv::Size size);
 
@@ -50,16 +53,20 @@ namespace GameUi {
     // left is in the game picture's pixels, as ReadPanel gives it. With a
     // panel open the panel itself is one of the boxes.
     extern std::vector<RECT> Boxes(const RECT& game, const Panel& panel);
+    // The widest stretch across left to right, between y0 and y1, that none
+    // of the boxes covers. All of it when nothing's free.
+    extern void FreeSpan(float left, float right, const std::vector<RECT>& boxes, float y0, float y1, float& from, float& to);
     // Just left of the layer switcher's box, half way down its buttons, in
     // the same coords as game: where the overlay's floor picker goes. False
     // when the region list hides the switcher or the panel is unsure.
     extern bool BesideSwitcher(const RECT& game, const Panel& panel, POINT& out);
 
     // The floor a read switcher has lit, as group and floor, 0 0 above ground.
-    // area is the underground group SIFT found the map on: the switcher lists
-    // its floors, or those of a smaller group inside it (a small floor lit
-    // inside a big one, SIFT matches the big one round it). False when the
-    // buttons fit neither, or with no area to go by.
+    // area is the underground group SIFT found the map on: the buttons on the
+    // lit one's side of above ground list its floors, or those of a smaller
+    // group inside it (a small floor lit inside a big one, SIFT matches the
+    // big one round it). With area 0, the group under x y (map units) that
+    // fits. False when none fits, or two do.
     extern bool SwitcherFloor(const Switcher& read, const std::vector<MapData::Floor>& floors, int mapId,
-        int area, int& groupId, int& floorId);
+        int area, double x, double y, int& groupId, int& floorId);
 }

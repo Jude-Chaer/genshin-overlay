@@ -6,6 +6,8 @@
 namespace Capture {
     // the Genshin window, or nullptr if it isn't running
     extern HWND findGameWindow();
+    // the Genshin window, minimized or not, nullptr only if it isn't running
+    extern HWND findRunningGame();
     extern bool getClientRectOnScreen(HWND window, RECT& out);
 
     // which frame of the game a grab came from
@@ -29,6 +31,15 @@ namespace Capture {
     extern bool grabGameGray(HWND game, const std::vector<RECT>& rects, std::vector<cv::Mat>& out, Frame& frame,
         const RECT& whole, int maxWidth, cv::Mat& shrunk, int shrink = 0, int atLeast = 0,
         const std::vector<RECT>* colour = nullptr, std::vector<cv::Mat>* colourOut = nullptr);
+    // The rect of a recent frame as BGRA, width wide, halved on the GPU first
+    // so only a little more than that is read back. Never waits for the GPU:
+    // each grab orders a copy of the newest frame and hands over the one
+    // ordered before once the GPU is done with it. False while none is ready
+    // or when it is of frame. Otherwise frame becomes the one handed over.
+    extern bool grabGameScaled(HWND game, const RECT& rect, int width, cv::Mat& out, Frame& frame);
+    // frees what grabGameScaled keeps on the GPU, for all widths or one
+    extern void dropScaled();
+    extern void dropScaled(int width);
     // Light is for while the map is closed and only the zoom bar is read:
     // Windows hands over a frame every 50 ms at most and no copy of the game
     // is kept. The capture starts out light.
