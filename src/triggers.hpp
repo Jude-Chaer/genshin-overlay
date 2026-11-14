@@ -8,11 +8,12 @@
 #include "item_files.hpp"
 #include "map_tracking.hpp"
 #include "minimap.hpp"
+#include "packets/game_traffic.hpp"
 #include "screens.hpp"
 
 // AddTrigger(name, function, only): the function runs once each time its
 // topic changes, with the table the topic's call gives (GetScreens,
-// GetMapView, GetPlayer, GetItems...) and what changed. With only, it runs
+// GetMapView, GetPlayer, GetItems, GetGameTraffic...) and what changed. With only, it runs
 // only when that is what changed. Nothing runs for the state at the start.
 
 namespace Triggers {
@@ -41,6 +42,9 @@ namespace Triggers {
         // what GetItems gives
         uint64_t itemsVersion = 0;
         ItemFiles::Status items;
+        // what GetGameTraffic gives
+        bool trafficOn = false;
+        GameTraffic::Status traffic;
         // the extension whose page the menu shows, by its place in registeredExtensions, -1 for none
         int pageShown = -1;
         // the player's look and whether it's dark

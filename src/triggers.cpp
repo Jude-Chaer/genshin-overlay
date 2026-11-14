@@ -4,6 +4,7 @@
 #include "item_catalog.hpp"
 #include "lua_functions.hpp"
 #include "overlay.hpp"
+#include "settings.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
@@ -13,7 +14,7 @@ namespace Triggers {
 	using Extensions::Extension;
 	using Permission = Extensions::ExtensionPermissionTypes;
 
-	enum class Kind { Screens, ScreenPicture, MapView, Player, Items, Page, Setting, Permission, Look };
+	enum class Kind { Screens, ScreenPicture, MapView, Player, Items, GameTraffic, Page, Setting, Permission, Look };
 
 	static const std::vector<std::pair<std::string, Kind>> kinds = {
 		{ "Screens", Kind::Screens },
@@ -21,6 +22,7 @@ namespace Triggers {
 		{ "MapView", Kind::MapView },
 		{ "Player", Kind::Player },
 		{ "Items", Kind::Items },
+		{ "GameTraffic", Kind::GameTraffic },
 		{ "Page", Kind::Page },
 		{ "Setting", Kind::Setting },
 		{ "Permission", Kind::Permission },
@@ -49,6 +51,7 @@ namespace Triggers {
 		case Kind::MapView: return { "view", "floor" };
 		case Kind::Player: return { "found", "lost", "moved" };
 		case Kind::Items: return { "list", "loading" };
+		case Kind::GameTraffic: return { "on", "state" };
 		case Kind::Page: return { "shown", "hidden" };
 		case Kind::Look: return { "look", "dark", "accent", "size" };
 		default: return {};
@@ -179,6 +182,10 @@ namespace Triggers {
 				std::to_string(items.percent) + " " + items.built + " " + (items.started ? "1" : "0") + (items.checking ? "1" : "0");
 			break;
 		}
+		case Kind::GameTraffic:
+			parts["on"] = now.trafficOn ? "1" : "0";
+			parts["state"] = std::string(GameTraffic::StateCode(now.traffic)) + " " + GameTraffic::ReasonCode(now.traffic);
+			break;
 		case Kind::Page:
 			parts["shown"] = now.pageShown >= 0 && now.pageShown == pageIndex(&ext) ? "1" : "0";
 			break;
@@ -200,9 +207,9 @@ namespace Triggers {
 	}
 
 	// What changed between two looks. A screen, a setting or a permission is
-	// one change each. For the map view, the player and the items the biggest
-	// comes first: a new floor before view, found or lost before moved, a new
-	// list before loading.
+	// one change each. For the map view, the player, the items and the game
+	// traffic the biggest comes first: a new floor before view, found or lost
+	// before moved, a new list before loading, on or off before a new state.
 	static std::vector<std::string> changed(Kind kind, const std::map<std::string, std::string>& before,
 		const std::map<std::string, std::string>& now) {
 		std::vector<std::string> parts;
@@ -226,6 +233,10 @@ namespace Triggers {
 			if (has("list")) events.push_back("list");
 			if (has("loading")) events.push_back("loading");
 			return events;
+		case Kind::GameTraffic:
+			if (has("on")) events.push_back("on");
+			if (has("state")) events.push_back("state");
+			return events;
 		case Kind::Page:
 			if (has("shown")) events.push_back(now.at("shown") == "1" ? "shown" : "hidden");
 			return events;
@@ -239,7 +250,7 @@ namespace Triggers {
 
 	// one topic, one run: the biggest change, or the one asked for with only
 	static bool oneRun(Kind kind) {
-		return kind == Kind::MapView || kind == Kind::Player || kind == Kind::Items;
+		return kind == Kind::MapView || kind == Kind::Player || kind == Kind::Items || kind == Kind::GameTraffic;
 	}
 
 	struct Due {
@@ -255,6 +266,7 @@ namespace Triggers {
 		case Kind::MapView: return LuaFunctions::mapViewTable(now.view, lua);
 		case Kind::Player: return LuaFunctions::playerTable(now.player, lua);
 		case Kind::Items: return LuaFunctions::Items::table(now.itemsVersion, now.items, lua);
+		case Kind::GameTraffic: return LuaFunctions::gameTrafficTable(now.trafficOn, now.traffic, lua);
 		case Kind::Page: return sol::make_object(lua, changed == "shown");
 		case Kind::Setting: return LuaFunctions::GetExtensionSetting(changed, sol::this_state{ lua.lua_state() });
 		case Kind::Permission: return LuaFunctions::PermissionState(changed, sol::this_state{ lua.lua_state() });
@@ -349,6 +361,8 @@ namespace Triggers {
 		if (!Overlay::PickerBox(now.picker)) now.picker = {};
 		now.itemsVersion = ItemCatalog::version();
 		now.items = ItemFiles::GetStatus();
+		now.trafficOn = Settings::readGameTraffic;
+		now.traffic = GameTraffic::GetStatus();
 		now.pageShown = Overlay::ShownExtension();
 		Controls::Theme theme = Controls::GetTheme();
 		now.look = theme.look;
