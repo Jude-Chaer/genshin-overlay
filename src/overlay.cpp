@@ -138,7 +138,18 @@ namespace Overlay {
         return it == names.end() ? 0 : (int)(it - names.begin());
     }
 
+    // the menu's switch and an extension's ask both go through here
+    static void setGameTraffic(bool on) {
+        Settings::readGameTraffic = on;
+        Settings::Save();
+        if (on) GameTraffic::Start();
+        else GameTraffic::Stop(false);
+    }
+
     bool Init() {
+        Asks::addSetting({ "Game traffic", "Read the game's traffic", "It only reads, nothing is ever sent to the game.",
+            []() { return Settings::readGameTraffic; }, []() { setGameTraffic(true); } });
+
         Overlay::mainMonitor = glfwGetPrimaryMonitor();
         Overlay::monitorVideoMode = glfwGetVideoMode(Overlay::mainMonitor);
 
@@ -806,11 +817,8 @@ namespace Overlay {
     }
 
     static void DrawGameTraffic() {
-        if (Controls::Toggle("Read the game's traffic", &Settings::readGameTraffic)) {
-            Settings::Save();
-            if (Settings::readGameTraffic) GameTraffic::Start();
-            else GameTraffic::Stop(false);
-        }
+        bool on = Settings::readGameTraffic;
+        if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
         GameTrafficText::Line line = GameTrafficText::For(GameTraffic::GetStatus());
         if (line.quiet) ImGui::TextDisabled("%s", line.text.c_str());
         else ImGui::TextWrapped("%s", line.text.c_str());
