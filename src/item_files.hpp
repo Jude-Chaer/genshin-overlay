@@ -28,8 +28,10 @@
 // area_id, not the box it sits in (a few Inazuma puzzles are outside Inazuma's).
 //
 // The pack is those files one after the other, gzipped, and items.json says
-// what's in it. The overlay keeps the one it uses as a single file,
-// items/items.pack: the release's items.json on the first line, then the
+// what's in it: its file (items-<sha256 12>.pack.gz, also as items.pack.gz),
+// and the patches of the last days, each from one pack to the next
+// ({from, to, file, size, rawSize, built}, oldest first, item_patch.hpp).
+// The overlay keeps the one it uses as a single file, items/items.pack: the release's items.json on the first line, then the
 // gzipped pack as it came. It's written only after the pack has loaded, and in
 // one go (temp file and rename), so it's never half old, half new.
 
@@ -38,6 +40,9 @@ namespace ItemFiles {
     inline const std::string PACK_FILE = "items.pack.gz";
     inline const std::string META_FILE = "items.json";
     inline const std::string INSTALLED_FILE = "items.pack";
+    // the release's names for a pack and a patch, by sha256
+    extern std::string packName(const std::string& sha256);
+    extern std::string patchName(const std::string& from, const std::string& to);
 
     // What the builder downloads, before it's written as the folder.
     struct Source {
