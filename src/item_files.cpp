@@ -357,6 +357,66 @@ namespace ItemFiles {
 		};
 	}
 
+	// The patches that lead from the pack with sha256 from to the release's, oldest
+	// first. Empty when items.json has none from it, or one doesn't lead on.
+	static std::vector<json> patchChain(const json& published, const std::string& from) {
+		std::string released = Files::stringField(published, "sha256");
+		if (from.empty() || !published.contains("patches") || !published["patches"].is_array()) return {};
+		const json& patches = published["patches"];
+		size_t i = 0;
+		while (i < patches.size() && Files::stringField(patches[i], "from") != from) i++;
+		std::vector<json> chain;
+		std::string at = from;
+		for (; i < patches.size() && at != released; i++) {
+			const json& step = patches[i];
+			std::string to = Files::stringField(step, "to");
+			if (Files::stringField(step, "from") != at || to.empty() || !releaseName(Files::stringField(step, "file"))
+				|| Files::sizeField(step, "size") == 0 || Files::sizeField(step, "rawSize") == 0) return {};
+			chain.push_back(step);
+			at = to;
+		}
+		if (at != released) return {};
+		return chain;
+	}
+
+	static size_t chainSize(const std::vector<json>& chain) {
+		size_t size = 0;
+		for (const json& step : chain) size += Files::sizeField(step, "size");
+		return size;
+	}
+
+	// the installed pack with every patch of the chain applied, checked at each one
+	static bool patched(const fs::path& folder, const json& installedMeta, const std::vector<json>& chain, const Fetch& fetch,
+		const Net::Progress& progress, std::string& raw, std::string& problem) {
+		if (!unzip(readInstalledPack(folder), installedMeta, raw, problem)) return false;
+		size_t before = 0;
+		for (const json& step : chain) {
+			std::string file = Files::stringField(step, "file"), packed, steps, next;
+			size_t size = Files::sizeField(step, "size");
+			bool tooBig = false;
+			bool got = fetch(file, packed, [&](size_t bytes) {
+				tooBig = tooBig || bytes > size;
+				return !tooBig && progress(before + bytes);
+			});
+			if (!got || tooBig) {
+				problem = file + " didn't come";
+				return false;
+			}
+			before += size;
+			size_t rawSize = Files::sizeField(step, "rawSize");
+			if (rawSize > 2 * MAX_RAW_SIZE || !Files::gunzip(packed, steps, rawSize)) {
+				problem = file + " doesn't unzip to its size";
+				return false;
+			}
+			if (!ItemPatch::apply(raw, steps, MAX_RAW_SIZE, next) || Files::sha256(next) != Files::stringField(step, "to")) {
+				problem = file + " doesn't make the pack it's for";
+				return false;
+			}
+			raw = std::move(next);
+		}
+		return true;
+	}
+
 	static const char* why(Reason reason) {
 		switch (reason) {
 		case Reason::NoNetwork: return "the release couldn't be reached";
@@ -434,17 +494,50 @@ namespace ItemFiles {
 			Status progress;
 			progress.state = State::Downloading;
 			onChange(progress);
-			std::string packed;
-			bool tooBig = false;
-			// a pack with no size, or more than items.json says, isn't ours
-			bool got = size > 0 && size <= MAX_RAW_SIZE && fetch(PACK_FILE, packed, [&](size_t bytes) {
-				int percent = (int)std::min<size_t>(100, bytes * 100 / size);
+			auto shown = [&](size_t bytes, size_t of) {
+				int percent = (int)std::min<size_t>(100, bytes * 100 / of);
 				if (percent != progress.percent) {
 					progress.percent = percent;
 					onChange(progress);
 				}
+				return !stop.stopped() && download;
+			};
+
+			// the patches from the installed pack, when they come to less than half the pack
+			std::vector<json> chain = haveInstalled ? patchChain(published, installedHash) : std::vector<json>();
+			size_t patchBytes = chainSize(chain);
+			if (!chain.empty() && size > 0 && patchBytes * 2 <= size) {
+				std::string raw, problem, packed;
+				bool ok = patched(folder, installedMeta, chain, fetch, [&](size_t bytes) { return shown(bytes, patchBytes); }, raw, problem);
+				if (stop.stopped()) return Status();
+				start = std::chrono::steady_clock::now();
+				std::shared_ptr<ItemCatalog::Catalog> fresh;
+				if (ok && releasedHash != inUseHash) {
+					fresh = loadAll(raw, &stop, problem);
+					if (stop.stopped()) return Status();
+					ok = fresh != nullptr;
+				}
+				if (ok && Files::gzip(raw, packed)) {
+					std::cout << "[items] " << chain.size() << " patches, " << patchBytes << " bytes" << std::endl;
+					if (fresh) markSource(*fresh, published);
+					bool saved = install(packed, published, folder);
+					if (!saved) std::cerr << "[items] couldn't write " << INSTALLED_FILE << ", the pack is used until the overlay closes" << std::endl;
+					return finish(State::Ready, saved ? Reason::None : Reason::CantSave, fresh, published, start);
+				}
+				// the whole pack instead
+				std::cerr << "[items] the patches didn't work: " << (problem.empty() ? "gzip failed" : problem) << std::endl;
+				progress.percent = 0;
+				onChange(progress);
+			}
+
+			std::string packed;
+			bool tooBig = false;
+			std::string file = Files::stringField(published, "file", PACK_FILE);
+			if (!releaseName(file)) file = PACK_FILE;
+			// a pack with no size, or more than items.json says, isn't ours
+			bool got = size > 0 && size <= MAX_RAW_SIZE && fetch(file, packed, [&](size_t bytes) {
 				tooBig = tooBig || bytes > size;
-				return !stop.stopped() && !tooBig && download;
+				return shown(bytes, size) && !tooBig;
 			});
 			if (stop.stopped()) return Status();
 			start = std::chrono::steady_clock::now();

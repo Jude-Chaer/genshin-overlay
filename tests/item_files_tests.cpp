@@ -10,6 +10,7 @@
 #include "item_catalog.hpp"
 #include "files.hpp"
 #include "item_files.hpp"
+#include "item_patch.hpp"
 #include "map_data.hpp"
 #include "net_stop.hpp"
 
@@ -702,6 +703,200 @@ TEST_CASE("a pack bigger than its items.json says, or with no size, is stopped a
     CHECK(run.status.state == State::None);
     CHECK(run.status.reason == Reason::BrokenPack);
     CHECK_FALSE(fs::exists(items));
+}
+
+namespace {
+    // One side of update/ added to the test folder, as a pack and items.json would have it.
+    struct Side {
+        std::string raw, packed;
+        json meta;
+    };
+
+    Side sideOf(const std::vector<fs::path>& extra) {
+        fs::path folder = copyOfFolder();
+        for (const fs::path& from : extra) {
+            fs::copy(from, folder, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        }
+        Side side;
+        REQUIRE(ItemFiles::pack(folder, side.raw));
+        asReleased(side.raw, side.packed, side.meta);
+        side.meta["file"] = ItemFiles::packName(side.meta["sha256"].get<std::string>());
+        return side;
+    }
+
+    Side before() { return sideOf({ DATA / "update" / "before" }); }
+    Side after() { return sideOf({ DATA / "update" / "before", DATA / "update" / "after" }); }
+    // between them: only 294 changed
+    Side between() {
+        fs::path only294 = WORK / "only294";
+        fs::remove_all(only294);
+        fs::create_directories(only294 / "positions");
+        fs::copy(DATA / "update" / "after" / "positions" / "294.json", only294 / "positions");
+        return sideOf({ DATA / "update" / "before", only294 });
+    }
+
+    // the patch from one side to the next, on the release and in its items.json
+    void addPatch(Release& release, json& published, const Side& from, const Side& to) {
+        std::string steps = ItemPatch::make(from.raw, to.raw), packed;
+        REQUIRE(Files::gzip(steps, packed));
+        std::string fromHash = from.meta["sha256"], toHash = to.meta["sha256"];
+        std::string name = ItemFiles::patchName(fromHash, toHash);
+        release.files[name] = packed;
+        if (!published.contains("patches")) published["patches"] = json::array();
+        published["patches"].push_back({ { "from", fromHash }, { "to", toHash }, { "file", name }, { "size", packed.size() },
+            { "rawSize", steps.size() }, { "built", "2026-11-14T13:30:02Z" } });
+        release.files[ItemFiles::META_FILE] = published.dump();
+    }
+
+    // the release with to as its pack, under its own name only
+    Release releasedSide(const Side& to) {
+        Release release;
+        release.files[ItemFiles::META_FILE] = to.meta.dump();
+        release.files[to.meta["file"].get<std::string>()] = to.packed;
+        return release;
+    }
+
+    fs::path installed(const Side& side) {
+        fs::path items = noItems();
+        REQUIRE(ItemFiles::install(side.packed, side.meta, items));
+        return items;
+    }
+
+    // the list in use is update/after's, as answers.md says
+    void isAfter() {
+        auto now = ItemCatalog::current();
+        REQUIRE(now);
+        CHECK(now->pointCount() == 35 + 113 + 42 + 27 + 1);
+        REQUIRE(now->point(60111));
+        CHECK(now->point(60111)->appsample == 0);
+        REQUIRE(now->point(48113));
+        CHECK(now->point(48113)->group == 43);
+        CHECK(now->point(48113)->floor == 53);
+        CHECK(now->point(48113)->appsample == 48694);
+        CHECK(now->point(93667) == nullptr);
+        REQUIRE(now->points(830).size() == 1);
+        CHECK(now->points(830)[0].id == 105949);
+        CHECK(now->icon(830).size() == 7570);
+    }
+
+    // what's installed is the side's items.json and a pack that unzips to its raw pack
+    void installedIs(const fs::path& items, const Side& side) {
+        std::string all = Files::readText(items / ItemFiles::INSTALLED_FILE);
+        size_t end = all.find('\n');
+        REQUIRE(end != std::string::npos);
+        CHECK(json::parse(all.substr(0, end)) == side.meta);
+        std::string raw;
+        REQUIRE(Files::gunzip(all.substr(end + 1), raw, side.raw.size()));
+        CHECK(raw == side.raw);
+    }
+}
+
+TEST_CASE("a newer pack comes as a patch from the installed one") {
+    Side from = before(), to = after();
+    fs::path items = installed(from);
+    Release release = releasedSide(to);
+    json published = to.meta;
+    addPatch(release, published, from, to);
+    std::string problem;
+    std::shared_ptr<const ItemCatalog::Catalog> inUse = ItemFiles::open(from.packed, from.meta, nullptr, problem);
+    REQUIRE(inUse);
+    Run run = update(items, release, true, nullptr, inUse);
+    CHECK(run.status.state == State::Ready);
+    CHECK(run.status.reason == Reason::None);
+    CHECK(run.published == 1);
+    CHECK(release.asked == std::vector<std::string>{ ItemFiles::META_FILE, published["patches"][0]["file"].get<std::string>() });
+    isAfter();
+    installedIs(items, { to.raw, to.packed, published });
+}
+
+TEST_CASE("two patches in a row are both applied, then the next check needs nothing") {
+    Side from = before(), mid = between(), to = after();
+    fs::path items = installed(from);
+    Release release = releasedSide(to);
+    json published = to.meta;
+    addPatch(release, published, from, mid);
+    addPatch(release, published, mid, to);
+    Run run = update(items, release);
+    CHECK(run.status.state == State::Ready);
+    CHECK(release.asked.size() == 3);
+    isAfter();
+    installedIs(items, { to.raw, to.packed, published });
+
+    release.asked.clear();
+    Run again = update(items, release, true, nullptr, ItemCatalog::current());
+    CHECK(again.status.state == State::Ready);
+    CHECK(again.published == 0);
+    CHECK(release.asked == std::vector<std::string>{ ItemFiles::META_FILE });
+}
+
+TEST_CASE("the chain starts at the installed pack, older patches are skipped") {
+    Side from = before(), mid = between(), to = after();
+    fs::path items = installed(mid);
+    Release release = releasedSide(to);
+    json published = to.meta;
+    addPatch(release, published, from, mid);
+    addPatch(release, published, mid, to);
+    Run run = update(items, release);
+    CHECK(run.status.state == State::Ready);
+    CHECK(release.asked == std::vector<std::string>{ ItemFiles::META_FILE, published["patches"][1]["file"].get<std::string>() });
+    isAfter();
+}
+
+TEST_CASE("when the patches don't lead to the release's pack, the whole pack comes") {
+    Side from = before(), mid = between(), to = after();
+    fs::path items = installed(from);
+    Release release = releasedSide(to);
+    json published = to.meta;
+    SECTION("none from the installed pack") {
+        addPatch(release, published, mid, to);
+    }
+    SECTION("a gap in the chain") {
+        addPatch(release, published, from, mid);
+        published["patches"][0]["to"] = std::string(64, 'a');
+        addPatch(release, published, mid, to);
+    }
+    SECTION("a patch that makes another pack than it says") {
+        addPatch(release, published, from, mid);
+        published["patches"][0]["to"] = to.meta["sha256"];
+        release.files[ItemFiles::META_FILE] = published.dump();
+    }
+    SECTION("a patch that didn't come") {
+        addPatch(release, published, from, to);
+        release.files.erase(published["patches"][0]["file"].get<std::string>());
+    }
+    SECTION("a patch bigger than its items.json says") {
+        addPatch(release, published, from, to);
+        published["patches"][0]["size"] = 10;
+        release.files[ItemFiles::META_FILE] = published.dump();
+    }
+    SECTION("patches that come to more than half the pack") {
+        addPatch(release, published, from, to);
+        published["patches"][0]["size"] = to.packed.size() / 2 + 1;
+        release.files[ItemFiles::META_FILE] = published.dump();
+    }
+    SECTION("a patch with a name the builder doesn't make") {
+        addPatch(release, published, from, to);
+        published["patches"][0]["file"] = "../items.pack.gz";
+        release.files[ItemFiles::META_FILE] = published.dump();
+    }
+    Run run = update(items, release);
+    CHECK(run.status.state == State::Ready);
+    CHECK(run.status.reason == Reason::None);
+    REQUIRE_FALSE(release.asked.empty());
+    CHECK(release.asked.back() == to.meta["file"].get<std::string>());
+    isAfter();
+    installedIs(items, { to.raw, to.packed, published });
+}
+
+TEST_CASE("a pack name in items.json that the builder doesn't make is taken as items.pack.gz") {
+    fs::path items = noItems();
+    Release release = released();
+    json wrong = meta();
+    wrong["file"] = "../../evil.gz";
+    release.files[ItemFiles::META_FILE] = wrong.dump();
+    Run run = update(items, release);
+    CHECK(run.status.state == State::Ready);
+    CHECK(release.asked.back() == ItemFiles::PACK_FILE);
 }
 
 TEST_CASE("the release's names for packs and patches are by sha256") {
