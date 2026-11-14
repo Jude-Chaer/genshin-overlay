@@ -1,0 +1,67 @@
+# Installs the libraries in vcpkg.json into vcpkg_installed, the folder the
+# projects build against. Each built library is kept in vcpkg's binary cache
+# under a hash of its version, the compiler and the build options, so a run
+# only builds what changed since the last saved cache.
+
+name: vcpkg libraries
+description: Install the vcpkg libraries from the binary cache
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the binary cache
+      uses: actions/cache/restore@v4
+      with:
+        path: vcpkg_cache
+        key: vcpkg-bin-${{ github.run_id }}
+        restore-keys: vcpkg-bin-
+
+    - name: Install the libraries
+      id: install
+      shell: pwsh
+      run: |
+        $cache = Join-Path $env:GITHUB_WORKSPACE "vcpkg_cache"
+        New-Item -ItemType Directory -Force $cache | Out-Null
+        $sources = "clear;files,$cache,readwrite"
+        "VCPKG_BINARY_SOURCES=$sources" >> $env:GITHUB_ENV
+        $env:VCPKG_BINARY_SOURCES = $sources
+
+        # the runner's vcpkg can be older than the baseline in vcpkg.json
+        for ($try = 1; $try -le 2; $try++) {
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --quiet origin master
+          if ($LASTEXITCODE -eq 0) { break }
+          if ($try -eq 2) { Write-Host "Couldn't fetch vcpkg's port versions"; exit 1 }
+        }
+        & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
+
+        $before = @(Get-ChildItem $cache -Recurse -File | ForEach-Object BaseName | Sort-Object)
+        # a source download can time out, a second try usually gets it
+        for ($try = 1; $try -le 2; $try++) {
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static --x-install-root=vcpkg_installed\x64-windows-static
+          $installed = $LASTEXITCODE
+          if ($installed -eq 0 -or $try -eq 2) { break }
+          Write-Host "vcpkg install failed, trying again"
+        }
+
+        # each archive is named by its package's ABI hash; after a full install outside pull
+        # requests, the archives no installed package has are dropped
+        if ($installed -eq 0 -and "${{ github.event_name }}" -ne "pull_request") {
+          $db = "vcpkg_installed\x64-windows-static\vcpkg"
+          $used = @{}
+          Get-ChildItem "$db\status", "$db\updates\*" -File | Get-Content | Where-Object { $_ -match '^Abi: (\w+)' } | ForEach-Object { $used[$Matches[1]] = $true }
+          Get-ChildItem $cache -Recurse -File | Where-Object { -not $used.ContainsKey($_.BaseName) } | Remove-Item
+        }
+        $after = @(Get-ChildItem $cache -Recurse -File | ForEach-Object BaseName | Sort-Object)
+
+        $kept = @($after | Where-Object { $before -contains $_ }).Count
+        Write-Host "Binary cache: $kept packages from the cache, $($after.Count - $kept) built, $($before.Count - $kept) dropped"
+        if (($after -join ",") -ne ($before -join ",")) { "save=true" >> $env:GITHUB_OUTPUT }
+        exit $installed
+
+    # also after a failed install, so what did build isn't built again
+    - name: Save the binary cache
+      if: ${{ !cancelled() && steps.install.outputs.save == 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: vcpkg_cache
+        key: vcpkg-bin-${{ github.run_id }}-${{ github.run_attempt }}

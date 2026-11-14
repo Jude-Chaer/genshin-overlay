@@ -26,21 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # same cache as the map index workflow, so OpenCV isn't built again
-      - name: Cache vcpkg libraries
-        uses: actions/cache@v4
-        with:
-          path: vcpkg_installed
-          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+      - uses: ./.github/actions/vcpkg
 
       - uses: microsoft/setup-msbuild@v2
 
       - name: Build
         shell: pwsh
         run: |
-          # the runner's vcpkg can be older than the baseline in vcpkg.json
-          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --quiet origin master
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
           msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
       - name: Package
