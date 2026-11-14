@@ -1137,6 +1137,36 @@ TEST_CASE("drawing alone doesn't take clicks, that's asked for") {
     TestExtension::unloadAll();
 }
 
+TEST_CASE("only the overlay's own extensions, as they came, are Official") {
+    std::string map = Files::readText(Helpers::exeDirectory() / "extensions" / "map" / "main.lua");
+    REQUIRE_FALSE(map.empty());
+    Extensions::Extension* ours = TestExtension::load("ours", map);
+    REQUIRE(ours != nullptr);
+    CHECK(ours->official);
+    TestExtension::unloadAll();
+
+    Extensions::Extension* changed = TestExtension::load("changed", map + "\n-- one more line\n");
+    REQUIRE(changed != nullptr);
+    CHECK_FALSE(changed->official);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("another extension can't be named or signed like the overlay's own") {
+    CHECK(Extensions::reservedName("Official Map"));
+    CHECK(Extensions::reservedName("genshin-overlay team"));
+    CHECK(Extensions::reservedName("GENSHIN OVERLAY"));
+    CHECK_FALSE(Extensions::reservedName("Chest finder"));
+
+    CaptureLog log;
+    Extensions::Extension* ext = TestExtension::load("finder",
+        "metadata = { name = \"Map (Official)\", author = \"Genshin Overlay\" }");
+    REQUIRE(ext != nullptr);
+    CHECK_FALSE(ext->official);
+    CHECK(ext->name == "finder");
+    CHECK(ext->author == "Unknown");
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("a call that never ends is stopped, and the extension unloaded at the next frame") {
     Keybindings::keybinds.clear();
     LuaFunctions::intervals.clear();
@@ -1874,4 +1904,20 @@ TEST_CASE("an attention dot goes once its tab has been open 2 seconds, at most 3
     CHECK(ext->dots.count("Types") == 1);
     ImGui::DestroyContext(context);
     TestExtension::unloadAll();
+}
+
+TEST_CASE("the bundled map and minimap run with no map open") {
+    const std::filesystem::path bundled = std::filesystem::path(__FILE__).parent_path().parent_path() / "extensions";
+    for (const char* name : { "map", "minimap" }) {
+        std::ifstream file(bundled / name / "main.lua");
+        REQUIRE(file);
+        std::stringstream code;
+        code << file.rdbuf();
+        Extensions::Extension* ext = TestExtension::load(name, code.str());
+        REQUIRE(ext);
+        REQUIRE(ext->updateFunction);
+        Extensions::runForExtension(ext, [&]() { ext->updateFunction(); });
+        CHECK(ext->lastError.empty());
+        TestExtension::unloadAll();
+    }
 }

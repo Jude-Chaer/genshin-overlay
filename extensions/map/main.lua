@@ -6,7 +6,7 @@ metadata = {
 }
 
 function RegisterSettings()
-    DefineExtensionSetting("showMap", "Show the map overlay", "bool", true)
+    DefineExtensionSetting("showMap", "Show the map overlay", "bool", false)
     DefineExtensionSetting("opacity", "Opacity", "float", 0.5, 0.0, 1.0)
     DefineExtensionSetting("showWhileMoving", "Show the overlay while the map moves", "bool", true)
 end

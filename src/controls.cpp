@@ -2001,8 +2001,9 @@ namespace Controls {
         ImVec2 size = ImGui::CalcTextSize(text);
         ImVec2 pad(font * 0.5f, font * 0.15f);
         ImVec2 box(size.x + pad.x * 2, size.y + pad.y * 2);
-        // centred on the item before it
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (before - box.y) / 2);
+        // centred on the item before it, under it when the row has no room
+        if (ImGui::GetContentRegionAvail().x < box.x) ImGui::NewLine();
+        else ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (before - box.y) / 2);
         ImGui::Dummy(box);
         ImVec2 min = ImGui::GetItemRectMin();
         ImDrawList* draw = ImGui::GetWindowDrawList();

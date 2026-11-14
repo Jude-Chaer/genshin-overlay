@@ -251,6 +251,9 @@ namespace Extensions {
 		std::string author;
 		std::string version;
 		std::string extensionHash;
+		// its files are one of the extensions the overlay comes with, as they
+		// came: it's shown as Official
+		bool official = false;
 		// each .lua file in the hash (its path in the folder, UTF-8 with '/') and
 		// its own hash: require runs only these, and only as they were at load
 		std::vector<std::pair<std::string, std::string>> luaFiles;
@@ -432,6 +435,11 @@ namespace Extensions {
 	// asks for its keys that wait, the ones not refused at this start
 	extern void askWaitingKeys(Extension& ext);
 	extern void loadExtensionPermissions(Extension* ext);
+	// "Official" or "Genshin Overlay" in it, letter case, spaces and signs
+	// aside: only the overlay's own extensions are named like that
+	extern bool reservedName(const std::string& name);
+	// its name, with the Official badge after it for the overlay's own
+	extern void drawName(const Extension& ext);
 	// metadata.permissions = { network = { reason = "..." } }: the author's
 	// reasons go in ext.reasons, a name nothing has is logged
 	extern void readListedPermissions(Extension& ext, const sol::table& list);

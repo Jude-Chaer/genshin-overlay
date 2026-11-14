@@ -227,17 +227,23 @@ namespace Asks {
 	static void drawPermissions(const Ask& ask, Answer& answered, bool& done) {
 		const Extension& ext = *ask.ext;
 		if (ask.permissions.empty()) {
-			ImGui::Text("%s asks for more keys: %s", ext.name.c_str(), Helpers::joined(ask.keys).c_str());
+			Extensions::drawName(ext);
+			ImGui::SameLine();
+			ImGui::Text("asks for more keys: %s", Helpers::joined(ask.keys).c_str());
 			ImGui::TextDisabled("%s", Extensions::findPermission(Permission::Keybinds)->reason);
 		}
 		else if (ask.permissions.size() == 1 && !ext.reasons.count(ask.permissions[0])) {
 			const Extensions::PermissionInfo* info = Extensions::findPermission(ask.permissions[0]);
-			ImGui::Text("%s asks for: %s", ext.name.c_str(), info->label);
+			Extensions::drawName(ext);
+			ImGui::SameLine();
+			ImGui::Text("asks for: %s", info->label);
 			if (info->type == Permission::Keybinds && !ask.keys.empty()) ImGui::Text("Keys: %s", Helpers::joined(ask.keys).c_str());
 			ImGui::TextDisabled("%s", Extensions::reasonLine(ext, *info).c_str());
 		}
 		else {
-			ImGui::Text("%s asks for:", ext.name.c_str());
+			Extensions::drawName(ext);
+			ImGui::SameLine();
+			ImGui::TextUnformatted("asks for:");
 			for (Permission permission : ask.permissions) bullet(ext, *Extensions::findPermission(permission), ask.keys);
 		}
 		if (Controls::Button("Allow")) { answered = Answer::Allow; done = true; }
@@ -249,7 +255,9 @@ namespace Asks {
 
 	static void drawChanged(const Ask& ask, Answer& answered, bool& done) {
 		const Extension& ext = *ask.ext;
-		ImGui::Text("%s changed since you allowed it. Allow the same again?", ext.name.c_str());
+		Extensions::drawName(ext);
+		ImGui::SameLine();
+		ImGui::TextUnformatted("changed since you allowed it. Allow the same again?");
 		std::vector<std::string> keys = ext.allowedKeys;
 		for (const Extensions::PermissionInfo* info : askedBefore(ext)) bullet(ext, *info, keys);
 		ImGui::TextDisabled("Until then what needs them waits.");
@@ -260,7 +268,9 @@ namespace Asks {
 
 	static void drawSetting(const Ask& ask, Answer& answered, bool& done) {
 		const OverlaySetting* setting = findSetting(ask.setting);
-		ImGui::Text("%s asks to turn on: %s", ask.ext->name.c_str(), setting ? setting->turnOnLabel.c_str() : ask.setting.c_str());
+		Extensions::drawName(*ask.ext);
+		ImGui::SameLine();
+		ImGui::Text("asks to turn on: %s", setting ? setting->turnOnLabel.c_str() : ask.setting.c_str());
 		if (setting) ImGui::TextDisabled("%s", setting->reason.c_str());
 		if (Controls::Button("Turn on")) { answered = Answer::Allow; done = true; }
 		ImGui::SameLine();

@@ -722,6 +722,7 @@ namespace Extensions {
 		ImGui::BeginGroup();
 
 		Controls::PageTitle(ext->name.c_str());
+		if (ext->official) Controls::Tag("Official");
 
 		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 		ImGui::TextWrapped(
@@ -1060,6 +1061,24 @@ namespace Extensions {
 		return authorText(text, 200, false);
 	}
 
+	// tools/official_extensions.ps1 writes these at build time
+	static const std::vector<std::string> officialHashes = {
+#include "official_extensions.inc"
+	};
+
+	bool reservedName(const std::string& name) {
+		std::string letters;
+		for (unsigned char c : name) {
+			if (std::isalnum(c)) letters += (char)std::tolower(c);
+		}
+		return letters.find("official") != std::string::npos || letters.find("genshinoverlay") != std::string::npos;
+	}
+
+	void drawName(const Extension& ext) {
+		ImGui::TextUnformatted(ext.name.c_str());
+		if (ext.official) Controls::Tag("Official");
+	}
+
 	// Every folder gives an extension: one that failed has startError (or
 	// stopReason) and no Lua state, and is shown with it.
 	static std::unique_ptr<Extension> loadExtension(const fs::path& scriptPath, const fs::path& folderPath) {
@@ -1125,6 +1144,7 @@ namespace Extensions {
 		}
 
 		ext->extensionHash = Helpers::hashString(combined);
+		ext->official = std::find(officialHashes.begin(), officialHashes.end(), ext->extensionHash) != officialHashes.end();
 		ext->luaFiles = luaFileHashes;
 		const std::string* mainHash = loadedHash(*ext, fs::path(L"main.lua"));
 		if (!mainHash || Helpers::hashString(code) != *mainHash) {
@@ -1185,10 +1205,19 @@ namespace Extensions {
 			ext->about = authorText(meta->get_or("about", std::string()), AboutLetters, true);
 			ext->author = meta->get_or("author", std::string("Unknown"));
 			ext->version = meta->get_or("version", std::string("1.0.0"));
+			if (!ext->official && reservedName(ext->author)) {
+				std::cerr << "[" << ext->name << "] metadata.author: only the overlay's own extensions are by " << ext->author << std::endl;
+				ext->author = "Unknown";
+			}
 			sol::optional<sol::table> listed = (*meta)["permissions"];
 			if (listed) readListedPermissions(*ext, *listed);
 		}
 		ext->listRead = true;
+
+		if (!ext->official && reservedName(ext->name)) {
+			std::cerr << "[" << ext->name << "] only the overlay's own extensions are named like that, it's shown by its folder" << std::endl;
+			ext->name = reservedName(ext->folderKey) ? "Extension" : shownName(ext->folderKey);
+		}
 
 		std::filesystem::path iconPath = folderPath / "icon.png";
 		if (std::filesystem::exists(iconPath)) {
@@ -1367,7 +1396,7 @@ namespace Extensions {
 		}
 		ImGui::Text("Version: %s", ext.version.c_str());
 		ImGui::Text("Author: %s", ext.author.c_str());
-		ImGui::TextDisabled("As the extension names it. Nobody checks it.");
+		if (!ext.official) ImGui::TextDisabled("As the extension names it. Nobody checks it.");
 		ImGui::Text("Folder: %s", ext.folderKey.c_str());
 	}
 

@@ -6,8 +6,8 @@ metadata = {
 }
 
 function RegisterSettings()
-    DefineExtensionSetting("show", "Show the position on screen", "bool", true)
-    DefineExtensionSetting("showMap", "Draw the map where it thinks you are", "bool", true)
+    DefineExtensionSetting("show", "Show the position on screen", "bool", false)
+    DefineExtensionSetting("showMap", "Draw the map where it thinks you are", "bool", false)
     DefineExtensionSetting("onTop", "Draw it over the minimap instead of next to it", "bool", false)
     DefineExtensionSetting("opacity", "Opacity", "float", 1.0, 0.0, 1.0)
 end
@@ -65,6 +65,8 @@ local function drawMap(player, left, top, right, bottom)
 end
 
 function Update()
+    -- the minimap is only read while GetPlayer is called
+    if not GetSetting("show") and not GetSetting("showMap") then return end
     local player = GetPlayer()
 
     if GetSetting("show") then
