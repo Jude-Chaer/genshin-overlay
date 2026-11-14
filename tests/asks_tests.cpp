@@ -679,21 +679,22 @@ TEST_CASE("the permissions an extension's code calls for are found, comments lef
     CHECK(callsFor("ClickArea(1, 2, 3, 4)") == std::unordered_set<Permission>{ Permission::TakeClicks });
     CHECK(callsFor("local socket = WebSocket.new()") == std::unordered_set<Permission>{ Permission::NetworkAccess });
     CHECK(callsFor("RegisterKeybind(Keys.F5, f, KeybindModifiers.Alt)") == std::unordered_set<Permission>{ Permission::Keybinds });
+    CHECK(callsFor("AddTrigger(\"ScreenPicture\", f)") == std::unordered_set<Permission>{ Permission::DisplayRead });
     CHECK(callsFor("AddTrigger('MapView', f)") == std::unordered_set<Permission>{ Permission::MapInfo });
     CHECK(callsFor("AskForPermission([[mouse_anywhere]])") == std::unordered_set<Permission>{ Permission::MouseAnywhere });
     CHECK(callsFor("-- ClickArea(1, 2, 3, 4)\n--[==[ Net_Get(x) ]==]\nlocal ClickAreas = 1").empty());
     CHECK(callsFor("print(\"ClickArea \\\" Net_Get\")").empty());
-    CHECK(callsFor("x = 1 -- ClickArea(1, 2, 3, 4)\nNet_Get(x)") == std::unordered_set<Permission>{ Permission::NetworkAccess });
+    CHECK(callsFor("x = 1 -- Net_Get\nGetScreenPicture('map')") == std::unordered_set<Permission>{ Permission::DisplayRead });
 }
 
 TEST_CASE("a permission refused while main.lua's top level runs is asked for once it has loaded") {
     Fresh fresh;
-    Extensions::Extension* ext = TestExtension::load("top_level", "Net_Get('http://127.0.0.1:9/')");
+    Extensions::Extension* ext = TestExtension::load("top_level", "GetScreenPicture('map')");
     REQUIRE(ext != nullptr);
     REQUIRE(Asks::queue().size() == 1);
     CHECK(Asks::queue()[0].ext == ext);
     CHECK(Asks::queue()[0].kind == Kind::Permissions);
-    CHECK(Asks::queue()[0].permissions == std::vector<Permission>{ Permission::NetworkAccess });
+    CHECK(Asks::queue()[0].permissions == std::vector<Permission>{ Permission::DisplayRead });
     CHECK(ext->askWhenLoaded.empty());
     TestExtension::unloadAll();
 }
@@ -712,22 +713,34 @@ TEST_CASE("the Permissions tab lists what any Lua file calls for") {
 TEST_CASE("a call its files didn't show is asked for when it's refused, and listed from then on") {
     Fresh fresh;
     // the name is put together, the scan can't see it
-    const std::string get = "_G['Net' .. '_Get']('http://127.0.0.1:9/')";
+    const std::string picture = "_G['GetScreen' .. 'Picture']('map')";
     Extensions::Extension* ext = TestExtension::load("hidden", "");
     REQUIRE(ext != nullptr);
     CHECK(ext->uses.empty());
-    REQUIRE(TestExtension::run(ext, get));
-    CHECK(ext->uses == std::unordered_set<Permission>{ Permission::NetworkAccess });
+    REQUIRE(TestExtension::run(ext, picture));
+    CHECK(ext->uses == std::unordered_set<Permission>{ Permission::DisplayRead });
     REQUIRE(Asks::queue().size() == 1);
-    CHECK(Asks::queue()[0].permissions == std::vector<Permission>{ Permission::NetworkAccess });
+    CHECK(Asks::queue()[0].permissions == std::vector<Permission>{ Permission::DisplayRead });
     Asks::answer(Answer::DontAllow);
     // refused this start: not asked again
-    REQUIRE(TestExtension::run(ext, get));
+    REQUIRE(TestExtension::run(ext, picture));
     CHECK(Asks::queue().empty());
     TestExtension::unloadAll();
 
     ext = TestExtension::load("hidden", "");
     REQUIRE(ext != nullptr);
-    CHECK(ext->uses == std::unordered_set<Permission>{ Permission::NetworkAccess });
+    CHECK(ext->uses == std::unordered_set<Permission>{ Permission::DisplayRead });
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("a trigger added without its permission asks for it") {
+    Fresh fresh;
+    Extensions::Extension* ext = TestExtension::load("trigger asks", "");
+    REQUIRE(ext != nullptr);
+    REQUIRE(TestExtension::run(ext, "AddTrigger('Screen' .. 'Picture', function() end)"));
+    CHECK(ext->uses.count(Permission::DisplayRead) == 1);
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].permissions == std::vector<Permission>{ Permission::DisplayRead });
+    Asks::clear();
     TestExtension::unloadAll();
 }

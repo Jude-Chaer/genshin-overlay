@@ -352,7 +352,7 @@ TEST_CASE("an old by-hash permission list is moved to the extension's folder") {
     CHECK(saved["extensions"]["map"]["opacity"] == 0.5);
     CHECK(saved["zoomFromKnob"] == true);
 
-    CHECK(ext.extensionPermissions == withDefaults({ Permission::Keybinds, Permission::NetworkAccess }));
+    CHECK(ext.extensionPermissions == withDefaults({ Permission::DisplayRead, Permission::Keybinds, Permission::NetworkAccess }));
     CHECK(ext.grantsBeforeChange.empty());
 
     // the next start finds it by folder
@@ -375,7 +375,7 @@ TEST_CASE("saved grants come back by name, with ones this overlay doesn't know k
     // the player takes Network Access away
     ext.extensionPermissions.erase(Permission::NetworkAccess);
     Extensions::saveExtensionPermissions(ext);
-    CHECK(readSettings()["extensionGrants"]["markers"]["granted"] == std::vector<std::string>{ "display_overlay", "map_info", "display_read",
+    CHECK(readSettings()["extensionGrants"]["markers"]["granted"] == std::vector<std::string>{ "display_overlay", "map_info",
         "keybinds", "internal_read", "internal_write", "notices", "dots", "game_traffic" });
 
     Extensions::loadExtensionPermissions(&ext);
@@ -419,7 +419,7 @@ TEST_CASE("an extension whose files changed runs with the defaults it still had"
     ext.extensionHash = "h2";
     Extensions::loadExtensionPermissions(&ext);
 
-    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay, Permission::DisplayRead,
+    CHECK(ext.extensionPermissions == std::unordered_set<Permission>{ Permission::DisplayOverlay,
         Permission::MapInfo, Permission::InternalReadfile, Permission::Notices, Permission::Dots });
     CHECK(ext.grantsBeforeChange == std::vector<std::string>{ "keybinds", "network",
         "display_overlay", "display_read", "internal_read" });

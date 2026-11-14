@@ -1,4 +1,5 @@
 #include "triggers.hpp"
+#include "screen_pictures.hpp"
 #include "asks.hpp"
 #include "item_catalog.hpp"
 #include "lua_functions.hpp"
@@ -12,10 +13,11 @@ namespace Triggers {
 	using Extensions::Extension;
 	using Permission = Extensions::ExtensionPermissionTypes;
 
-	enum class Kind { Screens, MapView, Player, Items, Page, Setting, Permission, Look };
+	enum class Kind { Screens, ScreenPicture, MapView, Player, Items, Page, Setting, Permission, Look };
 
 	static const std::vector<std::pair<std::string, Kind>> kinds = {
 		{ "Screens", Kind::Screens },
+		{ "ScreenPicture", Kind::ScreenPicture },
 		{ "MapView", Kind::MapView },
 		{ "Player", Kind::Player },
 		{ "Items", Kind::Items },
@@ -36,9 +38,12 @@ namespace Triggers {
 
 	static std::vector<std::string> changes(Kind kind) {
 		switch (kind) {
-		case Kind::Screens: {
+		case Kind::Screens:
+		case Kind::ScreenPicture: {
 			std::vector<std::string> all;
-			for (const Screens::Known& known : Screens::list) all.push_back(known.name);
+			for (const Screens::Known& known : Screens::list) {
+				if (kind == Kind::Screens || known.picture) all.push_back(known.name);
+			}
 			return all;
 		}
 		case Kind::MapView: return { "view", "floor" };
@@ -77,6 +82,7 @@ namespace Triggers {
 	}
 
 	static Permission needs(Kind kind) {
+		if (kind == Kind::ScreenPicture) return Permission::DisplayRead;
 		return needsMapInfo(kind) ? Permission::MapInfo : Permission::None;
 	}
 
@@ -90,6 +96,7 @@ namespace Triggers {
 	static bool mayRun(const Trigger& trigger) {
 		const Extension* ext = trigger.owner;
 		if (!ext || ext->stopped || ext->closing || !ext->stopReason.empty()) return false;
+		if (trigger.kind == Kind::ScreenPicture) return ext->extensionPermissions.count(Permission::DisplayRead) > 0;
 		return !needsMapInfo(trigger.kind) || ext->extensionPermissions.count(Permission::MapInfo) > 0;
 	}
 
@@ -138,6 +145,14 @@ namespace Triggers {
 		switch (trigger.kind) {
 		case Kind::Screens:
 			for (const Screens::Known& known : Screens::list) parts[known.name] = now.screens[known.screen] ? "1" : "0";
+			break;
+		case Kind::ScreenPicture:
+			// a new picture while the screen is up
+			for (const Screens::Known& known : Screens::list) {
+				if (!known.picture) continue;
+				uint64_t frame = now.pictures[(size_t)known.screen];
+				parts[known.name] = now.screens[known.screen] && frame != 0 ? std::to_string(frame) : "";
+			}
 			break;
 		case Kind::MapView:
 			parts["view"] = viewText(now);
@@ -214,6 +229,9 @@ namespace Triggers {
 		case Kind::Page:
 			if (has("shown")) events.push_back(now.at("shown") == "1" ? "shown" : "hidden");
 			return events;
+		case Kind::ScreenPicture:
+			for (const std::string& part : parts) if (!now.at(part).empty()) events.push_back(part);
+			return events;
 		default:
 			return parts;
 		}
@@ -233,6 +251,7 @@ namespace Triggers {
 	static sol::object given(Kind kind, const std::string& changed, const State& now, sol::state_view lua) {
 		switch (kind) {
 		case Kind::Screens: return LuaFunctions::screensTable(now.screens, lua);
+		case Kind::ScreenPicture: return LuaFunctions::screenPictureTable(changed, ScreenPictures::DefaultWidth, now.screens, lua);
 		case Kind::MapView: return LuaFunctions::mapViewTable(now.view, lua);
 		case Kind::Player: return LuaFunctions::playerTable(now.player, lua);
 		case Kind::Items: return LuaFunctions::Items::table(now.itemsVersion, now.items, lua);
@@ -252,6 +271,7 @@ namespace Triggers {
 		Kind kind = it->kind;
 		std::string what = "trigger " + it->name;
 		if (needsMapInfo(kind)) Extensions::markUsed(*owner, Permission::MapInfo);
+		if (kind == Kind::ScreenPicture) Extensions::markUsed(*owner, Permission::DisplayRead);
 		Extensions::runForExtension(owner, [&]() {
 			sol::state_view lua(function.lua_state());
 			sol::protected_function_result result = function(given(kind, due.changed, now, lua), due.changed);
@@ -296,9 +316,21 @@ namespace Triggers {
 		return !triggers.empty();
 	}
 
-	bool wantsPlayer() {
+	static bool wants(Kind kind) {
 		for (const Trigger& trigger : triggers) {
-			if (trigger.kind == Kind::Player && mayRun(trigger)) return true;
+			if (trigger.kind == kind && mayRun(trigger)) return true;
+		}
+		return false;
+	}
+
+	bool wantsPlayer() {
+		return wants(Kind::Player);
+	}
+
+	// whether a ScreenPicture trigger that may run wants this screen
+	static bool wantsPicture(const char* screen) {
+		for (const Trigger& trigger : triggers) {
+			if (trigger.kind == Kind::ScreenPicture && (trigger.only.empty() || trigger.only == screen) && mayRun(trigger)) return true;
 		}
 		return false;
 	}
@@ -306,6 +338,11 @@ namespace Triggers {
 	State current(bool wantsPlayer) {
 		State now;
 		now.screens = Screens::now();
+		// as GetScreenPicture does, asking keeps the picture made
+		for (const Screens::Known& known : Screens::list) {
+			if (!known.picture || !now.screens[known.screen] || !wantsPicture(known.name)) continue;
+			now.pictures[(size_t)known.screen] = ScreenPictures::get(known.screen, ScreenPictures::DefaultWidth, now.screens).frame;
+		}
 		now.view = MapTracking::GetView();
 		// as GetPlayer does, asking keeps the minimap watched
 		if (wantsPlayer) now.player = MiniMap::GetPlayer();

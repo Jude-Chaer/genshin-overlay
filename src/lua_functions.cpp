@@ -20,6 +20,7 @@
 #include "key_choices.hpp"
 #include "settings.hpp"
 #include "notices.hpp"
+#include "screen_pictures.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -192,6 +193,7 @@ namespace LuaFunctions {
 		global("GetMapFloor", MapInfo, GetMapFloor);
 		global("FreeSpace", MapInfo, FreeSpace);
 		global("GetMousePosition", MapInfo, GetMousePosition);
+		global("GetScreenPicture", Permission::DisplayRead, GetScreenPicture);
 		global("CompareImages", None, CompareImages);
 		global("GetItems", MapInfo, GetItems);
 		global("GetItemTypes", MapInfo, GetItemTypes);
@@ -321,12 +323,13 @@ namespace LuaFunctions {
 	}
 
 	// a texture the calling extension loaded itself, or one the overlay gave
-	// out: a map tile or floor, an item icon
+	// out: a map tile or floor, an item icon, a screen picture with Display Read
 	static bool ownsTexture(GLuint texture) {
 		auto* ext = Extensions::currentExtension;
 		if (!ext || texture == 0) return false;
 		if (std::find(ext->textures.begin(), ext->textures.end(), texture) != ext->textures.end()) return true;
-		return MapTiles::Owns(texture) || ItemIcons::owns(texture);
+		if (MapTiles::Owns(texture) || ItemIcons::owns(texture)) return true;
+		return ScreenPictures::owns(texture) && ext->extensionPermissions.count(Permission::DisplayRead) > 0;
 	}
 
 	static GLuint webImage(const std::string& url);
@@ -629,6 +632,36 @@ namespace LuaFunctions {
 		sol::table screens = lua.create_table();
 		for (const Screens::Known& known : Screens::list) screens[known.name] = up[known.screen];
 		return screens;
+	}
+
+	sol::object screenPictureTable(const std::string& screen, int width, const Screens::Up& up, sol::state_view lua) {
+		auto known = std::find_if(Screens::list.begin(), Screens::list.end(), [&](const Screens::Known& k) { return screen == k.name; });
+		if (known == Screens::list.end()) {
+			Extensions::logOnce("GetScreenPicture", "knows no screen named " + screen);
+			return sol::make_object(lua, sol::lua_nil);
+		}
+		if (!known->picture) {
+			Extensions::logOnce("GetScreenPicture", "gives no picture of the " + screen);
+			return sol::make_object(lua, sol::lua_nil);
+		}
+		ScreenPictures::Refused refused = ScreenPictures::Refused::None;
+		ScreenPictures::Picture picture = ScreenPictures::get(known->screen, width, up, Extensions::currentExtension, &refused);
+		if (refused == ScreenPictures::Refused::TooManyOwn)
+			Extensions::logOnce("GetScreenPicture", "gets at most " + std::to_string(ScreenPictures::MaxPerAsker) + " pictures at once");
+		else if (refused == ScreenPictures::Refused::TooMany)
+			Extensions::logOnce("GetScreenPicture", "got none, the extensions have " + std::to_string(ScreenPictures::MaxPictures) + " pictures at once");
+		if (picture.texture == 0) return sol::make_object(lua, sol::lua_nil);
+		return sol::make_object(lua, lua.create_table_with(
+			"texture", picture.texture,
+			"width", picture.width,
+			"height", picture.height
+		));
+	}
+
+	sol::object GetScreenPicture(const std::string& screen, sol::optional<sol::table> options, sol::this_state state) {
+		int width = ScreenPictures::DefaultWidth;
+		if (options) width = options->get_or("width", width);
+		return screenPictureTable(screen, width, Screens::now(), state);
 	}
 
 	// RegisterKeybind(key, function, modifiers, label), modifiers like

@@ -30,6 +30,9 @@ namespace Triggers {
     // What the triggers are checked against, read once per turn of the draw loop
     struct State {
         Screens::Up screens;
+        // the game frame of each screen's picture, 0 with none, only read
+        // while a ScreenPicture trigger wants that screen
+        std::array<uint64_t, (size_t)Screens::Screen::Count> pictures = {};
         // what GetMapView gives, with the floor picker's box from the overlay
         MapTracking::MapView view;
         RECT picker = {};

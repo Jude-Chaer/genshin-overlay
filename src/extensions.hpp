@@ -50,7 +50,7 @@ namespace Extensions {
 	inline const std::vector<PermissionInfo> permissionList = {
 		{ExtensionPermissionTypes::DisplayOverlay, "display_overlay", "Display Overlay", "It can draw on the overlay."},
 		{ExtensionPermissionTypes::MapInfo, "map_info", "Map info", "It can see where the map is, where you are and the map items."},
-		{ExtensionPermissionTypes::DisplayRead, "display_read", "Display Read", "It can see the game's screen."},
+		{ExtensionPermissionTypes::DisplayRead, "display_read", "Display Read", "It can see some game screens, like the map, with your UID hidden."},
 		{ExtensionPermissionTypes::Keybinds, "keybinds", "Keybinds", "It takes these keys while you play. The game won't see them."},
 		{ExtensionPermissionTypes::InternalReadfile, "internal_read", "Internal File Reading", "It can read files in its own folder."},
 		{ExtensionPermissionTypes::InternalWritefile, "internal_write", "Internal File Writing", "It can change files in its own folder."},
@@ -67,7 +67,6 @@ namespace Extensions {
 	// what a new extension may do without asking
 	inline const std::unordered_set<ExtensionPermissionTypes> defaultPermissions = {
 		ExtensionPermissionTypes::DisplayOverlay,
-		ExtensionPermissionTypes::DisplayRead,
 		ExtensionPermissionTypes::MapInfo,
 		ExtensionPermissionTypes::InternalReadfile,
 		ExtensionPermissionTypes::InternalWritefile,

@@ -83,6 +83,10 @@ namespace LuaFunctions {
     void ImGUI_Separator();
     sol::table GetScreens(sol::this_state state);
     sol::table screensTable(const Screens::Up& up, sol::state_view lua);
+    // GetScreenPicture(screen, options): { texture, width, height } of a screen
+    // that is up, nil when it isn't. options.width, 1280 when not given.
+    sol::object GetScreenPicture(const std::string& screen, sol::optional<sol::table> options, sol::this_state state);
+    sol::object screenPictureTable(const std::string& screen, int width, const Screens::Up& up, sol::state_view lua);
     std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, sol::optional<int> modifiers,
         sol::optional<std::string> label);
     bool DeleteKeybind(const std::string& uuid);

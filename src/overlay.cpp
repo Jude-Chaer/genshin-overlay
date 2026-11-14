@@ -18,6 +18,7 @@
 #include "settings.hpp"
 #include "capture.hpp"
 #include "triggers.hpp"
+#include "screen_pictures.hpp"
 #include "key_choices.hpp"
 #include "typing.hpp"
 #include <imgui_internal.h>
@@ -1058,6 +1059,7 @@ namespace Overlay {
             updateLook(lookPicked);
             lookPicked = false;
             updateFont();
+            ScreenPictures::nextTurn();
             Triggers::checkNow();
             LuaFunctions::UpdateAnswers();
 

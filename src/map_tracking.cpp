@@ -119,6 +119,18 @@ namespace MapTracking {
     // Zoombar Detector thread.
     static std::atomic<bool> mapOpen{ false };
     static std::atomic<bool> detectorStopping{ false };
+    // the first and last game frame the zoom bar was seen on since the map
+    // opened, 0 while it's closed
+    static std::mutex openFramesMutex;
+    static uint64_t openFirst = 0, openLast = 0;
+    static void seenOpen(bool open, uint64_t frame) {
+        std::lock_guard<std::mutex> lock(openFramesMutex);
+        if (!open || frame == 0) openFirst = openLast = 0;
+        else {
+            if (openFirst == 0) openFirst = frame;
+            openLast = std::max(openLast, frame);
+        }
+    }
 
     static std::thread detectorWorker;
     static std::mutex detectorMutex;
@@ -541,6 +553,11 @@ namespace MapTracking {
         return mapOpen.load(std::memory_order_acquire);
     }
 
+    bool MapOpenOn(uint64_t frame) {
+        std::lock_guard<std::mutex> lock(openFramesMutex);
+        return frame != 0 && openFirst != 0 && openFirst <= frame && frame <= openLast;
+    }
+
     void FollowWhileMoving() {
         followAskedAt = std::chrono::steady_clock::now().time_since_epoch().count();
     }
@@ -755,6 +772,7 @@ namespace MapTracking {
                     previousOpen = false;
                     mapOpen = false;
                     Capture::setLight(true);
+                    seenOpen(false, 0);
 
                     std::lock_guard<std::mutex> lock(mutex);
                     view.visible = false;
@@ -766,8 +784,10 @@ namespace MapTracking {
 
             cv::Mat zoomScreenshot;
 
-            if (Capture::grabGame(detectorGameWindowCache, detectorRectCache, zoomScreenshot)) {
+            Capture::Frame zoomFrame;
+            if (Capture::grabGame(detectorGameWindowCache, detectorRectCache, zoomScreenshot, &zoomFrame)) {
                 bool open = detectZoomBar(zoomScreenshot);
+                seenOpen(open, zoomFrame.number);
                 if (open != previousOpen) {
                     previousOpen = open;
                     mapOpen = open;

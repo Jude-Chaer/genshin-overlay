@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include "locator/map_locator.hpp"
@@ -60,6 +61,9 @@ namespace MapTracking {
     extern Status GetStatus();
     // the zoom bar is on screen, so the in-game map is open
     extern bool IsMapOpen();
+    // whether the zoom bar was seen on this game frame or on ones before and
+    // after it, all since the map last opened
+    extern bool MapOpenOn(uint64_t frame);
     // Call every frame while something draws the moving map. Without it
     // there's no view while the map moves, it's only followed loosely and
     // found exactly once it stops.
