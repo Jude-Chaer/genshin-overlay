@@ -22,7 +22,6 @@ import time
 import urllib.request
 
 FORMAT = 1
-MAP_IDS = [2, 7, 9, 34, 36, 37, 40]  # src/map_data.hpp
 API = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc"
 STATIC_API = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc"
 APPSAMPLE = "https://game-data.lemonapi.com/gim/markers_all.v5.compressed.json"
@@ -53,6 +52,17 @@ def hoyolab(path, map_id, static=False):
     if not isinstance(body, dict) or body.get("retcode") != 0 or "data" not in body:
         fail(path + " of map " + str(map_id) + " answered " + str(body.get("message") if isinstance(body, dict) else body)[:200])
     return body["data"]
+
+
+# the game's maps, the ones under Teyvat's node (src/map_data.cpp mapIds)
+def map_ids():
+    body = json.loads(download(STATIC_API + "/v1/map/list?app_sn=ys_obc&lang=en-us"))
+    if not isinstance(body, dict) or body.get("retcode") != 0 or "data" not in body:
+        fail("the map list answered " + str(body.get("message") if isinstance(body, dict) else body)[:200])
+    ids = [item.get("id") for item in body["data"].get("all_map_list") or [] if item.get("node_type") == 2 and item.get("parent_id") == 1]
+    if not ids:
+        fail("the map list has no maps")
+    return ids
 
 
 def pick(item, keys):
@@ -126,9 +136,10 @@ def write(path, hashes):
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     if command == "fetch" and len(sys.argv) == 3:
+        maps = map_ids()
         hashes = {
-            "map": digest([map_part(map_id) for map_id in MAP_IDS]),
-            "items": digest([items_part(map_id) for map_id in MAP_IDS]),
+            "map": digest([map_part(map_id) for map_id in maps]),
+            "items": digest([items_part(map_id) for map_id in maps]),
             "appsample": digest(appsample_part()),
         }
         write(sys.argv[2], hashes)

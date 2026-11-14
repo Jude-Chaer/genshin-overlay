@@ -744,7 +744,12 @@ namespace ItemFiles {
 		std::cout << "Reading HoYoLAB's map items..." << std::endl;
 		Source source;
 		std::map<int, std::string> icons;
-		for (int map : MapData::MAP_IDS) {
+		std::vector<int> maps;
+		if (!MapData::mapIds(maps)) {
+			std::cerr << "HoYoLAB's map list didn't answer" << std::endl;
+			return 1;
+		}
+		for (int map : maps) {
 			if (!downloadMap(map, source)) return 1;
 			findIcons(source.trees[map], icons);
 		}
@@ -769,7 +774,6 @@ namespace ItemFiles {
 
 		// what's published is what the overlay will load, so it's loaded here first the same way
 		std::map<int, MapCount> counts;
-		std::vector<int> maps(std::begin(MapData::MAP_IDS), std::end(MapData::MAP_IDS));
 		std::vector<std::string> problems = checkBuilt(raw, maps, published, allowDrop, counts);
 		for (const auto& [map, count] : counts) {
 			std::cout << "[items] map " << map << ": " << count.points << " points, " << count.types << " types, " << count.pairs << " pairs" << std::endl;

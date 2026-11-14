@@ -244,6 +244,21 @@ namespace MapData {
 		return Files::writeFile(wholeMapPath(folder, grid), std::string(bytes.begin(), bytes.end()));
 	}
 
+	bool mapIds(std::vector<int>& out, Net::Stopper* stop) {
+		out.clear();
+		json list;
+		if (!Files::getJson("/v1/map/list?app_sn=ys_obc&lang=en-us", list, true, stop)) return false;
+		try {
+			for (const json& map : list.value("all_map_list", json::array())) {
+				if (map.value("node_type", 0) == 2 && map.value("parent_id", 0) == 1) out.push_back(map.value("id", 0));
+			}
+		}
+		catch (const json::exception&) {
+			return false;
+		}
+		return !out.empty();
+	}
+
 	bool makePlan(Plan& plan, Net::Stopper* stop) {
 		std::vector<std::string> lines = { "# genshin-overlay map manifest v1" };
 		plan.files.clear();
@@ -256,8 +271,10 @@ namespace MapData {
 			return text;
 		};
 
+		std::vector<int> maps;
+		if (!mapIds(maps, stop)) return false;
 		try {
-			for (int id : MAP_IDS) {
+			for (int id : maps) {
 				std::string query = "map_id=" + std::to_string(id) + "&app_sn=ys_obc&lang=en-us";
 				json info;
 				if (!Files::getJson("/v1/map/info?" + query, info, false, stop)) return false;

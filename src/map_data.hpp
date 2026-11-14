@@ -27,9 +27,9 @@
 // older map, the app makes from the tiles when it's needed.
 
 namespace MapData {
-    // Teyvat, Enkanomiya, The Chasm, and the separate maps from later versions.
-    // Ids without their own tiles get skipped.
-    inline constexpr int MAP_IDS[] = { 2, 7, 9, 34, 36, 37, 40 };
+    // The game's maps in HoYoLAB's map list: the ones under Teyvat's node,
+    // Teyvat itself among them. Ids without their own tiles get skipped.
+    extern bool mapIds(std::vector<int>& out, Net::Stopper* stop = nullptr);
 
     struct File {
         std::string url;
