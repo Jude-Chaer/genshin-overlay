@@ -887,6 +887,15 @@ namespace Overlay {
         ImGui::PopStyleColor();
     }
 
+    // the official Map and Minimap get the overlay's own icons, any other
+    // extension its icon.png or its first letter
+    static Controls::PageIcon OfficialIcon(const Extensions::Extension& ext) {
+        if (!ext.official) return Controls::PageIcon::None;
+        if (ext.folderKey == "map") return Controls::PageIcon::Map;
+        if (ext.folderKey == "minimap") return Controls::PageIcon::Minimap;
+        return Controls::PageIcon::None;
+    }
+
     static void DrawMenu() {
         float font = ImGui::GetFontSize();
         ImGui::SetNextWindowPos(ImVec2(font * 4, font * 4), ImGuiCond_FirstUseEver);
@@ -943,17 +952,17 @@ namespace Overlay {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
 
         // by number, so an extension named "Settings" or two with one name are their own buttons
-        auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile = 0,
-            const Controls::Summary& summary = {}) {
+        auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile,
+            const Controls::Summary& summary, Controls::PageIcon glyph) {
             ImGui::PushID(index);
-            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary)) activeTab = index;
+            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary, glyph)) activeTab = index;
             ImGui::PopID();
         };
 
-        // Apple's grey and orange tiles for the overlay's own pages
-        DrawPage("Home", 0, 0, false, 0x8E8E93FF);
-        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF, pages[1].second);
-        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF, pages[2].second);
+        // Apple's grey, orange and blue tiles for the overlay's own pages
+        DrawPage("Home", 0, 0, false, 0x8E8E93FF, {}, Controls::PageIcon::Home);
+        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF, pages[1].second, Controls::PageIcon::Usage);
+        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF, pages[2].second, Controls::PageIcon::Accounts);
 
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();
@@ -962,7 +971,7 @@ namespace Overlay {
         for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
             auto& ext = Extensions::registeredExtensions[i];
             ImTextureID icon = ext->extensionImage ? (ImTextureID)(intptr_t)ext->extensionImage : 0;
-            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, icon, !ext->dots.empty());
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, icon, !ext->dots.empty(), 0, {}, OfficialIcon(*ext));
         }
 
         ImGui::PopStyleVar();

@@ -249,14 +249,19 @@ namespace Controls {
     void PageTitle(const char* text);
     // the look's bold font for page names, none: the text's own
     void SetTitleFont(ImFont* font);
-    // A page in the menu's list: its icon (none: the name's first letter in a
-    // tile), the name on up to two lines; the picked one filled, with a short
-    // accent bar at its start (Material You: a filled pill, no bar; Apple:
-    // filled blue, the icon on a coloured tile). tile: Apple's tile colour,
-    // none: one of Apple's colours by the name. The summary goes under the
-    // name. True when clicked.
+    // The overlay's own icons for its pages and its official extensions, drawn
+    // as lines in one colour.
+    enum class PageIcon { None, Home, Usage, Accounts, Map, Minimap };
+    // One of them in a size by size square at at.
+    void DrawPageIcon(ImDrawList* draw, PageIcon icon, ImVec2 at, float size, ImU32 color);
+    // A page in the menu's list: its icon (an extension's picture, else glyph,
+    // else the name's first letter in a tile), the name on up to two lines;
+    // the picked one filled, with a short accent bar at its start (Material
+    // You: a filled pill, no bar; Apple: filled blue, the icon on a coloured
+    // tile). tile: Apple's tile colour, none: one of Apple's colours by the
+    // name. The summary goes under the name. True when clicked.
     bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0,
-        const Summary& summary = {});
+        const Summary& summary = {}, PageIcon glyph = PageIcon::None);
     // The width a page button needs for its name on one line and no word of
     // its summary broken, in the look's fonts.
     float PageButtonWidth(const char* label, const Summary& summary = {});

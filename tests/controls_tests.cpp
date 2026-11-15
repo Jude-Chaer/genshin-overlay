@@ -942,6 +942,33 @@ TEST_CASE("in every look a page's name fits on one line at PageButtonWidth, not 
     Controls::SetLook(Controls::Look::Windows, true);
 }
 
+TEST_CASE("every page icon draws inside its square, from Apple's 14 px to 4K") {
+    Frames frames;
+    for (Controls::PageIcon icon : { Controls::PageIcon::Home, Controls::PageIcon::Usage, Controls::PageIcon::Accounts,
+             Controls::PageIcon::Map, Controls::PageIcon::Minimap }) {
+        for (float size : { 14.0f, 16.0f, 24.0f, 48.0f }) {
+            INFO("icon " << (int)icon << " at " << size << " px");
+            frame(300, [&] {
+                ImDrawList* draw = ImGui::GetWindowDrawList();
+                ImVec2 at = ImGui::GetCursorScreenPos();
+                int before = draw->VtxBuffer.Size;
+                Controls::DrawPageIcon(draw, icon, at, size, IM_COL32_WHITE);
+                CHECK(draw->VtxBuffer.Size > before);
+                ImVec2 low(FLT_MAX, FLT_MAX), high(-FLT_MAX, -FLT_MAX);
+                for (int i = before; i < draw->VtxBuffer.Size; ++i) {
+                    ImVec2 pos = draw->VtxBuffer[i].pos;
+                    low = ImVec2(std::min(low.x, pos.x), std::min(low.y, pos.y));
+                    high = ImVec2(std::max(high.x, pos.x), std::max(high.y, pos.y));
+                }
+                CHECK(low.x >= at.x);
+                CHECK(low.y >= at.y);
+                CHECK(high.x <= at.x + size);
+                CHECK(high.y <= at.y + size);
+            });
+        }
+    }
+}
+
 TEST_CASE("a header with a summary still opens and closes on a click") {
     Frames frames;
     bool open = false;

@@ -1978,6 +1978,75 @@ namespace Controls {
         }
     }
 
+    // Drawn on a 24 unit square with 2 unit lines and 3 units clear all round.
+    // ImGui ends thick lines flat, so open lines get round dots on their ends.
+    void DrawPageIcon(ImDrawList* draw, PageIcon icon, ImVec2 at, float size, ImU32 color) {
+        float u = size / 24;
+        float width = std::max(1.0f, 2 * u);
+        auto p = [&](float x, float y) { return ImVec2(at.x + x * u, at.y + y * u); };
+        auto cap = [&](float x, float y) { draw->AddCircleFilled(p(x, y), width / 2, color, 8); };
+        auto line = [&](float x0, float y0, float x1, float y1) {
+            draw->AddLine(p(x0, y0), p(x1, y1), color, width);
+            cap(x0, y0);
+            cap(x1, y1);
+        };
+        auto shape = [&](std::initializer_list<ImVec2> points) {
+            for (ImVec2 point : points) draw->PathLineTo(p(point.x, point.y));
+            draw->PathStroke(color, ImDrawFlags_Closed, width);
+        };
+        const float half = IM_PI / 2;
+        switch (icon) {
+        case PageIcon::Home:
+            // a house with a door, its bottom corners round
+            draw->PathLineTo(p(4, 10.4f));
+            draw->PathLineTo(p(12, 3.6f));
+            draw->PathLineTo(p(20, 10.4f));
+            draw->PathArcTo(p(19, 19), u, 0, half);
+            draw->PathLineTo(p(15, 20));
+            draw->PathArcTo(p(14, 14.8f), u, 0, -half);
+            draw->PathArcTo(p(10, 14.8f), u, -half, -IM_PI);
+            draw->PathLineTo(p(9, 20));
+            draw->PathArcTo(p(5, 19), u, half, IM_PI);
+            draw->PathStroke(color, ImDrawFlags_Closed, width);
+            break;
+        case PageIcon::Usage:
+            line(3.5f, 20, 20.5f, 20);
+            line(6, 20, 6, 14);
+            line(9.5f, 20, 9.5f, 11);
+            line(13, 20, 13, 4);
+            line(16.5f, 20, 16.5f, 14.5f);
+            line(20, 20, 20, 9);
+            break;
+        case PageIcon::Accounts:
+            // a head and open shoulders
+            draw->AddCircle(p(12, 7.8f), 4.4f * u, color, 0, width);
+            draw->PathEllipticalArcTo(p(12, 21), ImVec2(8.5f * u, 7 * u), 0, IM_PI, IM_PI * 2);
+            draw->PathStroke(color, 0, width);
+            cap(3.5f, 21);
+            cap(20.5f, 21);
+            break;
+        case PageIcon::Map:
+            // a map folded in three
+            shape({ { 3, 6.4f }, { 9, 4 }, { 15, 6.4f }, { 21, 4 }, { 21, 17.6f }, { 15, 20 }, { 9, 17.6f }, { 3, 20 } });
+            draw->AddLine(p(9, 4), p(9, 17.6f), color, width);
+            draw->AddLine(p(15, 6.4f), p(15, 20), color, width);
+            break;
+        case PageIcon::Minimap: {
+            // an arrow pointing down into two rings, the outer one open where the arrow goes through
+            float from = std::atan2(-0.911f, 0.4f), to = std::atan2(-0.911f, -0.4f) + IM_PI * 2;
+            draw->PathEllipticalArcTo(p(12, 16), ImVec2(9 * u, 4.5f * u), 0, from, to);
+            draw->PathStroke(color, 0, width);
+            cap(15.6f, 11.9f);
+            cap(8.4f, 11.9f);
+            draw->AddEllipse(p(12, 16), ImVec2(4.5f * u, 2.1f * u), color, 0, 0, width);
+            shape({ { 12, 16 }, { 7.8f, 6 }, { 12, 7.6f }, { 16.2f, 6 } });
+            break;
+        }
+        case PageIcon::None:
+            break;
+        }
+    }
+
     float PageButtonWidth(const char* label, const Summary& summary) {
         float pad, textX, text;
         {
@@ -1997,7 +2066,8 @@ namespace Controls {
         return text + textX + pad + DotRoom();
     }
 
-    static bool applePageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary) {
+    static bool applePageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary,
+        PageIcon glyph) {
         Theme theme = GetTheme();
         float font = ImGui::GetFontSize();
         float width = ImGui::GetContentRegionAvail().x;
@@ -2026,6 +2096,14 @@ namespace Controls {
         else {
             if (!tile) tile = appleTiles[ImHashStr(label) % (sizeof(appleTiles) / sizeof(appleTiles[0]))];
             draw->AddRectFilled(at, to, Color(tile), tileRound);
+        }
+        if (!icon && glyph != PageIcon::None) {
+            // Apple's 22 px tiles hold a 14 px glyph
+            float inner = iconSize * 14 / 22;
+            float in = std::floor((iconSize - inner) / 2);
+            DrawPageIcon(draw, glyph, ImVec2(at.x + in, at.y + in), inner, IM_COL32_WHITE);
+        }
+        else if (!icon) {
             std::string letter = firstLetter(label);
             ImGui::PushFont(nullptr, ImGui::GetCurrentContext()->FontSizeBase * 0.85f);
             ImVec2 size = ImGui::CalcTextSize(letter.c_str());
@@ -2046,7 +2124,7 @@ namespace Controls {
     // colour while picked, a 24 dp icon 16 dp in and the name 12 dp after it
     // in Label Large (14 medium). Without an icon, the name's first letter on
     // a round tile, as Material's avatars have it.
-    static bool materialPageButton(const char* label, bool picked, ImTextureID icon, bool dotted, const Summary& summary) {
+    static bool materialPageButton(const char* label, bool picked, ImTextureID icon, bool dotted, const Summary& summary, PageIcon glyph) {
         Theme theme = GetTheme();
         const MaterialRoles& roles = materialRoles[theme.dark ? 1 : 0];
         LabelType type;
@@ -2073,6 +2151,7 @@ namespace Controls {
         float middle = std::floor((min.y + max.y) / 2);
         ImVec2 at(min.x + pad, middle - iconSize / 2), to(at.x + iconSize, at.y + iconSize);
         if (icon) draw->AddImage(icon, at, to);
+        else if (glyph != PageIcon::None) DrawPageIcon(draw, glyph, at, iconSize, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
         else {
             ImVec2 center(at.x + iconSize / 2, middle);
             draw->AddCircleFilled(center, iconSize / 2, Color(theme.accentSoft));
@@ -2092,10 +2171,10 @@ namespace Controls {
         return clicked;
     }
 
-    bool PageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary) {
+    bool PageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary, PageIcon glyph) {
         Theme theme = GetTheme();
-        if (theme.look == Look::Apple) return applePageButton(label, picked, icon, dotted, tile, summary);
-        if (theme.look == Look::Material) return materialPageButton(label, picked, icon, dotted, summary);
+        if (theme.look == Look::Apple) return applePageButton(label, picked, icon, dotted, tile, summary, glyph);
+        if (theme.look == Look::Material) return materialPageButton(label, picked, icon, dotted, summary, glyph);
         float font = ImGui::GetFontSize();
         float width = ImGui::GetContentRegionAvail().x;
         float pad, textX;
@@ -2122,6 +2201,7 @@ namespace Controls {
         }
         ImVec2 at(min.x + pad, middle - iconSize / 2), to(at.x + iconSize, at.y + iconSize);
         if (icon) draw->AddImage(icon, at, to);
+        else if (glyph != PageIcon::None) DrawPageIcon(draw, glyph, at, iconSize, Color(picked ? theme.pickedText : theme.text));
         else {
             std::string letter = firstLetter(label);
             draw->AddRectFilled(at, to, Color(theme.inside), font * 0.25f);
