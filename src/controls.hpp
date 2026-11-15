@@ -126,6 +126,8 @@ namespace Controls {
     struct ToggleLine {
         std::string text;
         bool grey = true;
+        // in the look's red, for what it lets an extension do with an account
+        bool risky = false;
     };
 
     struct ToggleOptions {
@@ -138,6 +140,10 @@ namespace Controls {
         ImTextureID icon = 0;
         // under the name, wrapped beside the switch (not with compact)
         std::vector<ToggleLine> lines;
+        // While off, a red button with this label in the switch's place: it
+        // asks "Sure?" like a risky Button and turns it on at Yes. Once on,
+        // it's the switch. Not with compact or checkbox.
+        std::string allowLabel;
     };
 
     // On/off: the name, then a small track with a round knob, filled while

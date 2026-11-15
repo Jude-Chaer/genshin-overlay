@@ -690,6 +690,69 @@ TEST_CASE("a risky button asks Sure? in its place and counts only on Yes") {
     CHECK(pressed == 1);
 }
 
+TEST_CASE("an Allow row asks Sure? in the switch's place and turns on only at Yes and is a switch after") {
+    Frames frames;
+    bool on = false;
+    Controls::ToggleOptions options;
+    options.allowLabel = "Allow";
+    options.lines.push_back({ "It can use your HoYoLAB Map account.", false, true });
+    int changed = 0;
+    auto draw = [&] { changed += Controls::Toggle("HoYoLAB Map account", &on, options); };
+    // Allow, then No, the question's last item
+    clickLast(draw);
+    clickLast(draw);
+    CHECK(changed == 0);
+    CHECK_FALSE(on);
+
+    // Allow again, then Yes, the item before No
+    clickLast(draw);
+    ImVec2 yes;
+    frame(700, [&] {
+        draw();
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        yes = ImVec2(ImGui::GetItemRectMin().x - g.Style.ItemSpacing.x - 4, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) / 2);
+    });
+    ImGui::GetIO().AddMousePosEvent(yes.x, yes.y);
+    frame(700, draw);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frame(700, draw);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frame(700, draw);
+    CHECK(changed == 1);
+    CHECK(on);
+
+    // on, it's the switch: a click turns it off
+    clickLast(draw);
+    CHECK(changed == 2);
+    CHECK_FALSE(on);
+}
+
+TEST_CASE("an Allow button ends where the switches end and asking moves nothing") {
+    Frames frames;
+    bool plain = false, account = false;
+    Controls::ToggleOptions options;
+    options.allowLabel = "Allow";
+    float switchEnd = 0, allowEnd = 0, allowTop = 0, askingEnd = 0, askingTop = 0;
+    auto draw = [&](float& end, float& top) {
+        Controls::Toggle("Chests", &plain);
+        switchEnd = ImGui::GetItemRectMax().x;
+        top = ImGui::GetCursorScreenPos().y;
+        Controls::Toggle("HoYoLAB Map account", &account, options);
+        end = ImGui::GetItemRectMax().x;
+        top = ImGui::GetCursorScreenPos().y - top;
+    };
+    frame(700, [&] { draw(allowEnd, allowTop); });
+    CHECK(allowEnd == Catch::Approx(switchEnd).margin(1));
+    // pressed, it asks in the same place and the row keeps its height
+    clickLast([&] { Controls::Toggle("HoYoLAB Map account", &account, options); });
+    frame(700, [&] { draw(askingEnd, askingTop); });
+    CHECK(askingEnd == Catch::Approx(switchEnd).margin(1));
+    CHECK(askingTop == Catch::Approx(allowTop).margin(1));
+    CHECK_FALSE(account);
+    // No, so the next test starts with no question open
+    clickLast([&] { Controls::Toggle("HoYoLAB Map account", &account, options); });
+}
+
 TEST_CASE("a busy button can't be pressed") {
     Frames frames;
     Controls::ButtonOptions busy;

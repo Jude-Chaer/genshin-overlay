@@ -868,6 +868,19 @@ namespace Controls {
     static ImGuiID lastCompact = 0;
     static int lastCompactFrame = -1;
 
+    // the risky button asking "Sure?", one at a time
+    static ImGuiID asking = 0;
+    // a question not drawn last frame is dropped, e.g. the page changed
+    static int askedFrame = -1;
+
+    // a risky button's width, wider while it asks
+    static float riskyWidth(const char* label, bool askingNow) {
+        if (!askingNow) return ButtonSize(label).x;
+        float gap = ImGui::GetStyle().ItemSpacing.x;
+        std::string question = std::string(label, ImGui::FindRenderedTextEnd(label)) + "?";
+        return ImGui::CalcTextSize(question.c_str()).x + gap + ButtonSize("Yes").x + gap + ButtonSize("No").x;
+    }
+
     bool Toggle(const char* label, bool* value, const ToggleOptions& options) {
         if (options.checkbox) {
             // the name first, the box at the row's end where a switch would be
@@ -935,6 +948,12 @@ namespace Controls {
         // On or Off before the switch, in a slot as wide as the wider of them
         bool stateText = theme.switchText && !options.compact;
         float stateWidth = stateText ? std::max(ImGui::CalcTextSize("On").x, ImGui::CalcTextSize("Off").x) + font * 0.85f : 0;
+        // with allowLabel the row's end is as wide as the button's question,
+        // so asking moves nothing
+        bool allowRow = !options.allowLabel.empty() && !options.compact;
+        bool allowButton = allowRow && !*value;
+        float switchRoom = stateWidth + trackWidth;
+        if (allowRow) switchRoom = std::max(switchRoom, riskyWidth(options.allowLabel.c_str(), true));
         // a full switch's name in Material's 16
         ImFont* nameFont = ImGui::GetFont();
         float nameSize = isMaterial() && !options.compact ? 16 * dp() : font;
@@ -969,16 +988,16 @@ namespace Controls {
         else {
             // the switch at the end of the list, so every name lines up and every switch does
             float avail = rowAvail();
-            wrap = std::max(font * 4, avail - stateWidth - trackWidth - gap - iconSide - iconGap);
+            wrap = std::max(font * 4, avail - switchRoom - gap - iconSide - iconGap);
             ImVec2 text = nameFont->CalcTextSizeA(nameSize, FLT_MAX, wrap, label, labelEnd);
             // Material's switch sits in a box's height, so its rows are as tall as the others
-            float band = isMaterial() ? std::max(trackHeight, ImGui::GetFrameHeight()) : trackHeight;
+            float band = isMaterial() || allowRow ? std::max(trackHeight, ImGui::GetFrameHeight()) : trackHeight;
             // the name's first line centred on the switch
             float textTop = std::floor(pos.y + std::max(0.0f, (band - nameSize) / 2));
             float bottom = textTop + text.y;
             for (const ToggleLine& line : options.lines)
                 bottom += std::floor(g.Style.ItemSpacing.y / 2) + ImGui::CalcTextSize(line.text.c_str(), nullptr, false, wrap).y;
-            float right = pos.x + std::max(avail, iconSide + iconGap + text.x + gap + stateWidth + trackWidth);
+            float right = pos.x + std::max(avail, iconSide + iconGap + text.x + gap + switchRoom);
             float trackTop = std::floor(pos.y + (band - trackHeight) / 2);
             track = ImRect(ImVec2(right - trackWidth, trackTop), ImVec2(right, trackTop + trackHeight));
             iconAt = ImVec2(pos.x, textTop + nameSize / 2 - iconSide / 2);
@@ -986,6 +1005,19 @@ namespace Controls {
             size = ImVec2(right - pos.x, std::max(band, bottom - pos.y));
         }
 
+        bool allowed = false;
+        if (allowButton) {
+            ImGui::PushOverrideID(id);
+            const char* allowLabel = options.allowLabel.c_str();
+            float width = riskyWidth(allowLabel, asking == ImGui::GetID(allowLabel));
+            float height = ImGui::GetFrameHeight();
+            ImGui::SetCursorScreenPos(ImVec2(track.Max.x - width, std::floor((track.Min.y + track.Max.y - height) / 2)));
+            ButtonOptions risky;
+            risky.look = ButtonOptions::Look::Risky;
+            allowed = Button(allowLabel, risky);
+            ImGui::PopID();
+            ImGui::SetCursorScreenPos(pos);
+        }
         ImGui::ItemSize(ImRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)), 0);
         ImDrawList* draw = window->DrawList;
         if (options.icon) draw->AddImage(options.icon, iconAt, ImVec2(iconAt.x + iconSide, iconAt.y + iconSide));
@@ -994,12 +1026,17 @@ namespace Controls {
             float y = textAt.y + nameFont->CalcTextSizeA(nameSize, FLT_MAX, wrap, label, labelEnd).y;
             for (const ToggleLine& line : options.lines) {
                 y += std::floor(g.Style.ItemSpacing.y / 2);
-                draw->AddText(nullptr, 0, ImVec2(textAt.x, y),
-                    ImGui::GetColorU32(line.grey ? ImGuiCol_TextDisabled : ImGuiCol_Text), line.text.c_str(), nullptr, wrap);
+                ImU32 color = line.risky ? Color(theme.risky) : ImGui::GetColorU32(line.grey ? ImGuiCol_TextDisabled : ImGuiCol_Text);
+                draw->AddText(nullptr, 0, ImVec2(textAt.x, y), color, line.text.c_str(), nullptr, wrap);
                 y += ImGui::CalcTextSize(line.text.c_str(), nullptr, false, wrap).y;
             }
         }
 
+        if (allowButton) {
+            if (allowed) *value = true;
+            endRow(row);
+            return allowed;
+        }
         if (!ImGui::ItemAdd(track, id)) {
             if (!options.compact) endRow(row);
             return false;
@@ -1240,10 +1277,6 @@ namespace Controls {
         ImGui::PopID();
         return changed;
     }
-    // the risky button asking "Sure?", one at a time
-    static ImGuiID asking = 0;
-    // a question not drawn last frame is dropped, e.g. the page changed
-    static int askedFrame = -1;
 
     bool Button(const char* label, const ButtonOptions& options) {
         using Look = ButtonOptions::Look;
