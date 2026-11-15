@@ -2359,6 +2359,19 @@ namespace Controls {
             shape({ { 12, 16 }, { 7.8f, 6 }, { 12, 7.6f }, { 16.2f, 6 } });
             break;
         }
+        case PageIcon::Markers:
+            // a flag on a pole, its free edge cut in
+            line(5.5f, 3.5f, 5.5f, 21);
+            shape({ { 5.5f, 4 }, { 17.5f, 4 }, { 15, 8.5f }, { 17.5f, 13 }, { 5.5f, 13 } });
+            break;
+        case PageIcon::Sets:
+            // three cards stacked, the front one whole
+            shape({ { 4, 9 }, { 16, 9 }, { 16, 20 }, { 4, 20 } });
+            line(7, 6, 19, 6);
+            line(19, 6, 19, 16.5f);
+            line(10, 3, 22, 3);
+            line(22, 3, 22, 13.5f);
+            break;
         case PageIcon::None:
             break;
         }
