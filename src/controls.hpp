@@ -287,7 +287,7 @@ namespace Controls {
     void Waiting(const char* text);
     // A muted line for a list or a page with nothing in it yet.
     void Empty(const char* text);
-    // The text, then a bar of how far it got, 0 to 1. Below 0 when that
+    // The text ("" for none), then a bar of how far it got, 0 to 1. Below 0 when that
     // isn't known: the spinner in front, the bar runs back and forth.
     void Progress(const char* text, float fraction);
 

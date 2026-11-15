@@ -62,8 +62,16 @@ namespace GameTrafficText {
     Line For(const GameTraffic::Status& status) {
         switch (status.state) {
         case State::Off: return { "Off", true };
-        case State::CantListen: return cantListen(status);
-        case State::Listening: return listening(status);
+        case State::CantListen: {
+            Line line = cantListen(status);
+            line.problem = true;
+            return line;
+        }
+        case State::Listening: {
+            Line line = listening(status);
+            line.problem = status.read == Packets::State::NeedsRelog || status.read == Packets::State::NoKey;
+            return line;
+        }
         }
         return {};
     }

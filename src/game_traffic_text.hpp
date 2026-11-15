@@ -14,6 +14,8 @@ namespace GameTrafficText {
         bool downloadNpcap = false;
         // and "Or run the overlay as admin." under the button
         bool orAdmin = false;
+        // something for the player to fix, not a step on the way to working
+        bool problem = false;
     };
 
     extern Line For(const GameTraffic::Status& status);

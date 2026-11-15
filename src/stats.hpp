@@ -8,4 +8,6 @@ namespace Stats {
     extern void Update();
     // the graphs, drawn inside the menu
     extern void Draw();
+    // the last sample's CPU % and RAM in MB
+    extern void Latest(float& cpu, float& ramMb);
 }

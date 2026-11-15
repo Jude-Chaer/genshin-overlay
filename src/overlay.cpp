@@ -24,6 +24,7 @@
 #include "typing.hpp"
 #include <imgui_internal.h>
 #include "game_traffic_text.hpp"
+#include "menu_summary.hpp"
 #include "npcap_download.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -448,92 +449,60 @@ namespace Overlay {
         }
     }
 
-    // what the tracker sees right now, mainly for testing until markers are drawn
-    static void DrawMapStatus() {
+    static MenuSummary::MapState mapState() {
+        using Data = MenuSummary::MapState::Data;
+        MenuSummary::MapState map;
         switch (MapTracking::GetStatus()) {
-        case MapTracking::Status::NoData:
-            ImGui::TextWrapped("Couldn't get the map data. Check your internet connection and restart.");
-            return;
-        case MapTracking::Status::Downloading: {
-            int percent = 0;
-            std::string stage = MapTracking::GetDownloadStage(percent);
-            Controls::Progress(stage.c_str(), percent / 100.0f);
-            return;
-        }
-        case MapTracking::Status::Loading:
-            Controls::Waiting("Loading map data...");
-            return;
-        case MapTracking::Status::Failed:
-            ImGui::Text("Map data failed to load, check the console");
-            return;
-        case MapTracking::Status::Ready:
+        case MapTracking::Status::NoData: map.data = Data::NoData; break;
+        case MapTracking::Status::Downloading:
+            map.data = Data::Downloading;
+            map.stage = MapTracking::GetDownloadStage(map.percent);
             break;
+        case MapTracking::Status::Loading: map.data = Data::Loading; break;
+        case MapTracking::Status::Failed: map.data = Data::Failed; break;
+        case MapTracking::Status::Ready: map.data = Data::Ready; break;
         }
+        if (map.data != Data::Ready) return map;
+        MapTracking::MapView view = MapTracking::GetView();
+        map.visible = view.visible;
+        map.mapOpen = MapTracking::IsMapOpen();
+        if (view.visible) map.mapName = MapTracking::GetMapName(view.result.mapId);
+        return map;
+    }
+
+    // what the tracker sees right now under the Map section's line, mainly for
+    // testing until markers are drawn
+    static void DrawMapStatus(const MenuSummary::MapText& text) {
+        if (!text.detail.empty()) ImGui::TextWrapped("%s", text.detail.c_str());
+        MapTracking::Status status = MapTracking::GetStatus();
+        if (status == MapTracking::Status::Downloading) {
+            int percent = 0;
+            MapTracking::GetDownloadStage(percent);
+            Controls::Progress("", percent / 100.0f);
+            return;
+        }
+        if (status != MapTracking::Status::Ready) return;
 
         ImGui::TextDisabled(Capture::isCapturing() ? "Capture: WGC" : "Capture: not working");
 
         MapTracking::MapView view = MapTracking::GetView();
-        if (!view.visible) {
-            if (MapTracking::IsMapOpen())
-                Controls::Waiting("Map is open, looking for where it is...");
-            else
-                Controls::Waiting("Waiting for the in-game map (M)");
-            return;
-        }
-
+        if (!view.visible) return;
         const MapLocator::Result& r = view.result;
-        ImGui::Text("%s", MapTracking::GetMapName(r.mapId));
-        if (r.groupId != 0) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("underground %d / floor %d", r.groupId, r.floorId);
-        }
+        if (r.groupId != 0) ImGui::TextDisabled("underground %d / floor %d", r.groupId, r.floorId);
         ImGui::Text("Center: %.0f, %.0f", r.lng, r.lat);
         ImGui::Text("Zoom: %.2f units/px  (%d inliers)", r.unitsPerPixel, r.inliers);
         ImGui::TextDisabled("updated %.1f s ago", view.secondsSinceUpdate);
     }
 
-    // the map items' line when something's off, and the player's controls under it
-    static void DrawItemsStatus() {
-        static_assert(ItemFiles::RETRY == std::chrono::seconds(60), "the line says every minute");
-        ItemFiles::Status items = ItemFiles::GetStatus();
-        // the first check of the release takes a moment, the line waits for it
-        if (items.started) {
-            using ItemFiles::Reason;
-            using ItemFiles::State;
-            bool tryAgain = false;
-            std::string line;
-            if (items.state == State::Downloading) {
-                std::string downloading = "Map items: downloading " + std::to_string(items.percent) + "%";
-                Controls::Progress(downloading.c_str(), items.percent / 100.0f);
-            }
-            else if (items.reason == Reason::NoNetwork) {
-                line = items.state == State::Old ? "Map items: couldn't update, using the list from " + items.built + ", trying again every minute"
-                    : "Map items: not downloaded yet, trying again every minute (no internet?)";
-            }
-            else if (items.reason == Reason::NewerFormat) {
-                line = "Map items: update the overlay to get the new list";
-                if (items.state == State::Old) line += ", using the list from " + items.built;
-            }
-            else if (items.reason == Reason::BrokenPack) {
-                line = "Map items: the download was broken";
-                if (items.state == State::Old) line += ", using the list from " + items.built;
-                tryAgain = true;
-            }
-            else if (items.reason == Reason::CantSave) {
-                line = "Map items: can't save to the overlay folder, check it isn't read-only";
-                tryAgain = true;
-            }
-            else if (items.reason == Reason::DownloadOff && items.state == State::None) {
-                line = "Map items: none, the download is off";
-            }
-            if (!line.empty()) ImGui::TextWrapped("%s", line.c_str());
-            if (tryAgain) {
-                ImGui::BeginDisabled(items.checking);
-                if (Controls::Button("Try again")) ItemFiles::CheckNow();
-                ImGui::EndDisabled();
-            }
+    // what the Map section's line doesn't say about the map items, and Try again
+    static void DrawItemsStatus(const ItemFiles::Status& items, const MenuSummary::ItemsText& text) {
+        if (items.state == ItemFiles::State::Downloading) Controls::Progress("Map items", items.percent / 100.0f);
+        if (!text.detail.empty()) ImGui::TextWrapped("%s", text.detail.c_str());
+        if (text.tryAgain) {
+            ImGui::BeginDisabled(items.checking);
+            if (Controls::Button("Try again")) ItemFiles::CheckNow();
+            ImGui::EndDisabled();
         }
-
         if (Controls::Toggle("Download map items", &Settings::downloadItems)) {
             Settings::Save();
             ItemFiles::SetDownload(Settings::downloadItems);
@@ -820,47 +789,48 @@ namespace Overlay {
             NpcapDownload::Start();
     }
 
-    static void DrawGameTraffic() {
+    static void DrawMapSection() {
+        MenuSummary::MapText map = MenuSummary::Map(mapState());
+        ItemFiles::Status itemFiles = ItemFiles::GetStatus();
+        MenuSummary::ItemsText items = MenuSummary::Items(itemFiles);
+        if (!Controls::BeginSection("Map", true, false, MenuSummary::MapSection(map, items))) return;
+        DrawMapStatus(map);
+        DrawItemsStatus(itemFiles, items);
+        if (Controls::Toggle("Hide on map close", &Settings::hideOnMapClose)) {
+            Settings::Save();
+        }
+        Controls::EndSection();
+    }
+
+    static Controls::Summary trafficSummary(const GameTrafficText::Line& line) {
+        return { line.text, line.problem ? Controls::Summary::Kind::Strong : Controls::Summary::Kind::Plain };
+    }
+
+    static Controls::Summary appearanceSummary() {
+        return { MenuSummary::Join(MenuSummary::Join(Settings::look, Settings::lightDark), std::to_string(Settings::size) + "%") };
+    }
+
+    static void DrawGameTraffic(const GameTrafficText::Line& line) {
         bool on = Settings::readGameTraffic;
         if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
-        GameTrafficText::Line line = GameTrafficText::For(GameTraffic::GetStatus());
-        if (line.quiet) ImGui::TextDisabled("%s", line.text.c_str());
-        else ImGui::TextWrapped("%s", line.text.c_str());
         if (line.downloadNpcap) DrawNpcapButton();
         if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
     }
 
-    static std::string accountLine(Accounts::Site site, const Accounts::Status& status) {
-        std::string label = Accounts::SiteLabel(site);
-        switch (status.state) {
-        case Accounts::State::LoggedOut: return "Not logged in.";
-        case Accounts::State::WindowOpen: return "Log in in the " + label + " window.";
-        case Accounts::State::LoggedIn:
-            if (site == Accounts::Site::Appsample) return "Logged in as " + status.account;
-            return status.name.empty() ? "Logged in, account " + status.account : "Logged in as " + status.name;
-        case Accounts::State::NeedsLogin: return label + " logged you out. Log in again.";
-        case Accounts::State::Captcha: return label + " wants to check you're not a bot.";
-        }
-        return "";
+    static void DrawGameTrafficSection() {
+        GameTrafficText::Line traffic = GameTrafficText::For(GameTraffic::GetStatus());
+        if (!Controls::BeginSection("Game traffic", false, false, trafficSummary(traffic))) return;
+        DrawGameTraffic(traffic);
+        Controls::EndSection();
     }
 
     // the overlay's logins, and the extensions allowed to use each
     static void DrawAccounts() {
         Controls::PageTitle("Accounts");
-        Controls::Theme theme = Controls::GetTheme();
         for (Accounts::Site site : { Accounts::Site::HoyolabMap, Accounts::Site::Appsample }) {
             ImGui::PushID((int)site);
-            if (Controls::BeginSection(Accounts::SiteLabel(site), true)) {
-                Accounts::Status status = Accounts::Get(site);
-                std::string line = accountLine(site, status);
-                bool warn = status.state == Accounts::State::NeedsLogin || status.state == Accounts::State::Captcha;
-                if (status.state == Accounts::State::LoggedOut) ImGui::TextDisabled("%s", line.c_str());
-                else if (warn) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, Controls::Color(theme.warning));
-                    ImGui::TextWrapped("%s", line.c_str());
-                    ImGui::PopStyleColor();
-                }
-                else ImGui::TextWrapped("%s", line.c_str());
+            Accounts::Status status = Accounts::Get(site);
+            if (Controls::BeginSection(Accounts::SiteLabel(site), true, false, MenuSummary::Account(site, status))) {
                 if (site == Accounts::Site::HoyolabMap && status.state == Accounts::State::LoggedIn && !status.name.empty())
                     ImGui::TextDisabled("Account %s", status.account.c_str());
                 if (!status.problem.empty()) ImGui::TextWrapped("%s", status.problem.c_str());
@@ -967,16 +937,20 @@ namespace Overlay {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
 
         // by number, so an extension named "Settings" or two with one name are their own buttons
-        auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile = 0) {
+        auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile = 0,
+            const Controls::Summary& summary = {}) {
             ImGui::PushID(index);
-            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile)) activeTab = index;
+            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary)) activeTab = index;
             ImGui::PopID();
         };
 
         // Apple's grey and orange tiles for the overlay's own pages
         DrawPage("Home", 0, 0, false, 0x8E8E93FF);
-        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF);
-        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF);
+        float cpu = 0, ram = 0;
+        Stats::Latest(cpu, ram);
+        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF, { MenuSummary::Usage(cpu, ram) });
+        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF, MenuSummary::AccountsPage(Accounts::Get(Accounts::Site::HoyolabMap),
+            Accounts::Get(Accounts::Site::Appsample)));
 
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();
@@ -1062,22 +1036,11 @@ namespace Overlay {
             }
             ImGui::Dummy(ImVec2(0, font * 0.4f));
 
-            if (Controls::BeginSection("Map", true)) {
-                DrawMapStatus();
-                DrawItemsStatus();
+            DrawMapSection();
 
-                if (Controls::Toggle("Hide on map close", &Settings::hideOnMapClose)) {
-                    Settings::Save();
-                }
-                Controls::EndSection();
-            }
+            DrawGameTrafficSection();
 
-            if (Controls::BeginSection("Game traffic")) {
-                DrawGameTraffic();
-                Controls::EndSection();
-            }
-
-            if (Controls::BeginSection("Appearance")) {
+            if (Controls::BeginSection("Appearance", false, false, appearanceSummary())) {
                 int look = indexOf(lookNames, Settings::look);
                 if (Controls::Choice("Theme", look, lookNames)) {
                     Settings::look = lookNames[look];
@@ -1102,7 +1065,7 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
-            if (Controls::BeginSection("Keys")) {
+            if (Controls::BeginSection("Keys", false, false, { "Menu: " + KeyChoices::menuKeyName() })) {
                 KeyChoices::drawMenuKeyRow();
                 Controls::EndSection();
             }

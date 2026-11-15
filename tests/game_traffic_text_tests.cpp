@@ -87,6 +87,17 @@ TEST_CASE("Game traffic: the search says the time left once it knows it") {
     CHECK(GameTrafficText::TimeLeft(60) == "1 min 0 s");
 }
 
+TEST_CASE("Game traffic: only a line the player has to fix is a problem") {
+    CHECK_FALSE(GameTrafficText::For(Status()).problem);
+    CHECK_FALSE(GameTrafficText::For(listening(Packets::State::WaitingForLogin)).problem);
+    CHECK_FALSE(GameTrafficText::For(listening(Packets::State::Searching)).problem);
+    CHECK_FALSE(GameTrafficText::For(listening(Packets::State::Reading)).problem);
+    CHECK(GameTrafficText::For(listening(Packets::State::NeedsRelog, Reason::StartedLate)).problem);
+    CHECK(GameTrafficText::For(listening(Packets::State::NoKey, Reason::NotFound)).problem);
+    CHECK(GameTrafficText::For(cantListen(Problem::NpcapMissing)).problem);
+    CHECK(GameTrafficText::For(cantListen(Problem::None, true)).problem);
+}
+
 TEST_CASE("Game traffic: the note on screen is only for a relog") {
     CHECK(GameTrafficText::NeedsRelog(listening(Packets::State::NeedsRelog, Reason::StartedLate)));
     CHECK(GameTrafficText::NeedsRelog(listening(Packets::State::NeedsRelog, Reason::MissedPackets)));

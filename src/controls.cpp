@@ -2164,7 +2164,7 @@ namespace Controls {
     void Progress(const char* text, float fraction) {
         bool known = fraction >= 0;
         if (!known) spinner();
-        ImGui::TextWrapped("%s", text);
+        if (*text) ImGui::TextWrapped("%s", text);
         if (isMaterial() && known) {
             // Material 3's bar: 4 dp, the accent up to where it is, 4 dp of
             // room, the rest in its tonal colour with a dot at its end
