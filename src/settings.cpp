@@ -22,7 +22,7 @@ namespace Settings {
     std::string menuKey = "Alt+`";
     std::string look = "Windows 11";
     std::string lightDark = "Follow Windows";
-    int size = 100;
+    int size = 125;
     const std::vector<int> Sizes = { 80, 90, 100, 110, 125, 150 };
     bool readGameTraffic = false;
     bool usageInList = true;
@@ -98,9 +98,9 @@ namespace Settings {
         menuKey = settings.value("menuKey", std::string("Alt+`"));
         look = settings.value("look", std::string("Windows 11"));
         lightDark = settings.value("lightDark", std::string("Follow Windows"));
-        // a size that isn't one of the choices, hand edited, is 100
+        // a size that isn't one of the choices, hand edited, is 125
         auto savedSize = settings.find("size");
-        size = 100;
+        size = 125;
         if (savedSize != settings.end() && savedSize->is_number_integer()) {
             int saved = savedSize->get<int>();
             if (std::find(Sizes.begin(), Sizes.end(), saved) != Sizes.end()) size = saved;

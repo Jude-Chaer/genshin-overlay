@@ -53,7 +53,8 @@ namespace Settings {
     extern std::string look;
     extern std::string lightDark;
     // the overlay's size in percent of what Windows' scale gives, one of Sizes:
-    // the menu and everything else drawn with its font (map labels, extensions)
+    // the menu and everything else drawn with its font (map labels, extensions);
+    // 125 at first
     extern int size;
     extern const std::vector<int> Sizes;
 
