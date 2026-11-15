@@ -353,6 +353,9 @@ namespace Controls {
         std::optional<unsigned int> ring;
         // drawn at the theme's faded opacity, its ring the done grey
         bool faded = false;
+        // 1: on a layer above, -1: on a layer below; the floor picker's
+        // layer picture on its lower corner, the upper or lower layer lit
+        int layer = 0;
     };
     // A round badge like the game's map icons: a soft shadow, a light ring,
     // a dark inside and the icon in the middle. radius in pixels. Badges and

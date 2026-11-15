@@ -2863,6 +2863,22 @@ namespace Controls {
             draw->AddImage(icon, ImVec2(center.x - half, center.y - half), ImVec2(center.x + half, center.y + half),
                 ImVec2(0, 0), ImVec2(1, 1), Color(Faded(0xFFFFFFFF, amount)));
         }
+        if (options.layer != 0) {
+            // the floor picker's two stacked diamonds on a dark disc at the
+            // lower corner, the top one lit for a layer above, the lower one
+            // for a layer below; never faded, so it reads on a faded badge
+            ImVec2 at(center.x + radius * 0.68f, center.y + radius * 0.68f);
+            float r = radius * 0.5f;
+            disc(draw, at, r, Color(theme.shadow));
+            disc(draw, at, r * 0.88f, Color(theme.inside));
+            auto diamond = [&](ImVec2 c, float w, float h, ImU32 colour) {
+                draw->AddQuadFilled(ImVec2(c.x, c.y - h), ImVec2(c.x + w, c.y), ImVec2(c.x, c.y + h), ImVec2(c.x - w, c.y), colour);
+            };
+            float w = r * 0.55f, h = r * 0.33f;
+            bool up = options.layer > 0;
+            diamond(ImVec2(at.x, at.y + h * 0.45f), w, h, up ? IM_COL32(140, 146, 158, 255) : IM_COL32(30, 160, 210, 255));
+            diamond(ImVec2(at.x, at.y - h * 0.3f), w, h, up ? IM_COL32(110, 230, 250, 255) : IM_COL32(232, 232, 232, 255));
+        }
     }
 
     void Bubble(ImDrawList* draw, ImVec2 center, float radius, const char* text, std::optional<unsigned int> fill) {

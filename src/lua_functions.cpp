@@ -2544,6 +2544,8 @@ namespace LuaFunctions {
 			sol::optional<uint32_t> ring = (*options)["ring"];
 			if (ring) badge.ring = *ring;
 			badge.faded = options->get_or("faded", false);
+			std::string layer = options->get_or<std::string>("layer", "");
+			badge.layer = layer == "up" ? 1 : layer == "down" ? -1 : 0;
 		}
 		Controls::Badge(ImGui::GetBackgroundDrawList(), ImVec2(x, y), radius, (ImTextureID)(intptr_t)texture, badge);
 	}
