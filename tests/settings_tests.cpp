@@ -22,6 +22,7 @@ static void defaults() {
     Settings::lightDark = "Follow Windows";
     Settings::size = 100;
     Settings::readGameTraffic = false;
+    Settings::usageInList = true;
 }
 
 TEST_CASE("settings come back after Save and Load") {
@@ -34,6 +35,7 @@ TEST_CASE("settings come back after Save and Load") {
     Settings::lightDark = "Light";
     Settings::size = 125;
     Settings::readGameTraffic = true;
+    Settings::usageInList = false;
     Settings::Save();
 
     defaults();
@@ -45,6 +47,7 @@ TEST_CASE("settings come back after Save and Load") {
     CHECK(Settings::lightDark == "Light");
     CHECK(Settings::size == 125);
     CHECK(Settings::readGameTraffic == true);
+    CHECK(Settings::usageInList == false);
     // the ones that weren't changed
     CHECK(Settings::lineUpWithMap == true);
     CHECK(Settings::guessAhead == true);
@@ -56,11 +59,13 @@ TEST_CASE("a setting that isn't in the file gets its default") {
     defaults();
     Settings::guessAhead = false;
     Settings::readGameTraffic = true;
+    Settings::usageInList = false;
     Settings::Load();
     CHECK(Settings::ignoreSea == false);
     CHECK(Settings::guessAhead == true);
     // game traffic is off until the player turns it on
     CHECK(Settings::readGameTraffic == false);
+    CHECK(Settings::usageInList == true);
     defaults();
 }
 

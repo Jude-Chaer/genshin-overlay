@@ -43,6 +43,8 @@ namespace Settings {
     extern bool downloadItems;
     // Game traffic, off until the player turns it on in the menu
     extern bool readGameTraffic;
+    // CPU and RAM on the Usage page's line in the page list
+    extern bool usageInList;
 
     // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
     extern std::string menuKey;

@@ -915,7 +915,7 @@ namespace Overlay {
         Stats::Latest(cpu, ram);
         std::vector<std::pair<std::string, Controls::Summary>> pages = {
             { "Home", {} },
-            { "Usage", { MenuSummary::Usage(cpu, ram) } },
+            { "Usage", { Settings::usageInList ? MenuSummary::Usage(cpu, ram) : "" } },
             { "Accounts", MenuSummary::AccountsPage(Accounts::Get(Accounts::Site::HoyolabMap), Accounts::Get(Accounts::Site::Appsample)) },
         };
         for (auto& ext : Extensions::registeredExtensions) pages.push_back({ ext->name, {} });
@@ -1144,7 +1144,7 @@ namespace Overlay {
 
         case 1:
             Controls::PageTitle("Usage");
-
+            if (Controls::Toggle("Show CPU and RAM in the page list", &Settings::usageInList)) Settings::Save();
             Stats::Draw();
 
             break;
