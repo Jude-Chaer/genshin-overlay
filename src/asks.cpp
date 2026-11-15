@@ -67,6 +67,16 @@ namespace Asks {
 		return info && std::find(before.begin(), before.end(), info->name) != before.end();
 	}
 
+	void askUnmark(Extension& ext, const std::vector<UnmarkLine>& lines, int points, std::function<void(Answer)> answered) {
+		Ask ask;
+		ask.ext = &ext;
+		ask.kind = Kind::Unmark;
+		ask.unmarks = lines;
+		ask.unmarkPoints = points;
+		ask.answered = std::move(answered);
+		waiting.push_back(std::move(ask));
+	}
+
 	void askPermission(Extension& ext, Permission permission) {
 		if (ext.stopped || !Extensions::mayAsk(ext, permission) || hadBeforeChange(ext, permission)) return;
 		add(questionFor(ext, Kind::Permissions).permissions, permission);
@@ -167,6 +177,10 @@ namespace Asks {
 		if (waiting.empty()) return;
 		Ask ask = waiting.front();
 		waiting.pop_front();
+		if (ask.kind == Kind::Unmark) {
+			if (ask.answered) ask.answered(answer);
+			return;
+		}
 		Extension& ext = *ask.ext;
 
 		switch (ask.kind) {
@@ -192,6 +206,8 @@ namespace Asks {
 				ext.grantsBeforeChange.clear();
 				ext.hashBeforeChange.clear();
 			}
+			break;
+		case Kind::Unmark:
 			break;
 		case Kind::Setting: {
 			const OverlaySetting* setting = findSetting(ask.setting);
@@ -279,6 +295,60 @@ namespace Asks {
 		if (Controls::Button("Never ask again")) { answered = Answer::Never; done = true; }
 	}
 
+	// "37 on HoYoLAB Map and 12 on appsample"
+	static std::string unmarkCounts(const Ask& ask, bool points) {
+		std::string text;
+		for (size_t i = 0; i < ask.unmarks.size(); i++) {
+			const UnmarkLine& line = ask.unmarks[i];
+			if (i) text += " and ";
+			text += std::to_string(line.count);
+			if (points && i == 0) text += line.count == 1 ? " point you marked" : " points you marked";
+			text += " on " + line.site;
+		}
+		return text;
+	}
+
+	static void drawUnmark(const Ask& ask, Answer& answered, bool& done) {
+		Controls::PageTitle(("Unmark " + unmarkCounts(ask, false) + "?").c_str());
+		ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30);
+		Extensions::drawName(*ask.ext);
+		ImGui::SameLine();
+		ImGui::TextWrapped("wants to unmark %s. Keep them marked or Unmark, the other changes go ahead. Cancel stops the whole change. "
+			"A backup is made first.", unmarkCounts(ask, true).c_str());
+		ImGui::PopTextWrapPos();
+		if (Controls::BeginSection("Which ones")) {
+			size_t rows = 0;
+			float wide = 0;
+			for (const UnmarkLine& line : ask.unmarks) {
+				rows += line.which.size() + (ask.unmarks.size() > 1 ? 1 : 0);
+				wide = std::max(wide, ImGui::CalcTextSize(line.site.c_str()).x);
+				for (const auto& [name, count] : line.which)
+					wide = std::max(wide, ImGui::CalcTextSize((name + "  " + std::to_string(count)).c_str()).x);
+			}
+			// past 10 rows the list scrolls, the buttons stay on screen
+			bool scrolls = rows > 10;
+			if (scrolls) {
+				ImVec2 size(wide + ImGui::GetStyle().ScrollbarSize + ImGui::GetFontSize(), ImGui::GetTextLineHeightWithSpacing() * 10);
+				ImGui::BeginChild("##which", size);
+			}
+			for (const UnmarkLine& line : ask.unmarks) {
+				if (ask.unmarks.size() > 1) ImGui::TextDisabled("%s", line.site.c_str());
+				for (const auto& [name, count] : line.which) ImGui::Text("%s  %d", name.c_str(), count);
+			}
+			if (scrolls) ImGui::EndChild();
+			Controls::EndSection();
+		}
+		Controls::ButtonOptions keep;
+		keep.look = Controls::ButtonOptions::Look::Main;
+		if (Controls::Button("Keep them marked", keep)) { answered = Answer::DontAllow; done = true; }
+		ImGui::SameLine();
+		Controls::ButtonOptions risky;
+		risky.look = Controls::ButtonOptions::Look::Risky;
+		if (Controls::Button(("Unmark " + std::to_string(ask.unmarkPoints)).c_str(), risky)) { answered = Answer::Allow; done = true; }
+		ImGui::SameLine();
+		if (Controls::Button("Cancel")) { answered = Answer::NotNow; done = true; }
+	}
+
 	void draw(bool mapOpen, bool menuOpen) {
 		const Ask* ask = showing(mapOpen, menuOpen);
 		if (!ask) return;
@@ -301,6 +371,7 @@ namespace Asks {
 		case Kind::Permissions: drawPermissions(*ask, answered, done); break;
 		case Kind::Changed: drawChanged(*ask, answered, done); break;
 		case Kind::Setting: drawSetting(*ask, answered, done); break;
+		case Kind::Unmark: drawUnmark(*ask, answered, done); break;
 		}
 
 		ImVec2 position = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();

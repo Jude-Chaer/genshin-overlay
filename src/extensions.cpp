@@ -11,6 +11,7 @@
 #include "settings.hpp"
 #include "triggers.hpp"
 #include "key_choices.hpp"
+#include "marks.hpp"
 #include "typing.hpp"
 #include "controls.hpp"
 #include <imgui.h>
@@ -552,6 +553,7 @@ namespace Extensions {
 		LuaFunctions::forgetIntervals(&ext);
 		Triggers::forget(&ext);
 		LuaFunctions::forgetNetRequests(&ext);
+		LuaFunctions::forgetMarks(&ext);
 		LuaFunctions::forgetFileDialogs(&ext);
 		LuaFunctions::forgetSockets(&ext);
 		if (!ext.textures.empty()) {
@@ -1604,6 +1606,10 @@ namespace Extensions {
 		else {
 			ext.extensionPermissions.erase(permission);
 			ext.switchedOff.insert(info->name);
+			if (permission == ExtensionPermissionTypes::HoyolabMapAccount)
+				Marks::Cancel(&ext, Accounts::Site::HoyolabMap);
+			else if (permission == ExtensionPermissionTypes::AppsampleAccount)
+				Marks::Cancel(&ext, Accounts::Site::Appsample);
 		}
 		if (permission != ExtensionPermissionTypes::Keybinds) return;
 		if (on) {

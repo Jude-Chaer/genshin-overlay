@@ -128,6 +128,23 @@ namespace LuaFunctions {
     // account permission. It closes on its own once logged in.
     void LogIn(const std::string& site);
     void LogOut(const std::string& site);
+    // Marks_Start(sites, "fetch" or "change", add, remove, onDone) gives an id,
+    // nil when refused (logged). sites is "hoyolab_map", "appsample" or a list
+    // of them, each needing its account permission; add and remove are lists
+    // of HoYoLAB point ids, for "change". The jobs run one after another on
+    // the overlay's own thread. The answer has a table per site name: { ok,
+    // error, marks, added, removed, kept, skipped, backup }, see Marks::SiteResult.
+    // onDone gets it once; without onDone Marks_Result(id) gives nil while it
+    // runs, then the answer once. An answer nobody took goes after 5 minutes.
+    sol::object MarksStart(sol::object sites, const std::string& action, sol::object add, sol::object remove, sol::object onDone,
+        sol::this_state state);
+    sol::object MarksResult(int id, sol::this_state state);
+    // gives the jobs that are done to their onDone, see UpdateAnswers
+    void UpdateMarks();
+    // drops the extension's jobs and answers, see Extensions::unload
+    void forgetMarks(Extensions::Extension* owner);
+    // the most point ids one Marks_Start takes, add and remove together
+    inline const size_t MarksMaxIds = 200000;
     // image is a texture the extension may draw, or a handle from GetWebImage
     void DrawImage(double image, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     sol::variadic_results GetWebImage(const std::string& url, sol::this_state state);

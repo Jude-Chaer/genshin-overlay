@@ -81,6 +81,9 @@ namespace Accounts {
 
     // HoYoLAB: "ltuid_v2=...; ltoken_v2=..." for a Cookie header, "" when not logged in
     std::string HoyolabMapCookie();
+    // what stays the same for the account: HoYoLAB's account id, appsample's
+    // uid; "" when not logged in
+    std::string AccountId(Site site);
 
     // securetoken.googleapis.com's answer to a refresh
     struct Refresh {
@@ -97,4 +100,7 @@ namespace Accounts {
     // it runs out. Nothing when not logged in or the refresh failed (Refused
     // when the token was turned down). Blocks, not for the frame's thread.
     std::optional<std::string> AppsampleIdToken(Net::Stopper* stopper = nullptr);
+    // appsample turned this ID token down: the next AppsampleIdToken
+    // refreshes it instead of giving it again
+    void AppsampleIdTokenRefused(const std::string& idToken);
 }

@@ -296,6 +296,13 @@ namespace Accounts {
         return "ltuid_v2=" + login.status.account + "; ltoken_v2=" + login.secret;
     }
 
+    std::string AccountId(Site site) {
+        std::lock_guard<std::mutex> lock(mutex);
+        const Login& login = of(site);
+        if (login.secret.empty() || !settled(login) || (login.status.state != State::LoggedIn && login.status.state != State::Captcha)) return "";
+        return site == Site::HoyolabMap ? login.status.account : login.uid;
+    }
+
     std::optional<FirebaseUser> ReadFirebaseUser(const std::string& json) {
         nlohmann::json value = nlohmann::json::parse(json, nullptr, false);
         if (!value.is_object()) return std::nullopt;
@@ -397,5 +404,12 @@ namespace Accounts {
         login.idToken = refresh.idToken;
         login.idTokenEnds = Clock::now() + std::chrono::seconds(refresh.expiresIn);
         return login.idToken;
+    }
+
+    void AppsampleIdTokenRefused(const std::string& idToken) {
+        std::lock_guard<std::mutex> lock(mutex);
+        Login& login = of(Site::Appsample);
+        if (idToken.empty() || login.idToken != idToken) return;
+        Credentials::Wipe(login.idToken);
     }
 }

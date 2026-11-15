@@ -25,6 +25,7 @@
 #include "packets/game_traffic.hpp"
 #include "point_guides.hpp"
 #include "accounts.hpp"
+#include "marks.hpp"
 #include "web_images.hpp"
 
 // genshin-overlay.exe --locate <screenshot>
@@ -227,6 +228,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    Marks::Init();
     MapTracking::Start(Helpers::exeDirectory() / "map_data");
     ItemFiles::Start(Helpers::exeDirectory() / "items", Settings::downloadItems);
     MapTiles::Init(Helpers::exeDirectory() / "map_data");
@@ -251,6 +253,7 @@ int main(int argc, char** argv) {
     MapTiles::Shutdown();
     ScreenPictures::clear();
     Overlay::Shutdown();
+    Marks::Shutdown();
     Accounts::Shutdown();
 
     return 0;

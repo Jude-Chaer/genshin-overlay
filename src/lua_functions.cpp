@@ -23,6 +23,7 @@
 #include "screen_pictures.hpp"
 #include "packets/game_traffic.hpp"
 #include "accounts.hpp"
+#include "marks.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -214,6 +215,8 @@ namespace LuaFunctions {
 		global("GetAccount", None, GetAccount);
 		global("LogIn", None, LogIn);
 		global("LogOut", None, LogOut);
+		global("Marks_Start", None, MarksStart);
+		global("Marks_Result", None, MarksResult);
 
 		// files, only in the extension's own folder (pathFor)
 		global("LoadTexture", InternalRead, LoadTextureFromFileLua);
@@ -1253,6 +1256,7 @@ namespace LuaFunctions {
 	{
 		UpdateFileDialogs();
 		UpdateNetRequests();
+		UpdateMarks();
 		UpdateSockets();
 	}
 
@@ -2519,5 +2523,153 @@ namespace LuaFunctions {
 		std::optional<Accounts::Site> named = siteNamed("LogOut", site);
 		if (!named || !Extensions::allowed("LogOut", accountPermission(*named))) return;
 		Accounts::LogOut(*named);
+	}
+	struct MarksRequest {
+		int id = 0;
+		Extensions::Extension* owner = nullptr;
+		sol::protected_function onDone;
+	};
+	// the jobs with onDone, the rest wait for Marks_Result
+	static std::vector<MarksRequest> marksRequests;
+
+	// a list of point ids from Lua, false when it's something else
+	static bool pointIds(const sol::object& value, std::vector<int64_t>& out) {
+		if (value == sol::lua_nil) return true;
+		if (!value.is<sol::table>()) return false;
+		sol::table table = value;
+		for (size_t i = 1; i <= table.size(); i++) {
+			sol::object id = table[i];
+			if (id.get_type() != sol::type::number) return false;
+			double number = id.as<double>();
+			if (number < 1 || number > 9.0e15 || number != std::floor(number)) return false;
+			out.push_back((int64_t)number);
+		}
+		return true;
+	}
+
+	static sol::table idList(const std::vector<int64_t>& ids, sol::state_view lua) {
+		sol::table table = lua.create_table((int)ids.size(), 0);
+		for (size_t i = 0; i < ids.size(); i++) table[i + 1] = ids[i];
+		return table;
+	}
+
+	static sol::table marksTable(const Marks::Result& result, sol::state_view lua) {
+		sol::table table = lua.create_table();
+		for (const Marks::SiteResult& site : result.sites) {
+			sol::table part = lua.create_table_with("ok", site.ok, "added", site.added, "removed", site.removed);
+			if (!site.ok) part["error"] = site.error;
+			part["marks"] = idList(site.marks, lua);
+			part["kept"] = idList(site.kept, lua);
+			part["skipped"] = idList(site.skipped, lua);
+			if (!site.backup.empty()) part["backup"] = site.backup;
+			table[Accounts::SiteName(site.site)] = part;
+		}
+		return table;
+	}
+
+	sol::object MarksStart(sol::object sites, const std::string& action, sol::object add, sol::object remove, sol::object onDone,
+		sol::this_state state)
+	{
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return sol::nil;
+		Marks::Request request;
+		request.owner = ext;
+		std::vector<std::string> names;
+		if (sites.is<std::string>()) names.push_back(sites.as<std::string>());
+		else if (sites.is<sol::table>()) {
+			sol::table list = sites;
+			for (size_t i = 1; i <= list.size(); i++) {
+				sol::object name = list[i];
+				if (name.is<std::string>()) names.push_back(name.as<std::string>());
+			}
+		}
+		if (names.empty()) {
+			Extensions::logOnce("Marks_Start", "takes a site name or a list of them, like \"hoyolab_map\" or { \"hoyolab_map\", \"appsample\" }");
+			return sol::nil;
+		}
+		for (const std::string& name : names) {
+			std::optional<Accounts::Site> site = siteNamed("Marks_Start", name);
+			if (!site) return sol::nil;
+			if (std::find(request.sites.begin(), request.sites.end(), *site) == request.sites.end()) request.sites.push_back(*site);
+		}
+		if (action == "fetch") request.action = Marks::Action::Fetch;
+		else if (action == "change") request.action = Marks::Action::Change;
+		else {
+			Extensions::logOnce("Marks_Start", "knows \"fetch\" and \"change\", not " + action);
+			return sol::nil;
+		}
+		if (!pointIds(add, request.add) || !pointIds(remove, request.remove)) {
+			Extensions::logOnce("Marks_Start", "takes add and remove as lists of point ids");
+			return sol::nil;
+		}
+		if (request.add.size() + request.remove.size() > MarksMaxIds) {
+			Extensions::logOnce("Marks_Start", "takes " + std::to_string(MarksMaxIds) + " point ids at most");
+			return sol::nil;
+		}
+		if (onDone != sol::lua_nil && !onDone.is<sol::protected_function>()) {
+			Extensions::logOnce("Marks_Start", "takes a function as onDone");
+			return sol::nil;
+		}
+		for (Accounts::Site site : request.sites) {
+			if (!Extensions::allowed("Marks_Start", accountPermission(site))) return sol::nil;
+		}
+		int id = Marks::Start(request);
+		if (!id) {
+			Extensions::logOnce("Marks_Start", "has " + std::to_string(Marks::MaxWaiting) + " jobs waiting or not collected, no more start");
+			return sol::nil;
+		}
+		for (Accounts::Site site : request.sites) Extensions::markUsed(*ext, accountPermission(site));
+		if (onDone != sol::lua_nil) marksRequests.push_back({ id, ext, onDone.as<sol::protected_function>() });
+		return sol::make_object(state, id);
+	}
+
+	sol::object MarksResult(int id, sol::this_state state)
+	{
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return sol::nil;
+		bool hasOnDone = std::any_of(marksRequests.begin(), marksRequests.end(), [id](const MarksRequest& each) { return each.id == id; });
+		if (hasOnDone) return sol::nil;
+		std::optional<Marks::Result> result = Marks::Take(id, ext);
+		if (!result) return sol::nil;
+		return marksTable(*result, sol::state_view(state));
+	}
+
+	void UpdateMarks()
+	{
+		Marks::Frame();
+		std::vector<MarksRequest> due;
+		for (auto it = marksRequests.begin(); it != marksRequests.end();) {
+			if (Marks::Done(it->id)) {
+				due.push_back(std::move(*it));
+				it = marksRequests.erase(it);
+			}
+			else ++it;
+		}
+		// a callback can start new jobs, and its extension can be unloaded
+		for (MarksRequest& request : due) {
+			Extensions::Extension* owner = request.owner;
+			std::optional<Marks::Result> result = Marks::Take(request.id, owner);
+			if (!result) continue;
+			Extensions::runForExtension(owner, [&]() {
+				if (!owner->luaState) return;
+				sol::table table;
+				{
+					Extensions::HostAllocations host(owner->memory.get());
+					table = marksTable(*result, sol::state_view(*owner->luaState));
+				}
+				auto called = request.onDone(table);
+				if (!called.valid()) {
+					sol::error err = called;
+					std::cerr << "[" << owner->name << "] Marks_Start onDone: " << err.what() << std::endl;
+				}
+			});
+		}
+	}
+
+	void forgetMarks(Extensions::Extension* owner)
+	{
+		marksRequests.erase(std::remove_if(marksRequests.begin(), marksRequests.end(), [owner](const MarksRequest& each) { return each.owner == owner; }),
+			marksRequests.end());
+		Marks::Forget(owner);
 	}
 }
