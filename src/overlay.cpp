@@ -56,6 +56,8 @@ namespace Overlay {
     static int renamedFolder = -1;
     static bool renameAsked = false;
     static std::string folderName;
+    // why the typed folder name wasn't taken, shown under the field
+    static std::string renameProblem;
     static std::string iniPath;
     static double startTime = 0.0;
 
@@ -1061,6 +1063,7 @@ namespace Overlay {
             if (ImGui::MenuItem("Rename")) {
                 renamedFolder = at.top;
                 folderName = item.key;
+                renameProblem.clear();
                 renameAsked = true;
             }
             if (ImGui::MenuItem("Ungroup")) {
@@ -1307,18 +1310,58 @@ namespace Overlay {
         }
         // wide enough for the 40 bytes a name can have
         ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 24, 0));
+        // the box keeps the keyboard while the popup is open, and gives it back as it closes
+        static bool renaming = false;
         if (ImGui::BeginPopup("rename folder")) {
-            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
+            renaming = true;
+            // in the box when it opens and after a refused name
+            static bool typeAgain = false;
+            bool appearing = ImGui::IsWindowAppearing();
+            if (appearing || typeAgain) ImGui::SetKeyboardFocusHere(0);
+            typeAgain = false;
+            bool sent = false, escaped = false;
             Controls::TextOptions options;
             options.confirm = true;
             options.maxBytes = 40;
+            options.backToGame = false;
+            options.fresh = appearing;
+            options.sent = &sent;
+            options.escaped = &escaped;
             std::string name = folderName;
-            PageOrder::List before = pageList;
-            if (Controls::Text("Name", name, options) && PageOrder::Rename(pageList, renamedFolder, name)) {
-                ChangedPageList(before, "Renamed " + before[renamedFolder].key + " to " + pageList[renamedFolder].key);
-                ImGui::CloseCurrentPopup();
+            Controls::Text("Name", name, options);
+            bool close = escaped || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+            if (sent) {
+                using PageOrder::NameCheck;
+                PageOrder::List before = pageList;
+                NameCheck check = PageOrder::CheckName(pageList, renamedFolder, name);
+                if (PageOrder::Rename(pageList, renamedFolder, name)) {
+                    ChangedPageList(before, "Renamed " + before[renamedFolder].key + " to " + pageList[renamedFolder].key);
+                    close = true;
+                }
+                // Enter on the name it has closes it like Esc
+                else if (check == NameCheck::Same) close = true;
+                else {
+                    folderName = name;
+                    typeAgain = true;
+                    switch (check) {
+                    case NameCheck::Empty: renameProblem = "The name can't be empty"; break;
+                    case NameCheck::Taken: renameProblem = "A folder already has this name"; break;
+                    case NameCheck::HasHashes: renameProblem = "The name can't have ##"; break;
+                    case NameCheck::Fine: case NameCheck::Same: break;
+                    }
+                }
+            }
+            if (close) ImGui::CloseCurrentPopup();
+            if (!renameProblem.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, Controls::ColorVec(Controls::GetTheme().risky));
+                ImGui::TextWrapped("%s", renameProblem.c_str());
+                ImGui::PopStyleColor();
             }
             ImGui::EndPopup();
+        }
+        else if (renaming) {
+            renaming = false;
+            Typing::focus.letGo();
         }
         ImGui::EndChild();
 

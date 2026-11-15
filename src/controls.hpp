@@ -166,6 +166,12 @@ namespace Controls {
         bool taken = false;
         bool backToGame = true;
         size_t maxBytes = 4096;
+        // with confirm: drops text typed and not sent, e.g. as its popup opens
+        bool fresh = false;
+        // with confirm: set when Enter or the tick sends the box, changed or not
+        bool* sent = nullptr;
+        // set when Esc ends the typing
+        bool* escaped = nullptr;
     };
 
     // A text box, the label, Reset. True when value changed. With confirm,

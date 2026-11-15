@@ -118,6 +118,28 @@ TEST_CASE("a box with backToGame false keeps the focus until the menu closes") {
     CHECK(w.inFront == w.game);
 }
 
+TEST_CASE("letGo gives the focus back from a box that stays, once the mouse is let go") {
+    Typing::Focus focus;
+    FakeWindows w;
+    REQUIRE(focus.update(typing(7), w.windows) == Change::Took);
+    focus.stayAfter(7);
+    REQUIRE(focus.update(done(7), w.windows) == Change::None);
+    focus.stayAfter(7);
+    focus.letGo();
+    Typing::Frame held = done(7);
+    held.mouseHeld = true;
+    CHECK(focus.update(held, w.windows) == Change::None);
+    CHECK(w.inFront == w.overlay);
+    focus.stayAfter(7);
+    CHECK(focus.update(done(7), w.windows) == Change::GaveBack);
+    CHECK(w.inFront == w.game);
+
+    // and it doesn't carry over to the next typing
+    REQUIRE(focus.update(typing(7), w.windows) == Change::Took);
+    focus.stayAfter(7);
+    CHECK(focus.update(done(7), w.windows) == Change::None);
+}
+
 TEST_CASE("a box that stays only counts for itself") {
     Typing::Focus focus;
     FakeWindows w;

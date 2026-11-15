@@ -50,6 +50,8 @@ namespace Typing {
         // A text box that keeps the focus after Enter or Esc, for the next box.
         // Called every frame it's drawn. The others give it back.
         void stayAfter(ImGuiID box);
+        // gives the focus back at the next update, even after such a box
+        void letGo() { lettingGo = true; }
         // once a frame, after every text box is drawn
         Change update(const Frame& frame, Windows& windows);
         // the overlay has the focus for typing, so it reads the menu key itself
@@ -61,6 +63,7 @@ namespace Typing {
         bool focused = false;
         HWND from = nullptr;
         std::vector<ImGuiID> staying;
+        bool lettingGo = false;
         void stop();
     };
 

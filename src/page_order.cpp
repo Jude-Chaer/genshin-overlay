@@ -189,16 +189,26 @@ namespace PageOrder {
         return IntoFolder(list, from, target.top);
     }
 
-    bool Rename(List& list, int folder, const std::string& name) {
-        if (!isFolder(list, folder)) return false;
-        size_t start = name.find_first_not_of(" 	");
-        if (start == std::string::npos) return false;
-        std::string trimmed = name.substr(start, name.find_last_not_of(" 	") + 1 - start);
+    static std::string trimmed(const std::string& name) {
+        size_t start = name.find_first_not_of(" \t");
+        if (start == std::string::npos) return "";
+        return name.substr(start, name.find_last_not_of(" \t") + 1 - start);
+    }
+
+    NameCheck CheckName(const List& list, int folder, const std::string& name) {
+        std::string wanted = trimmed(name);
+        if (wanted.empty()) return NameCheck::Empty;
         // ImGui reads ## as the start of an id
-        if (trimmed.find("##") != std::string::npos) return false;
+        if (wanted.find("##") != std::string::npos) return NameCheck::HasHashes;
+        if (folder >= 0 && folder < (int)list.size() && list[folder].key == wanted) return NameCheck::Same;
         for (const auto& item : list)
-            if (item.folder && item.key == trimmed) return false;
-        list[folder].key = trimmed;
+            if (item.folder && item.key == wanted) return NameCheck::Taken;
+        return NameCheck::Fine;
+    }
+
+    bool Rename(List& list, int folder, const std::string& name) {
+        if (!isFolder(list, folder) || CheckName(list, folder, name) != NameCheck::Fine) return false;
+        list[folder].key = trimmed(name);
         return true;
     }
 

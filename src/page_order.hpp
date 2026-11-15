@@ -56,6 +56,10 @@ namespace PageOrder {
     // at the end, onto an extension in a folder right after it, and onto an
     // extension outside folders the two make a new folder there.
     extern Place Onto(List& list, Place from, Place target);
+    // what a new name for a folder would be, spaces at its ends don't count
+    enum class NameCheck { Fine, Same, Empty, Taken, HasHashes };
+    extern NameCheck CheckName(const List& list, int folder, const std::string& name);
+    // only a Fine name, trimmed
     extern bool Rename(List& list, int folder, const std::string& name);
     // the folder's extensions in its place
     extern bool Ungroup(List& list, int folder);

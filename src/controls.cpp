@@ -1201,6 +1201,7 @@ namespace Controls {
         RowCard row;
         beginRow(row);
         ImGuiID id = ImGui::GetID("##text");
+        if (options.fresh) unsent.erase(id);
         float side = ImGui::GetFrameHeight();
         // the X and the tick sit inside the box's end, a little apart, the
         // tick always last so it doesn't move
@@ -1258,7 +1259,9 @@ namespace Controls {
             if (escape) unsent.erase(id);
         }
 
+        if (escape && options.escaped) *options.escaped = true;
         auto send = [&] {
+            if (options.sent) *options.sent = true;
             auto it = unsent.find(id);
             if (it == unsent.end()) return;
             changed = it->second != value;

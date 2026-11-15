@@ -157,6 +157,22 @@ TEST_CASE("dragging puts the extension before the item it's dropped on, or in wi
     CHECK(PageOrder::Onto(list, { 0, 0 }, { 0, 0 }) == Place{ -1, -1 });
 }
 
+TEST_CASE("a folder name is checked before it's taken") {
+    using PageOrder::NameCheck;
+    List list = make({ folderOf("Maps", { "a" }), folderOf("Tools", { "b" }), one("c") });
+
+    CHECK(PageOrder::CheckName(list, 0, "Places") == NameCheck::Fine);
+    // its own name, spaces around it too: the field just closes
+    CHECK(PageOrder::CheckName(list, 0, "Maps") == NameCheck::Same);
+    CHECK(PageOrder::CheckName(list, 0, " Maps ") == NameCheck::Same);
+    CHECK(PageOrder::CheckName(list, 0, "") == NameCheck::Empty);
+    CHECK(PageOrder::CheckName(list, 0, " \t ") == NameCheck::Empty);
+    CHECK(PageOrder::CheckName(list, 0, "Tools") == NameCheck::Taken);
+    CHECK(PageOrder::CheckName(list, 0, "A##b") == NameCheck::HasHashes);
+    // an extension's key isn't a folder name
+    CHECK(PageOrder::CheckName(list, 0, "c") == NameCheck::Fine);
+}
+
 TEST_CASE("rename and ungroup work on folders only") {
     List list = make({ one("a"), folderOf("F", { "b", "c" }), one("d") });
 
