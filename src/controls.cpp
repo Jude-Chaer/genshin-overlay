@@ -2058,7 +2058,44 @@ namespace Controls {
         // set for a folder's row
         const std::vector<PageMark>* folder = nullptr;
         bool open = false;
+        bool menu = false;
     };
+
+    static float folderArrowRoom();
+    static bool pageMenuAsked = false;
+
+    static float pageMenuSize() {
+        return ImGui::GetFontSize() * 1.4f;
+    }
+
+    static float pageMenuRoom() {
+        return pageMenuSize() + ImGui::GetFontSize() * 0.2f;
+    }
+
+    // The ⋯ while the row is under the mouse, before a folder's arrow. A
+    // click on it asks for the menu instead of the row's click, so does a
+    // right-click anywhere on the row.
+    static bool pageMenuDots(ImDrawList* draw, const PageRow& row, ImVec2 max, float pad, float middle, bool hovered, bool clicked, ImU32 color) {
+        float font = ImGui::GetFontSize();
+        float size = pageMenuSize();
+        float right = max.x - pad + size * 0.25f - (row.folder ? folderArrowRoom() : 0);
+        ImVec2 boxMin(right - size, middle - size / 2), boxMax(right, middle + size / 2);
+        bool overDots = ImGui::IsMouseHoveringRect(boxMin, boxMax);
+        pageMenuAsked = (clicked && overDots) || ImGui::IsItemClicked(ImGuiMouseButton_Right);
+        if (hovered) {
+            ImVec2 center((boxMin.x + boxMax.x) / 2, middle);
+            if (overDots) draw->AddCircleFilled(center, size / 2, Color(Faded(GetTheme().text, 0.1f)));
+            float radius = std::max(1.0f, font * 0.09f), gap = font * 0.3f;
+            for (int i = -1; i <= 1; i++) draw->AddCircleFilled(ImVec2(center.x + gap * i, center.y), radius, color);
+        }
+        return clicked && !pageMenuAsked;
+    }
+
+    bool PageMenuAsked() {
+        bool asked = pageMenuAsked;
+        pageMenuAsked = false;
+        return asked;
+    }
 
     static float folderArrowSize() {
         return ImGui::GetFontSize() * 0.3f;
@@ -2131,7 +2168,7 @@ namespace Controls {
         }
     }
 
-    float PageButtonWidth(const char* label, const Summary& summary) {
+    float PageButtonWidth(const char* label, const Summary& summary, bool menu) {
         float pad, textX, text;
         {
             LabelType type;
@@ -2147,7 +2184,7 @@ namespace Controls {
             at = end + 1;
         }
         ImGui::PopFont();
-        return text + textX + pad + DotRoom();
+        return text + textX + pad + DotRoom() + (menu ? pageMenuRoom() : 0);
     }
 
     static bool applePageButton(const PageRow& row) {
@@ -2162,7 +2199,7 @@ namespace Controls {
         float pad, textX;
         pageRoom(pad, textX);
         float iconSize = std::floor(font * 22 / 14);
-        float arrow = row.folder ? folderArrowRoom() : 0;
+        float arrow = (row.folder ? folderArrowRoom() : 0) + (row.menu ? pageMenuRoom() : 0);
         bool cut = false;
         std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom() - arrow, 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
@@ -2205,6 +2242,7 @@ namespace Controls {
         }
         drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
         if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : theme.text));
+        if (row.menu) clicked = pageMenuDots(draw, row, max, pad, middle, hovered, clicked, Color(picked ? theme.pickedText : theme.text));
         if (dotted) CornerDot(min, max, rounding);
         return clicked;
     }
@@ -2227,7 +2265,7 @@ namespace Controls {
         float pad, textX;
         pageRoom(pad, textX);
         float iconSize = 24 * d;
-        float arrow = row.folder ? folderArrowRoom() : 0;
+        float arrow = (row.folder ? folderArrowRoom() : 0) + (row.menu ? pageMenuRoom() : 0);
         bool cut = false;
         std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom() - arrow, 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
@@ -2264,6 +2302,7 @@ namespace Controls {
         }
         drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
         if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
+        if (row.menu) clicked = pageMenuDots(draw, row, max, pad, middle, hovered, clicked, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
         if (dotted) CornerDot(min, max, rounding);
         return clicked;
     }
@@ -2275,6 +2314,7 @@ namespace Controls {
         const Summary& summary = row.summary;
         PageIcon glyph = row.glyph;
         Theme theme = GetTheme();
+        pageMenuAsked = false;
         if (theme.look == Look::Apple) return applePageButton(row);
         if (theme.look == Look::Material) return materialPageButton(row);
         float font = ImGui::GetFontSize();
@@ -2282,7 +2322,7 @@ namespace Controls {
         float pad, textX;
         pageRoom(pad, textX);
         float iconSize = font * 1.15f;
-        float arrow = row.folder ? folderArrowRoom() : 0;
+        float arrow = (row.folder ? folderArrowRoom() : 0) + (row.menu ? pageMenuRoom() : 0);
         bool cut = false;
         std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom() - arrow, 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
@@ -2322,24 +2362,29 @@ namespace Controls {
         }
         drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
         if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : theme.text));
+        if (row.menu) clicked = pageMenuDots(draw, row, max, pad, middle, hovered, clicked, Color(picked ? theme.pickedText : theme.text));
         if (dotted) Dot();
         return clicked;
     }
 
-    bool PageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary, PageIcon glyph) {
-        return pageRow({ label, picked, icon, dotted, tile, summary, glyph });
+    bool PageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary, PageIcon glyph,
+        bool menu) {
+        PageRow row{ label, picked, icon, dotted, tile, summary, glyph };
+        row.menu = menu;
+        return pageRow(row);
     }
 
     bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted, bool picked) {
         PageRow row{ label, picked };
         row.dotted = dotted;
+        row.menu = true;
         row.folder = &inside;
         row.open = open;
         return pageRow(row);
     }
 
     float FolderButtonWidth(const char* label) {
-        return PageButtonWidth(label) + folderArrowRoom();
+        return PageButtonWidth(label, {}, true) + folderArrowRoom();
     }
 
     float PageIndent() {

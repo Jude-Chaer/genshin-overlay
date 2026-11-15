@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <dwmapi.h>
+#include <shellapi.h>
 #include "overlay.hpp"
 #include "accounts.hpp"
 #include "notices.hpp"
@@ -50,6 +51,11 @@ namespace Overlay {
     // the player's order and folders of the extensions' pages
     static PageOrder::List pageList;
     static bool pageListLoaded = false;
+    // the row the page list's menu is open for
+    static PageOrder::Place pageMenuAt;
+    static int renamedFolder = -1;
+    static bool renameAsked = false;
+    static std::string folderName;
     static std::string iniPath;
     static double startTime = 0.0;
 
@@ -901,6 +907,91 @@ namespace Overlay {
         return ext.extensionImage ? (ImTextureID)(intptr_t)ext.extensionImage : 0;
     }
 
+    static void OpenFolder(const std::filesystem::path& folder) {
+        ShellExecuteW(nullptr, L"open", folder.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+
+    // A move from the page list's menu, saved when something moved. The
+    // folder an extension goes into opens.
+    static void MovePage(const std::function<PageOrder::Place(PageOrder::List&)>& move) {
+        PageOrder::Place moved = move(pageList);
+        if (moved.top < 0) return;
+        if (moved.inside >= 0) pageList[moved.top].open = true;
+        Settings::SavePageList(PageOrder::ToJson(pageList));
+    }
+
+    // a move picked in the ⋯ menu, done once the menu is drawn
+    static std::function<PageOrder::Place(PageOrder::List&)> pageMoveAsked;
+
+    static bool CanMove(const std::function<PageOrder::Place(PageOrder::List&)>& move) {
+        PageOrder::List copy = pageList;
+        return move(copy).top >= 0;
+    }
+
+    static void MoveMenu(PageOrder::Place at, bool folder) {
+        using namespace PageOrder;
+        if (!ImGui::BeginMenu("Move")) return;
+        auto item = [&](const char* label, const std::function<Place(List&)>& move) {
+            if (ImGui::MenuItem(label, nullptr, false, CanMove(move))) pageMoveAsked = move;
+        };
+        item("Up", [at](List& list) { return Up(list, at); });
+        item("Down", [at](List& list) { return Down(list, at); });
+        item("To the top", [at](List& list) { return ToTop(list, at); });
+        item("To the bottom", [at](List& list) { return ToBottom(list, at); });
+        if (!folder) {
+            ImGui::Separator();
+            std::vector<int> folders;
+            for (int top = 0; top < (int)pageList.size(); top++) {
+                if (pageList[top].folder && top != at.top) folders.push_back(top);
+            }
+            if (ImGui::BeginMenu("Into folder", !folders.empty())) {
+                for (int top : folders) {
+                    ImGui::PushID(top);
+                    item(pageList[top].key.c_str(), [at, top](List& list) { return IntoFolder(list, at, top); });
+                    ImGui::PopID();
+                }
+                ImGui::EndMenu();
+            }
+            item("New folder", [at](List& list) { return NewFolder(list, at); });
+            if (at.inside >= 0) item("Out of folder", [at](List& list) { return OutOfFolder(list, at); });
+        }
+        ImGui::EndMenu();
+    }
+
+    // The ⋯ menu of an extension's or a folder's row in the page list
+    static void PageMenu(const std::map<std::string, size_t>& byKey) {
+        PageOrder::Place at = pageMenuAt;
+        if (at.top < 0 || at.top >= (int)pageList.size()) {
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+        const PageOrder::Item& item = pageList[at.top];
+        if (item.folder && at.inside < 0) {
+            MoveMenu(at, true);
+            if (ImGui::MenuItem("Rename")) {
+                renamedFolder = at.top;
+                folderName = item.key;
+                renameAsked = true;
+            }
+            if (ImGui::MenuItem("Ungroup")) {
+                PageOrder::Ungroup(pageList, at.top);
+                Settings::SavePageList(PageOrder::ToJson(pageList));
+            }
+            return;
+        }
+        const std::string& key = at.inside >= 0 ? item.inside[at.inside] : item.key;
+        auto found = byKey.find(key);
+        if (found == byKey.end()) {
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+        Extensions::Extension& ext = *Extensions::registeredExtensions[found->second];
+        MoveMenu(at, false);
+        if (ImGui::MenuItem(ext.enabled ? "Turn off" : "Turn on")) Extensions::setRunning(ext, !ext.enabled);
+        if (ImGui::MenuItem("Permissions")) Extensions::openPermissionsTab(ext);
+        if (ImGui::MenuItem("Show in folder", nullptr, false, !ext.folder.empty())) OpenFolder(ext.folder);
+    }
+
     // the official Map and Minimap get the overlay's own icons, any other
     // extension its icon.png or its first letter
     static Controls::PageIcon OfficialIcon(const Extensions::Extension& ext) {
@@ -965,12 +1056,12 @@ namespace Overlay {
             }
             for (const auto& item : pageList) {
                 if (!item.folder) {
-                    sidebarWidth = std::max(sidebarWidth, Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[item.key]]->name.c_str()));
+                    sidebarWidth = std::max(sidebarWidth, Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[item.key]]->name.c_str(), {}, true));
                     continue;
                 }
                 sidebarWidth = std::max(sidebarWidth, Controls::FolderButtonWidth(item.key.c_str()));
                 for (const auto& key : item.inside) {
-                    float width = Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[key]]->name.c_str());
+                    float width = Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[key]]->name.c_str(), {}, true);
                     sidebarWidth = std::max(sidebarWidth, width + Controls::PageIndent());
                 }
             }
@@ -994,9 +1085,9 @@ namespace Overlay {
 
         // by number, so an extension named "Settings" or two with one name are their own buttons
         auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile,
-            const Controls::Summary& summary, Controls::PageIcon glyph) {
+            const Controls::Summary& summary, Controls::PageIcon glyph, bool menu = false) {
             ImGui::PushID(index);
-            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary, glyph)) activeTab = index;
+            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary, glyph, menu)) activeTab = index;
             ImGui::PopID();
         };
 
@@ -1009,15 +1100,19 @@ namespace Overlay {
             ImGui::Separator();
         }
 
-        auto DrawExtension = [&](size_t i) {
+        auto DrawExtension = [&](size_t i, PageOrder::Place at) {
             auto& ext = Extensions::registeredExtensions[i];
-            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, PageImage(*ext), !ext->dots.empty(), 0, {}, OfficialIcon(*ext));
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, PageImage(*ext), !ext->dots.empty(), 0, {}, OfficialIcon(*ext), true);
+            if (Controls::PageMenuAsked()) {
+                pageMenuAt = at;
+                ImGui::OpenPopup("page menu");
+            }
         };
         bool listChanged = false;
-        for (size_t top = 0; top < pageList.size(); ++top) {
+        for (int top = 0; top < (int)pageList.size(); ++top) {
             PageOrder::Item& item = pageList[top];
             if (!item.folder) {
-                DrawExtension(byKey[item.key]);
+                DrawExtension(byKey[item.key], { top, -1 });
                 continue;
             }
             std::vector<Controls::PageMark> marks;
@@ -1035,12 +1130,44 @@ namespace Overlay {
                 listChanged = true;
             }
             ImGui::PopID();
+            if (Controls::PageMenuAsked()) {
+                pageMenuAt = { top, -1 };
+                ImGui::OpenPopup("page menu");
+            }
             if (!item.open) continue;
             ImGui::Indent(Controls::PageIndent());
-            for (const auto& key : item.inside) DrawExtension(byKey[key]);
+            for (int inside = 0; inside < (int)item.inside.size(); ++inside) DrawExtension(byKey[item.inside[inside]], { top, inside });
             ImGui::Unindent(Controls::PageIndent());
         }
         if (listChanged) Settings::SavePageList(PageOrder::ToJson(pageList));
+
+        if (ImGui::BeginPopup("page menu")) {
+            PageMenu(byKey);
+            ImGui::EndPopup();
+        }
+        if (pageMoveAsked) {
+            auto move = std::move(pageMoveAsked);
+            pageMoveAsked = nullptr;
+            MovePage(move);
+        }
+        if (renameAsked) {
+            ImGui::OpenPopup("rename folder");
+            renameAsked = false;
+        }
+        // wide enough for the 40 bytes a name can have
+        ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 24, 0));
+        if (ImGui::BeginPopup("rename folder")) {
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
+            Controls::TextOptions options;
+            options.confirm = true;
+            options.maxBytes = 40;
+            std::string name = folderName;
+            if (Controls::Text("Name", name, options) && PageOrder::Rename(pageList, renamedFolder, name)) {
+                Settings::SavePageList(PageOrder::ToJson(pageList));
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
 
         ImGui::PopStyleVar();
         ImGui::EndChild();

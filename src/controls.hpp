@@ -260,11 +260,12 @@ namespace Controls {
     // You: a filled pill, no bar; Apple: filled blue, the icon on a coloured
     // tile). tile: Apple's tile colour, none: one of Apple's colours by the
     // name. The summary goes under the name. True when clicked.
+    // menu: a ⋯ on the row while it's under the mouse, see PageMenuAsked
     bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0,
-        const Summary& summary = {}, PageIcon glyph = PageIcon::None);
+        const Summary& summary = {}, PageIcon glyph = PageIcon::None, bool menu = false);
     // The width a page button needs for its name on one line and no word of
     // its summary broken, in the look's fonts.
-    float PageButtonWidth(const char* label, const Summary& summary = {});
+    float PageButtonWidth(const char* label, const Summary& summary = {}, bool menu = false);
     // one of the first four pages a folder shows on its icon
     struct PageMark {
         std::string label;
@@ -274,9 +275,11 @@ namespace Controls {
     };
     // A folder's row in the page list, drawn like a page: its first four
     // pages' icons small, its name and an arrow pointing down while it's
-    // open. True when clicked. picked: the open page is in it while it's
-    // closed.
+    // open, and a ⋯ like a page's. True when clicked. picked: the open page
+    // is in it while it's closed.
     bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted = false, bool picked = false);
+    // the page or folder row drawn last had its ⋯ clicked, or was right-clicked
+    bool PageMenuAsked();
     float FolderButtonWidth(const char* label);
     // how far a folder's pages sit in from it
     float PageIndent();
