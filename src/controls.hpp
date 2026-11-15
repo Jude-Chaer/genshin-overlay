@@ -223,16 +223,27 @@ namespace Controls {
     // the others the accent). Pieces that don't fit go on a row under it.
     int Segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted = {});
 
+    // A short line under a header's or a page's name that says its state,
+    // open or closed, e.g. "Logged in as Traveller". It wraps, it's never cut.
+    struct Summary {
+        enum class Kind { Plain, Strong, Warning };
+        std::string text;
+        // Plain: muted (faint under Apple's section heads). Strong: the text's
+        // colour, for a problem to act on.
+        // Warning: the warning colour.
+        Kind kind = Kind::Plain;
+    };
+
     // A header that opens and closes the part under it: a card row with the
     // name and a chevron at its end. open is its state, true while it's open;
     // the result says when the player changed it.
-    Result Header(const char* label, bool& open, bool dotted = false);
+    Result Header(const char* label, bool& open, bool dotted = false, const Summary& summary = {});
     // A header like Header with the part under it in a card that meets it.
     // While open it gives true, then EndSection goes after the part.
-    bool BeginSection(const char* label, bool defaultOpen = false, bool dotted = false);
+    bool BeginSection(const char* label, bool defaultOpen = false, bool dotted = false, const Summary& summary = {});
     // BeginSection with the open state kept by the caller. While open,
     // EndSection goes after the part.
-    Result BeginHeader(const char* label, bool& open, bool dotted = false);
+    Result BeginHeader(const char* label, bool& open, bool dotted = false, const Summary& summary = {});
     void EndSection();
     // A page's name at its top, larger than its text.
     void PageTitle(const char* text);
@@ -242,8 +253,10 @@ namespace Controls {
     // tile), the name on up to two lines; the picked one filled, with a short
     // accent bar at its start (Material You: a filled pill, no bar; Apple:
     // filled blue, the icon on a coloured tile). tile: Apple's tile colour,
-    // none: one of Apple's colours by the name. True when clicked.
-    bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0);
+    // none: one of Apple's colours by the name. The summary goes under the
+    // name. True when clicked.
+    bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0,
+        const Summary& summary = {});
     // A small filled tag after the item drawn last, like Official.
     void Tag(const char* text);
 

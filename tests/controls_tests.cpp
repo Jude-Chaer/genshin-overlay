@@ -886,6 +886,40 @@ TEST_CASE("a section shows its part only once a click on its header opens it") {
     CHECK(drawn > 0);
 }
 
+TEST_CASE("in every look a summary goes under a header's or page's name and wraps, never cut") {
+    const std::string longer = "HoYoLAB Map logged in as Traveller of Teyvat, account 123456789, used by Markers and two more extensions";
+    for (Controls::Look look : { Controls::Look::Windows, Controls::Look::Material, Controls::Look::Game, Controls::Look::Apple }) {
+        Controls::SetLook(look, true);
+        Frames frames;
+        auto height = [&](auto draw) {
+            float h = 0;
+            frame(300, [&] { draw(); h = ImGui::GetItemRectSize().y; });
+            return h;
+        };
+        auto head = [&](const std::string& text) {
+            return height([&] { bool open = false; Controls::Header("Accounts", open, false, { text }); });
+        };
+        auto page = [&](const std::string& text) {
+            return height([&] { Controls::PageButton("Accounts", false, 0, false, 0, { text }); });
+        };
+        INFO(Controls::LookName(look));
+        CHECK(head("Logged in") > head(""));
+        CHECK(head(longer) > head("Logged in"));
+        CHECK(page(longer) > page("Logged in"));
+        CHECK(page("Logged in") >= page(""));
+    }
+    Controls::SetLook(Controls::Look::Windows, true);
+}
+
+TEST_CASE("a header with a summary still opens and closes on a click") {
+    Frames frames;
+    bool open = false;
+    bool changed = false;
+    clickLast([&] { changed |= Controls::Header("Game traffic", open, false, { "Off" }).changed; });
+    CHECK(changed);
+    CHECK(open);
+}
+
 TEST_CASE("a tab added before the open one keeps it open") {
     Frames frames;
     std::vector<std::string> names = { "General", "Permissions" };
