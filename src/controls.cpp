@@ -2061,6 +2061,7 @@ namespace Controls {
         if (summary.kind == Summary::Kind::Warning && !(picked && theme.look == Look::Apple)) return theme.warning;
         if (picked) return Faded(theme.pickedText, 0.8f);
         if (summary.kind == Summary::Kind::Strong) return theme.text;
+        if (summary.kind == Summary::Kind::On) return theme.accent;
         return theme.muted;
     }
 
@@ -2389,6 +2390,8 @@ namespace Controls {
         const std::vector<PageMark>* folder = nullptr;
         bool open = false;
         bool menu = false;
+        // the icon is a map item's picture: drawn on a tile
+        bool framed = false;
     };
 
     static float folderArrowRoom();
@@ -2549,6 +2552,7 @@ namespace Controls {
         ImVec2 at(min.x + pad, std::floor(middle - iconSize / 2)), to(at.x + iconSize, at.y + iconSize);
         float tileRound = font * 6 / 14;
         if (row.folder) drawPageMarks(draw, at, iconSize, *row.folder, IM_COL32_WHITE);
+        else if (icon && row.framed) itemTile(draw, icon, at, iconSize);
         else if (icon) draw->AddImageRounded(icon, at, to, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, tileRound);
         else draw->AddRectFilled(at, to, Color(appleTile(label, row.tile)), tileRound);
         if (row.folder || icon) {}
@@ -2614,6 +2618,7 @@ namespace Controls {
         float middle = std::floor((min.y + max.y) / 2);
         ImVec2 at(min.x + pad, middle - iconSize / 2), to(at.x + iconSize, at.y + iconSize);
         if (row.folder) drawPageMarks(draw, at, iconSize, *row.folder, Color(roles.onSurfaceVariant));
+        else if (icon && row.framed) itemTile(draw, icon, at, iconSize);
         else if (icon) draw->AddImage(icon, at, to);
         else if (glyph != PageIcon::None) DrawPageIcon(draw, glyph, at, iconSize, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
         else {
@@ -2674,6 +2679,10 @@ namespace Controls {
         }
         ImVec2 at(min.x + pad, middle - iconSize / 2), to(at.x + iconSize, at.y + iconSize);
         if (row.folder) drawPageMarks(draw, at, iconSize, *row.folder, Color(theme.text));
+        else if (icon && row.framed) {
+            float side = std::floor(textX - pad - font * 0.45f);
+            itemTile(draw, icon, ImVec2(at.x, std::floor(middle - side / 2)), side);
+        }
         else if (icon) draw->AddImage(icon, at, to);
         else if (glyph != PageIcon::None) DrawPageIcon(draw, glyph, at, iconSize, Color(picked ? theme.pickedText : theme.text));
         else {
@@ -2698,9 +2707,10 @@ namespace Controls {
     }
 
     bool PageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary, PageIcon glyph,
-        bool menu) {
+        bool menu, bool framed) {
         PageRow row{ label, picked, icon, dotted, tile, summary, glyph };
         row.menu = menu;
+        row.framed = framed;
         return pageRow(row);
     }
 

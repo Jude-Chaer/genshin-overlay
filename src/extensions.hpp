@@ -130,6 +130,10 @@ namespace Extensions {
 	inline const size_t MaxTextures = 256;
 	inline const size_t MaxSettings = 128;
 	inline const size_t MaxTabs = 16;
+	// items in one ImGUI_SideList
+	inline const size_t MaxSideItems = 64;
+	// items in one ImGUI_RightClick list
+	inline const size_t MaxMenuEntries = 64;
 	// items in its ⋯ menu, and their labels' length in characters
 	inline const size_t MaxMenuItems = 3;
 	inline const size_t MaxMenuItemLabel = 24;
@@ -250,6 +254,9 @@ namespace Extensions {
 		// an open header's card is being drawn, ended by the next header,
 		// ImGUI_EndHeader or the end of the call
 		bool headerCard = false;
+		// what's drawn sits beside an ImGUI_SideList, ended by ImGUI_EndSideList,
+		// the next side list or the end of the call
+		bool sideList = false;
 		struct DotSeen {
 			// when its part opened, and the frame it was last open
 			double since = -1;

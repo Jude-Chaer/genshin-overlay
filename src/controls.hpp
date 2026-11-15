@@ -251,11 +251,12 @@ namespace Controls {
     // A short line under a header's or a page's name that says its state,
     // open or closed, e.g. "Logged in as Traveller". It wraps, it's never cut.
     struct Summary {
-        enum class Kind { Plain, Strong, Warning };
+        enum class Kind { Plain, Strong, Warning, On };
         std::string text;
         // Plain: muted (faint under Apple's section heads). Strong: the text's
         // colour, for a problem to act on.
-        // Warning: the warning colour.
+        // Warning: the warning colour. On: the accent, for "3 on" so what's
+        // picked stands out.
         Kind kind = Kind::Plain;
     };
 
@@ -290,8 +291,9 @@ namespace Controls {
     // tile). tile: Apple's tile colour, none: one of Apple's colours by the
     // name. The summary goes under the name. True when clicked.
     // menu: a ⋯ on the row while it's under the mouse, see PageMenuAsked
+    // framed: the icon is a map item's picture, drawn on a tile
     bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0,
-        const Summary& summary = {}, PageIcon glyph = PageIcon::None, bool menu = false);
+        const Summary& summary = {}, PageIcon glyph = PageIcon::None, bool menu = false, bool framed = false);
     // The width a page button needs for its name on one line and no word of
     // its summary broken, in the look's fonts.
     float PageButtonWidth(const char* label, const Summary& summary = {}, bool menu = false);

@@ -1657,6 +1657,87 @@ TEST_CASE("a renamed tab keeps its row's open tab") {
     TestExtension::unloadAll();
 }
 
+TEST_CASE("what's drawn after a side list sits beside it, up to ImGUI_EndSideList or the end of the code") {
+    Extensions::Extension* ext = TestExtension::load("sided", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    const std::string list = "open = ImGUI_SideList('groups', { { name = 'Chests', summary = '2 on' }, { name = 'Ores' } }) ";
+    frames.draw(list + "ImGUI_Text('beside')");
+    CHECK(ext->luaState->get<int>("open") == 1);
+    float beside = frames.last.x;
+    CHECK_FALSE(ext->sideList);
+    frames.draw(list + "ImGUI_EndSideList() ImGUI_Text('under')");
+    CHECK(frames.last.x < beside);
+    CHECK_FALSE(ext->sideList);
+
+    // the second item opens, and stays open by its name
+    frames.draw("ImGUI_SideList('groups', { { name = 'Chests' }, { name = 'Ores' } })");
+    ImGuiWindow* listWindow = nullptr;
+    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
+        if (window->ParentWindow && std::string(window->Name).find("list") != std::string::npos) listWindow = window;
+    REQUIRE(listWindow != nullptr);
+    ImVec2 second(listWindow->Pos.x + listWindow->Size.x / 2, listWindow->Pos.y + listWindow->ContentSize.y * 0.75f);
+    ImGui::GetIO().AddMousePosEvent(second.x, second.y);
+    frames.draw(list);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frames.draw(list);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frames.draw(list);
+    frames.draw(list);
+    CHECK(ext->luaState->get<int>("open") == 2);
+    frames.draw("open = ImGUI_SideList('groups', { { name = 'New' }, { name = 'Chests' }, { name = 'Ores' } })");
+    CHECK(ext->luaState->get<int>("open") == 3);
+
+    // a long part beside the list scrolls by itself
+    frames.draw(list + "for i = 1, 200 do ImGUI_Text('row ' .. i) end");
+    frames.draw(list + "for i = 1, 200 do ImGUI_Text('row ' .. i) end");
+    ImGuiWindow* besideWindow = nullptr;
+    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
+        if (window->ParentWindow && std::string(window->Name).find("beside") != std::string::npos) besideWindow = window;
+    REQUIRE(besideWindow != nullptr);
+    CHECK(besideWindow->ScrollMax.y > 0);
+
+    // { open = 2 } is the one open until the player picks one, a kept pick wins
+    frames.draw("open = ImGUI_SideList('fresh', { { name = 'Sets' }, { name = 'Chests' } }, { open = 2 })");
+    CHECK(ext->luaState->get<int>("open") == 2);
+    frames.draw("open = ImGUI_SideList('groups', { { name = 'Chests' }, { name = 'Ores' } }, { open = 1 })");
+    CHECK(ext->luaState->get<int>("open") == 2);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("a right-click on an item opens its menu, and the picked name comes back") {
+    Extensions::Extension* ext = TestExtension::load("righted", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    const std::string code = "ImGUI_Button('Chests', function() end) "
+        "picked, from = ImGUI_RightClick('chests', { { name = 'Rename' }, { name = 'Delete' } }) ";
+    frames.draw(code);
+    CHECK(ext->luaState->get<sol::object>("picked") == sol::lua_nil);
+    frames.draw("ImGUI_Button('Chests', function() end)");
+    ImVec2 middle = frames.last;
+    ImGui::GetIO().AddMousePosEvent(middle.x, middle.y);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(1, true);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(1, false);
+    frames.draw(code);
+    ImGuiWindow* menu = nullptr;
+    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
+        if (window->Active && (window->Flags & ImGuiWindowFlags_Popup)) menu = window;
+    REQUIRE(menu != nullptr);
+    // the second row, Delete
+    float row = ImGui::GetTextLineHeightWithSpacing();
+    ImVec2 second(menu->Pos.x + menu->Size.x / 2, menu->Pos.y + menu->WindowPadding.y + row * 1.5f);
+    ImGui::GetIO().AddMousePosEvent(second.x, second.y);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frames.draw(code);
+    CHECK(ext->luaState->get<std::string>("picked") == "Delete");
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("CompareImages compares only the extension's own textures") {
     Extensions::Extension* ext = TestExtension::load("comparing", "function Init() end");
     REQUIRE(ext != nullptr);

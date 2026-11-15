@@ -204,6 +204,10 @@ namespace Extensions {
 					ext->headerCard = false;
 					Controls::EndSection();
 				}
+				if (ext->callDepth == 0 && ext->sideList) {
+					ext->sideList = false;
+					ImGui::EndChild();
+				}
 			}
 			// a clip left open would cut everything drawn after it
 			if (list) {

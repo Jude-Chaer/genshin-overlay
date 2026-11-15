@@ -68,6 +68,9 @@ namespace LuaFunctions {
     sol::object ImGUI_Tabs(sol::table names, sol::this_state state);
     bool ImGUI_Header(const std::string& label, sol::optional<sol::table> options);
     void ImGUI_EndHeader();
+    sol::object ImGUI_SideList(const std::string& id, sol::table items, sol::optional<sol::table> options, sol::this_state state);
+    void ImGUI_EndSideList();
+    sol::variadic_results ImGUI_RightClick(const std::string& id, sol::table items, sol::this_state state);
     sol::variadic_results ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options,
         sol::this_state state);
     void ImGUI_SameLine();

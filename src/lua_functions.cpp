@@ -153,6 +153,9 @@ namespace LuaFunctions {
 		global("ImGUI_Tabs", None, ImGUI_Tabs);
 		global("ImGUI_Header", None, ImGUI_Header);
 		global("ImGUI_EndHeader", None, ImGUI_EndHeader);
+		global("ImGUI_SideList", None, ImGUI_SideList);
+		global("ImGUI_EndSideList", None, ImGUI_EndSideList);
+		global("ImGUI_RightClick", None, ImGUI_RightClick);
 		global("ImGUI_InputText", None, ImGUI_InputText);
 		global("ImGUI_SameLine", None, ImGUI_SameLine);
 		global("ImGUI_Tooltip", None, ImGUI_Tooltip);
@@ -373,6 +376,13 @@ namespace LuaFunctions {
 		return texture;
 	}
 
+	// a table's icon field, a texture or a web image's handle; 0 when none
+	static ImTextureID iconOf(const char* function, const sol::table& table) {
+		double value = table.get_or("icon", 0.0);
+		if (value == 0) return 0;
+		return (ImTextureID)(intptr_t)textureOf(function, value);
+	}
+
 	bool ImGUI_Image(sol::object image, float width, float height, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Image")) return false;
 		GLuint texture = 0;
@@ -542,6 +552,181 @@ namespace LuaFunctions {
 		Controls::EndSection();
 	}
 
+	// the open item of each extension's side lists, by folder and list id, kept by name
+	static std::map<std::string, std::string> sideListOpen;
+
+	// ImGUI_SideList(id, items) draws items down the page's side as the menu's own
+	// page list and gives the open one's number, from 1. items: { { name = "Chests",
+	// icon = a texture, summary = "3 on", on = true }, ... }, all but name optional;
+	// on draws the summary in the accent, for an item with picks in it; glyph =
+	// "sets" draws the overlay's own icon instead of a picture, for an item that
+	// isn't one of the others; line = true puts a line under the item. A third
+	// argument { open = 2 } picks the item open until the player picks one. What's
+	// drawn after it sits beside the list, up to ImGUI_EndSideList() or the end of
+	// Menu(); the list and the part beside it each scroll by themselves, down to
+	// the page's visible end. A page too narrow for both shows the items as chips above instead.
+	sol::object ImGUI_SideList(const std::string& id, sol::table items, sol::optional<sol::table> options, sol::this_state state) {
+		if (!inMenu("ImGUI_SideList")) return sol::lua_nil;
+		auto* ext = Extensions::currentExtension;
+		if (!ext) return sol::lua_nil;
+		ImGUI_EndSideList();
+		ImGUI_EndHeader();
+		struct Item { std::string name; ImTextureID icon = 0; Controls::Summary summary; Controls::PageIcon glyph = Controls::PageIcon::None; bool line = false; };
+		std::vector<Item> list;
+		for (size_t i = 1; i <= Extensions::MaxSideItems; i++) {
+			sol::optional<sol::table> entry = items[i];
+			if (!entry) break;
+			Item item;
+			item.name = entry->get_or<std::string>("name", "");
+			item.icon = iconOf("ImGUI_SideList", *entry);
+			item.summary.text = summaryText("ImGUI_SideList", entry->get_or<std::string>("summary", ""));
+			if (entry->get_or("on", false)) item.summary.kind = Controls::Summary::Kind::On;
+			if (entry->get_or<std::string>("glyph", "") == "sets") {
+				item.glyph = Controls::PageIcon::Sets;
+				item.icon = 0;
+			}
+			item.line = entry->get_or("line", false);
+			list.push_back(item);
+		}
+		if (list.empty()) return sol::lua_nil;
+
+		std::string key = ext->folderKey + "\n" + id;
+		// options { open = 2 }: the item open until the player picks one, from 1
+		size_t open = 0;
+		if (options) open = (size_t)std::clamp(options->get_or("open", 1), 1, (int)list.size()) - 1;
+		auto kept = sideListOpen.find(key);
+		if (kept != sideListOpen.end()) {
+			for (size_t i = 0; i < list.size(); i++) if (list[i].name == kept->second) open = i;
+		}
+
+		float font = ImGui::GetFontSize();
+		float avail = ImGui::GetContentRegionAvail().x;
+		float width = font * 8;
+		for (const Item& item : list) width = std::max(width, Controls::PageButtonWidth(item.name.c_str(), item.summary));
+		width = std::ceil(std::min(width, avail * 0.45f));
+		bool beside = avail - width >= font * 14;
+		// beside: the list and what's next to it each scroll by themselves, down
+		// to the page's visible end
+		float height = std::max(font * 16, ImGui::GetContentRegionAvail().y);
+
+		ImGui::PushID(("##side" + id).c_str());
+		if (beside) {
+			ImGui::BeginChild("list", ImVec2(width, height), 0, ImGuiWindowFlags_NoBackground);
+			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
+			for (size_t i = 0; i < list.size(); i++) {
+				ImGui::PushID((int)i);
+				if (Controls::PageButton(list[i].name.c_str(), i == open, list[i].icon, false, 0, list[i].summary, list[i].glyph, false, true)) open = i;
+				ImGui::PopID();
+				if (list[i].line) {
+					// a thin line in the look's line colour, with room around it
+					ImVec2 at = ImGui::GetCursorScreenPos();
+					float y = std::floor(at.y + font * 0.3f) + 0.5f;
+					ImGui::GetWindowDrawList()->AddLine(ImVec2(at.x, y), ImVec2(at.x + ImGui::GetContentRegionAvail().x, y), Controls::Color(Controls::GetTheme().line));
+					ImGui::Dummy(ImVec2(0, font * 0.6f));
+				}
+			}
+			ImGui::PopStyleVar();
+			ImGui::EndChild();
+		}
+		else {
+			for (size_t i = 0; i < list.size(); i++) {
+				ImGui::PushID((int)i);
+				bool on = i == open;
+				Controls::ToggleOptions options;
+				options.chip = true;
+				options.icon = list[i].icon;
+				options.note = list[i].summary.text;
+				if (Controls::Toggle(list[i].name.c_str(), &on, options)) open = i;
+				ImGui::PopID();
+			}
+		}
+		ImGui::PopID();
+		sideListOpen[key] = list[open].name;
+		if (beside) {
+			ImGui::SameLine(0, font);
+			ImGui::BeginChild(("##beside" + id).c_str(), ImVec2(0, height), 0, ImGuiWindowFlags_NoBackground);
+			ext->sideList = true;
+		}
+		return sol::make_object(state, (int)open + 1);
+	}
+
+	// ImGUI_EndSideList() ends the part beside a side list, so what comes after
+	// takes the page's whole width. Nothing happens with no side list open.
+	void ImGUI_EndSideList() {
+		auto* ext = Extensions::currentExtension;
+		if (!ext || !ext->sideList) return;
+		ImGUI_EndHeader();
+		ext->sideList = false;
+		ImGui::EndChild();
+	}
+
+	// ImGUI_RightClick(id, items) goes right after an item: a right-click on that
+	// item opens a menu, as the menu's own page list has it. items: { { name =
+	// "Rename" }, { name = "Icon", items = { { name = "Chests", icon = a texture }
+	// } }, ... }, an item with items opens them beside it. Gives the picked item's
+	// name and the name of the item it's in, nothing while none is picked.
+	struct RightClickItem { std::string name; ImTextureID icon = 0; std::vector<RightClickItem> inside; };
+
+	static std::vector<RightClickItem> rightClickItems(sol::table items, bool top) {
+		std::vector<RightClickItem> list;
+		for (size_t i = 1; i <= Extensions::MaxMenuEntries; i++) {
+			sol::optional<sol::table> entry = items[i];
+			if (!entry) break;
+			RightClickItem item;
+			item.name = entry->get_or<std::string>("name", "");
+			if (item.name.empty()) continue;
+			item.icon = iconOf("ImGUI_RightClick", *entry);
+			// one level of items inside
+			sol::optional<sol::table> inside = entry->get<sol::optional<sol::table>>("items");
+			if (top && inside) item.inside = rightClickItems(*inside, false);
+			list.push_back(item);
+		}
+		return list;
+	}
+
+	static bool rightClickRow(const RightClickItem& item) {
+		ImGui::PushID(item.name.c_str());
+		bool picked;
+		if (item.icon) {
+			float side = ImGui::GetTextLineHeight();
+			ImVec2 at = ImGui::GetCursorScreenPos();
+			// spaces as wide as the icon and a gap, whatever the font's space is
+			float space = std::max(1.0f, ImGui::CalcTextSize(" ").x);
+			std::string room = std::string((size_t)std::ceil(side * 1.4f / space), ' ') + item.name;
+			picked = ImGui::MenuItem(room.c_str());
+			ImGui::GetWindowDrawList()->AddImage(item.icon, ImVec2(at.x, at.y), ImVec2(at.x + side, at.y + side));
+		}
+		else picked = ImGui::MenuItem(item.name.c_str());
+		ImGui::PopID();
+		return picked;
+	}
+
+	sol::variadic_results ImGUI_RightClick(const std::string& id, sol::table items, sol::this_state state) {
+		sol::variadic_results out;
+		if (!inMenu("ImGUI_RightClick")) return out;
+		std::string popup = "##rightclick" + id;
+		if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
+			&& ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()))
+			ImGui::OpenPopup(popup.c_str());
+		if (!ImGui::BeginPopup(popup.c_str())) return out;
+		for (const RightClickItem& item : rightClickItems(items, true)) {
+			if (item.inside.empty()) {
+				if (rightClickRow(item)) out.push_back(sol::make_object(state, item.name));
+				continue;
+			}
+			if (!ImGui::BeginMenu(item.name.c_str())) continue;
+			for (const RightClickItem& inner : item.inside) {
+				if (rightClickRow(inner)) {
+					out.push_back(sol::make_object(state, inner.name));
+					out.push_back(sol::make_object(state, item.name));
+				}
+			}
+			ImGui::EndMenu();
+		}
+		ImGui::EndPopup();
+		return out;
+	}
+
 	bool Notice(const std::string& text, sol::optional<sol::table> options) {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		if (!ext) return false;
@@ -572,8 +757,7 @@ namespace LuaFunctions {
 			options.chip = look == "chip";
 			options.note = table->get_or<std::string>("note", "");
 			options.compact = table->get_or<std::string>("size", "") == "small";
-			GLuint icon = table->get_or<GLuint>("icon", 0);
-			if (icon && ownsTexture(icon)) options.icon = (ImTextureID)(intptr_t)icon;
+			options.icon = iconOf("ImGUI_Toggle", *table);
 		}
 		options.dotted = dotted(label);
 		used(label, Controls::Toggle(label.c_str(), &value, options));
