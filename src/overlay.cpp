@@ -162,6 +162,33 @@ namespace Overlay {
         else GameTraffic::Stop(false);
     }
 
+    // A white disc with a soft edge, mipmapped, that badges tint for their
+    // round parts.
+    static ImTextureID makeDisc() {
+        const int side = 128;
+        std::vector<unsigned char> pixels(side * side * 4, 255);
+        float middle = side / 2.0f, radius = side / 2.0f - 1;
+        for (int y = 0; y < side; y++) {
+            for (int x = 0; x < side; x++) {
+                float d = std::hypot(x + 0.5f - middle, y + 0.5f - middle);
+                float alpha = std::clamp(radius - d + 0.5f, 0.0f, 1.0f);
+                pixels[(y * side + x) * 4 + 3] = (unsigned char)std::lround(alpha * 255);
+            }
+        }
+        GLuint texture = 0;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, side, side, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return (ImTextureID)(intptr_t)texture;
+    }
+
     bool Init() {
         Asks::addSetting({ "Game traffic", "Read the game's traffic", "It only reads, nothing is ever sent to the game.",
             []() { return Settings::readGameTraffic; }, []() { setGameTraffic(true); } });
@@ -233,6 +260,7 @@ namespace Overlay {
 
         ImGui_ImplGlfw_InitForOpenGL(Overlay::Window, true);
         ImGui_ImplOpenGL3_Init(glsl_version);
+        Controls::SetDiscTexture(makeDisc());
 
         // The menu key (Alt+` unless the player picked another) toggles the
         // menu, so it has to work while the menu is closed too. A plain ` didn't

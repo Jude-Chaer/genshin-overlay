@@ -2648,14 +2648,39 @@ namespace Controls {
         ImGui::ProgressBar(shown, ImVec2(-FLT_MIN, height), "");
     }
 
+    // the Game look's colours, made once a frame for the many badges drawn
+    static const Theme& gameColours() {
+        static Theme theme;
+        static int frame = -1;
+        if (frame != ImGui::GetFrameCount()) {
+            frame = ImGui::GetFrameCount();
+            theme = GetTheme(Look::Game, true);
+        }
+        return theme;
+    }
+
+    static ImTextureID discTexture = 0;
+
+    void SetDiscTexture(ImTextureID disc) { discTexture = disc; }
+
+    // a filled circle, from the disc texture when there is one
+    static void disc(ImDrawList* draw, ImVec2 center, float radius, ImU32 color) {
+        if (!discTexture) {
+            draw->AddCircleFilled(center, radius, color);
+            return;
+        }
+        draw->AddImage(discTexture, ImVec2(center.x - radius, center.y - radius), ImVec2(center.x + radius, center.y + radius),
+            ImVec2(0, 0), ImVec2(1, 1), color);
+    }
+
     void Badge(ImDrawList* draw, ImVec2 center, float radius, ImTextureID icon, const BadgeOptions& options) {
         if (radius <= 0) return;
-        Theme theme = GetTheme(Look::Game, true);
+        const Theme& theme = gameColours();
         float amount = options.faded ? theme.faded : 1.0f;
         unsigned int ring = options.ring.value_or(options.faded ? theme.done : theme.text);
-        draw->AddCircleFilled(ImVec2(center.x, center.y + radius * 0.08f), radius, Color(Faded(theme.shadow, amount)));
-        draw->AddCircleFilled(center, radius * 0.94f, Color(Faded(ring, amount)));
-        draw->AddCircleFilled(center, radius * 0.8f, Color(Faded(theme.inside, amount)));
+        disc(draw, ImVec2(center.x, center.y + radius * 0.08f), radius, Color(Faded(theme.shadow, amount)));
+        disc(draw, center, radius * 0.94f, Color(Faded(ring, amount)));
+        disc(draw, center, radius * 0.8f, Color(Faded(theme.inside, amount)));
         if (icon) {
             float half = radius * 0.6f;
             draw->AddImage(icon, ImVec2(center.x - half, center.y - half), ImVec2(center.x + half, center.y + half),
@@ -2665,9 +2690,9 @@ namespace Controls {
 
     void Bubble(ImDrawList* draw, ImVec2 center, float radius, const char* text, std::optional<unsigned int> fill) {
         if (radius <= 0) return;
-        Theme theme = GetTheme(Look::Game, true);
-        draw->AddCircleFilled(center, radius, Color(theme.inside));
-        draw->AddCircleFilled(center, radius * 0.86f, Color(fill.value_or(theme.gold)));
+        const Theme& theme = gameColours();
+        disc(draw, center, radius, Color(theme.inside));
+        disc(draw, center, radius * 0.86f, Color(fill.value_or(theme.gold)));
         if (!text || !*text) return;
         float size = radius * 1.3f;
         ImVec2 measured = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0, text);

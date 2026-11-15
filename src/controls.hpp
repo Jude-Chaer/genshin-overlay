@@ -269,6 +269,8 @@ namespace Controls {
     void PartTitle(const char* text);
     // the look's bold font for page names, none: the text's own
     void SetTitleFont(ImFont* font);
+    // a white disc badges tint for their round parts, none: drawn circles
+    void SetDiscTexture(ImTextureID disc);
     // The overlay's own icons for its pages and its official extensions, drawn
     // as lines in one colour.
     enum class PageIcon { None, Home, Usage, Accounts, Map, Minimap };
