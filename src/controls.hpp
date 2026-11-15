@@ -135,13 +135,15 @@ namespace Controls {
         // a filter chip: the name in a framed box that fills with the accent
         // and a tick while on; chips in a row wrap by themselves
         bool chip = false;
-        // with chip: muted text after the name, e.g. "3/120"
+        // with chip: muted text after the name, e.g. "3/120"; with checkbox:
+        // muted before the box, and the whole row takes the click
         std::string note;
         // an attention dot on the switch's corner
         bool dotted = false;
         // a smaller switch after the name, a row of them wraps by itself
         bool compact = false;
-        // drawn before the name, 0 for none
+        // drawn before the name, 0 for none; a checkbox with one is a row of a
+        // list to pick from, the whole row taking the click
         ImTextureID icon = 0;
         // under the name, wrapped beside the switch (not with compact)
         std::vector<ToggleLine> lines;

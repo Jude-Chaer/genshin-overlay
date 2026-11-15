@@ -945,8 +945,116 @@ namespace Controls {
         return clicked;
     }
 
+    // A checkbox row with an icon or a note: the icon, the name, the note muted
+    // before the box at the row's end. The whole card takes the click, as a
+    // list of things to pick from does.
+    // A map item's picture on a tile, as the menu's letter tiles are drawn:
+    // the inside colour, the card's line, the look's corners. Game art has no
+    // ground of its own and floats without it.
+    static void itemTile(ImDrawList* draw, ImTextureID icon, ImVec2 at, float size) {
+        Theme theme = GetTheme();
+        ImVec2 to(at.x + size, at.y + size);
+        float rounding = std::min(ImGui::GetStyle().FrameRounding, size * 0.3f);
+        if (isMaterial()) rounding = std::min(8 * dp(), size * 0.3f);
+        draw->AddRectFilled(at, to, Color(theme.inside), rounding);
+        draw->AddRect(at, to, Color(theme.cardLine), rounding);
+        float in = std::floor(size * 0.12f);
+        draw->AddImage(icon, ImVec2(at.x + in, at.y + in), ImVec2(to.x - in, to.y - in));
+    }
+
+    static bool itemRow(const char* label, bool* value, const ToggleOptions& options) {
+        RowCard row;
+        beginRow(row);
+        ImGui::PushID(label);
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        Theme theme = GetTheme();
+        float font = ImGui::GetFontSize();
+        float side = ImGui::GetFrameHeight();
+        float gap = ImGui::GetStyle().ItemSpacing.x;
+        float iconSide = options.icon ? std::floor(font * 1.9f) : 0;
+        float height = std::max(side, iconSide);
+        ImVec2 at = ImGui::GetCursorScreenPos();
+        float width = rowAvail();
+
+        // the click over the card, padding and all; the row's own size after
+        ImVec2 cardMin(row.start.x, row.start.y), cardSize(row.width, height + row.pad.y * 2);
+        ImGui::SetCursorScreenPos(cardMin);
+        bool clicked = ImGui::InvisibleButton("##row", cardSize);
+        bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+        if (clicked) {
+            *value = !*value;
+            ImGui::MarkItemEdited(ImGui::GetItemID());
+        }
+        window->DC.CursorMaxPos.y = row.start.y + row.pad.y;
+        ImGui::SetCursorScreenPos(at);
+        ImGui::Dummy(ImVec2(width, height));
+
+        ImDrawList* draw = window->DrawList;
+        ImVec2 cardMax(cardMin.x + cardSize.x, cardMin.y + cardSize.y);
+        // on: the card tinted with the accent and edged with it, told apart at a glance
+        if (*value) {
+            draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.accent, 0.14f)), cardRounding(theme));
+            draw->AddRect(cardMin, cardMax, Color(Faded(theme.accent, 0.6f)), cardRounding(theme));
+        }
+        if (hovered) draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.text, held ? 0.08f : 0.04f)), cardRounding(theme));
+        float middle = at.y + height / 2;
+        float x = at.x;
+        if (iconSide) {
+            itemTile(draw, options.icon, ImVec2(x, std::floor(middle - iconSide / 2)), iconSide);
+            x += iconSide + gap;
+        }
+        float right = at.x + width;
+        float boxX = right - side;
+        float noteWidth = options.note.empty() ? 0 : ImGui::CalcTextSize(options.note.c_str()).x;
+        float noteX = boxX - gap * 2 - noteWidth;
+        {
+            NameType type;
+            bool cut = false;
+            std::vector<std::string> lines = FitLines(std::string(label, ImGui::FindRenderedTextEnd(label)), std::max(font, noteX - gap - x), 1, cut);
+            if (cut && hovered) Tooltip(std::string(label, ImGui::FindRenderedTextEnd(label)).c_str());
+            if (!lines.empty()) draw->AddText(ImVec2(x, std::floor(middle - ImGui::GetTextLineHeight() / 2)), Color(theme.text), lines[0].c_str());
+        }
+        if (noteWidth) draw->AddText(ImVec2(noteX, std::floor(middle - ImGui::GetTextLineHeight() / 2)), Color(theme.muted), options.note.c_str());
+
+        // the look's checkbox, drawn as its own Checkbox draws it
+        ImVec2 boxMin(boxX, std::floor(middle - side / 2)), boxMax(boxX + side, boxMin.y + side);
+        if (isMaterial()) {
+            const MaterialRoles& roles = materialRoles[theme.dark ? 1 : 0];
+            float d = dp(), half = 9 * d;
+            ImVec2 center((boxMin.x + boxMax.x) / 2, (boxMin.y + boxMax.y) / 2);
+            if (hovered) draw->AddCircleFilled(center, side / 2, Color(Faded(*value ? theme.accent : theme.text, held ? 0.1f : 0.08f)));
+            ImVec2 inMin(std::floor(center.x - half), std::floor(center.y - half)), inMax(inMin.x + half * 2, inMin.y + half * 2);
+            if (*value) {
+                draw->AddRectFilled(inMin, inMax, Color(theme.accent), 2 * d);
+                ImGui::RenderCheckMark(draw, ImVec2(inMin.x + 3 * d, inMin.y + 3 * d), Color(theme.onAccent), 12 * d);
+            }
+            else draw->AddRect(ImVec2(inMin.x + d, inMin.y + d), ImVec2(inMax.x - d, inMax.y - d), Color(roles.onSurfaceVariant), d, 2 * d);
+        }
+        else {
+            float boxRounding = ImGui::GetStyle().FrameRounding;
+            if (*value) {
+                // ticked: filled with the accent, the tick on it
+                draw->AddRectFilled(boxMin, boxMax, Color(theme.accent), boxRounding);
+                if (hovered) draw->AddRectFilled(boxMin, boxMax, Color(Faded(theme.onAccent, held ? 0.15f : 0.08f)), boxRounding);
+                float pad = std::max(1.0f, std::floor(side / 6));
+                ImGui::RenderCheckMark(draw, ImVec2(boxMin.x + pad, boxMin.y + pad), Color(theme.onAccent), side - pad * 2);
+            }
+            else {
+                ImGui::RenderFrame(boxMin, boxMax, ImGui::GetColorU32(held ? ImGuiCol_FrameBgActive : hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg),
+                    true, boxRounding);
+                // a look whose frames have no edge (Game) would lose the box on the card
+                if (ImGui::GetStyle().FrameBorderSize < 1) draw->AddRect(boxMin, boxMax, Color(theme.buttonLine), boxRounding);
+            }
+        }
+        if (options.dotted) CornerDot(boxMin, boxMax, ImGui::GetStyle().FrameRounding);
+        ImGui::PopID();
+        endRow(row);
+        return clicked;
+    }
+
     bool Toggle(const char* label, bool* value, const ToggleOptions& options) {
         if (options.chip) return chip(label, value, options);
+        if (options.checkbox && (options.icon || !options.note.empty())) return itemRow(label, value, options);
         if (options.checkbox) {
             // the name first, the box at the row's end where a switch would be
             RowCard row;
