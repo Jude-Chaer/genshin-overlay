@@ -1,0 +1,27 @@
+{
+  "apiKey": "redacted-apiKey",
+  "appName": "[DEFAULT]",
+  "createdAt": "redacted-createdAt",
+  "displayName": "redacted-displayName",
+  "email": "redacted-email",
+  "emailVerified": true,
+  "isAnonymous": false,
+  "lastLoginAt": "redacted-lastLoginAt",
+  "photoURL": "redacted-photoURL",
+  "providerData": [
+    {
+      "displayName": "redacted-displayName",
+      "email": "redacted-email",
+      "phoneNumber": null,
+      "photoURL": "redacted-photoURL",
+      "providerId": "google.com",
+      "uid": "redacted-uid"
+    }
+  ],
+  "stsTokenManager": {
+    "accessToken": "redacted-accessToken",
+    "expirationTime": 0,
+    "refreshToken": "redacted-refreshToken"
+  },
+  "uid": "redacted-uid"
+}

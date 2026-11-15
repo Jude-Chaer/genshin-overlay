@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <dwmapi.h>
 #include "overlay.hpp"
+#include "accounts.hpp"
 #include "notices.hpp"
 #include "controls.hpp"
 #include "keybindings.hpp"
@@ -1126,6 +1127,7 @@ namespace Overlay {
             lookPicked = false;
             updateFont();
             ScreenPictures::nextTurn();
+            Accounts::Frame();
             Triggers::checkNow();
             LuaFunctions::UpdateAnswers();
             updateTrafficNote();

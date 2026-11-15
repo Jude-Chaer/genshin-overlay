@@ -24,6 +24,7 @@
 #include "locator/map_locator.hpp"
 #include "packets/game_traffic.hpp"
 #include "point_guides.hpp"
+#include "accounts.hpp"
 #include "web_images.hpp"
 
 // genshin-overlay.exe --locate <screenshot>
@@ -213,6 +214,7 @@ int main(int argc, char** argv) {
     }
 
     Settings::Load();
+    Accounts::Init();
 
 
     if (!glfwInit()) {
@@ -249,6 +251,7 @@ int main(int argc, char** argv) {
     MapTiles::Shutdown();
     ScreenPictures::clear();
     Overlay::Shutdown();
+    Accounts::Shutdown();
 
     return 0;
 }

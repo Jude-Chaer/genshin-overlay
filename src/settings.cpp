@@ -330,4 +330,37 @@ namespace Settings {
         settings["extensionGrants"][folder] = toJson(grants);
         write(settings);
     }
+
+    void SwitchOffEverywhere(const std::string& name) {
+        nlohmann::json settings = read();
+        auto all = settings.find("extensionGrants");
+        if (all == settings.end() || !all->is_object()) return;
+        bool changed = false;
+        for (auto& [folder, saved] : all->items()) {
+            Grants grants = grantsFrom(saved);
+            auto granted = std::find(grants.names.begin(), grants.names.end(), name);
+            if (!grants.saved || granted == grants.names.end()) continue;
+            grants.names.erase(granted);
+            if (std::find(grants.off.begin(), grants.off.end(), name) == grants.off.end()) grants.off.push_back(name);
+            saved = toJson(grants);
+            changed = true;
+        }
+        if (changed) write(settings);
+    }
+
+    std::string LoadAccountSeen(const std::string& site) {
+        nlohmann::json settings = read();
+        auto all = settings.find("accountsSeen");
+        if (all == settings.end() || !all->is_object()) return "";
+        auto seen = all->find(site);
+        return seen != all->end() && seen->is_string() ? seen->get<std::string>() : "";
+    }
+
+    void SaveAccountSeen(const std::string& site, const std::string& hash) {
+        nlohmann::json settings = read();
+        nlohmann::json& all = settings["accountsSeen"];
+        if (!all.is_object()) all = nlohmann::json::object();
+        all[site] = hash;
+        write(settings);
+    }
 }

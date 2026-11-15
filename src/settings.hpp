@@ -103,4 +103,10 @@ namespace Settings {
     // moved to the folder the first time that hash loads.
     extern Grants LoadGrants(const std::string& folder, const std::string& hash);
     extern void SaveGrants(const std::string& folder, const Grants& grants);
+    // the permission off in every folder's grants that has it
+    extern void SwitchOffEverywhere(const std::string& name);
+
+    // the sha256 of the account last logged in to a site, "" for none
+    extern std::string LoadAccountSeen(const std::string& site);
+    extern void SaveAccountSeen(const std::string& site, const std::string& hash);
 }

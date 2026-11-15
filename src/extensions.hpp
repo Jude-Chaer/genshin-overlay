@@ -418,6 +418,8 @@ namespace Extensions {
 	extern void refuse(Extension& ext, ExtensionPermissionTypes permission, bool never);
 	// its switch on the Permissions tab
 	extern void switchPermission(Extension& ext, ExtensionPermissionTypes permission, bool on);
+	// off for every extension, loaded or not, saved
+	extern void switchOffEverywhere(ExtensionPermissionTypes permission);
 	// "Let it ask"
 	extern void letAsk(Extension& ext, const std::string& name);
 	// the Permissions tab on its page

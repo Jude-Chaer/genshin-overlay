@@ -1504,9 +1504,7 @@ namespace Extensions {
 		}
 		if (grants.hash != ext->extensionHash) {
 			for (const std::string& name : grants.names) {
-				// a player-only permission isn't given back with the others
-				const PermissionInfo* info = findPermission(name);
-				if (!isRetired(name) && !(info && info->playerOnly)) ext->grantsBeforeChange.push_back(name);
+				if (!isRetired(name)) ext->grantsBeforeChange.push_back(name);
 			}
 			ext->hashBeforeChange = grants.hash;
 			std::cout << "[" << ext->folderKey << "] changed since its permissions were set, it runs with the defaults it had" << std::endl;
@@ -1621,6 +1619,23 @@ namespace Extensions {
 				held.bound.clear();
 			}
 		}
+	}
+
+	void switchOffEverywhere(ExtensionPermissionTypes permission) {
+		const PermissionInfo* info = findPermission(permission);
+		if (!info) return;
+		for (auto& ext : registeredExtensions) {
+			// waiting for "Allow the same": it doesn't come back with it
+			auto before = std::find(ext->grantsBeforeChange.begin(), ext->grantsBeforeChange.end(), info->name);
+			if (before != ext->grantsBeforeChange.end()) {
+				ext->grantsBeforeChange.erase(before);
+				ext->switchedOff.insert(info->name);
+			}
+			if (!ext->extensionPermissions.count(permission)) continue;
+			switchPermission(*ext, permission, false);
+			saveExtensionPermissions(*ext);
+		}
+		Settings::SwitchOffEverywhere(info->name);
 	}
 
 	void letAsk(Extension& ext, const std::string& name) {
