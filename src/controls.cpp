@@ -1778,7 +1778,8 @@ namespace Controls {
                 draw->AddLine(ImVec2(box.Min.x, min.y + h), ImVec2(box.Min.x, max.y - h), Color(Faded(theme.muted, 0.4f)));
             }
             ImVec2 size = ImGui::CalcTextSize(names[i].c_str());
-            draw->AddText(ImVec2(box.Min.x + pad, box.Min.y + (height - size.y) / 2), Color(theme.text), names[i].c_str());
+            // in the piece's middle; the dot room is at its corner, clear of the name
+            draw->AddText(ImVec2(std::floor((box.Min.x + box.Max.x - size.x) / 2), box.Min.y + (height - size.y) / 2), Color(theme.text), names[i].c_str());
             if (i < (int)dotted.size() && dotted[i]) {
                 float in = dotRadius() * 1.5f;
                 drawDot(ImVec2(box.Max.x - in, box.Min.y + in));
@@ -1844,11 +1845,12 @@ namespace Controls {
             draw->AddRect(box.Min, box.Max, Color(theme.buttonLine), rounding, 1.0f, corners);
             unsigned int text = shown ? (material ? theme.pickedText : theme.onAccent) : theme.text;
             ImVec2 size = ImGui::CalcTextSize(names[i].c_str());
-            float textX = box.Min.x + pad;
+            // in the piece's middle; the dot room is at its corner, clear of the name
+            float textX = std::floor((box.Min.x + box.Max.x - size.x) / 2);
             if (material) {
                 // the name, and the open one's tick before it, in the piece's middle
                 float content = size.x + (shown ? tick : 0);
-                float x = std::floor((box.Min.x + box.Max.x - DotRoom() - content) / 2);
+                float x = std::floor((box.Min.x + box.Max.x - content) / 2);
                 if (shown) {
                     float d = dp();
                     ImGui::RenderCheckMark(draw, ImVec2(x + 2 * d, box.Min.y + (height - 14 * d) / 2), Color(text), 14 * d);
