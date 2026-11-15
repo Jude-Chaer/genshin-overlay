@@ -119,8 +119,8 @@ namespace LuaFunctions {
     // GetAccount("hoyolab_map" or "appsample"): { site, state, problem, account }.
     // state is logged_out, window_open, logged_in, needs_login or captcha,
     // problem what went wrong last for the player, "" when nothing did.
-    // account (HoYoLAB's id, appsample's email) only with the site's account
-    // permission. Nil for a site it doesn't know.
+    // account (HoYoLAB's id, appsample's email) and name (HoYoLAB's nickname)
+    // only with the site's account permission. Nil for a site it doesn't know.
     sol::object GetAccount(const std::string& site, sol::this_state state);
     // what GetAccount and the Account trigger give
     sol::table accountTable(Accounts::Site site, const Accounts::Status& status, sol::state_view lua);

@@ -25,6 +25,8 @@ namespace Accounts {
         std::string account;
         // the last thing that went wrong, for the player, empty when nothing did
         std::string problem;
+        // HoYoLAB's nickname, read once after each log in; empty until then
+        std::string name;
     };
 
     // reads both logins from the store; one that doesn't read is deleted
@@ -84,6 +86,8 @@ namespace Accounts {
     // what stays the same for the account: HoYoLAB's account id, appsample's
     // uid; "" when not logged in
     std::string AccountId(Site site);
+    // the nickname for Status, kept only while that account is still logged in
+    void SetName(Site site, const std::string& account, const std::string& name);
 
     // securetoken.googleapis.com's answer to a refresh
     struct Refresh {

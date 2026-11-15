@@ -2499,6 +2499,7 @@ namespace LuaFunctions {
 		if (ext && ext->extensionPermissions.count(accountPermission(site)) && !status.account.empty()) {
 			Extensions::markUsed(*ext, accountPermission(site));
 			table["account"] = status.account;
+			if (!status.name.empty()) table["name"] = status.name;
 		}
 		return table;
 	}

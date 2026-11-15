@@ -836,7 +836,8 @@ namespace Overlay {
         case Accounts::State::LoggedOut: return "Not logged in.";
         case Accounts::State::WindowOpen: return "Log in in the " + label + " window.";
         case Accounts::State::LoggedIn:
-            return site == Accounts::Site::HoyolabMap ? "Logged in, account " + status.account : "Logged in as " + status.account;
+            if (site == Accounts::Site::Appsample) return "Logged in as " + status.account;
+            return status.name.empty() ? "Logged in, account " + status.account : "Logged in as " + status.name;
         case Accounts::State::NeedsLogin: return label + " logged you out. Log in again.";
         case Accounts::State::Captcha: return label + " wants to check you're not a bot.";
         }
@@ -860,6 +861,8 @@ namespace Overlay {
                     ImGui::PopStyleColor();
                 }
                 else ImGui::TextWrapped("%s", line.c_str());
+                if (site == Accounts::Site::HoyolabMap && status.state == Accounts::State::LoggedIn && !status.name.empty())
+                    ImGui::TextDisabled("Account %s", status.account.c_str());
                 if (!status.problem.empty()) ImGui::TextWrapped("%s", status.problem.c_str());
 
                 Controls::ButtonOptions main;

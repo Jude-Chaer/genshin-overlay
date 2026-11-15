@@ -63,7 +63,7 @@ namespace Marks {
     void Init();
     void Shutdown();
     // On the frame's thread: hands a waiting question to Asks, drops old
-    // results
+    // results, asks for the HoYoLAB nickname after a log in
     void Frame();
 
     // the job's id, 0 when the owner has MaxWaiting already
@@ -93,6 +93,8 @@ namespace Marks {
     bool ReadHoyolabList(const Net::Response& response, std::vector<int64_t>& out);
     // batch_mark_map_point's body
     std::string HoyolabBatch(int map, const std::vector<int64_t>& ids, bool unmark);
+    // the player's HoYoLAB nickname from getUserFullInfo, "" when it has none
+    std::string ReadHoyolabName(const Net::Response& response);
 
     // appsample's users/{uid} document: adds its markerIds to out. 404 is a
     // player with nothing marked yet. False when it isn't one.

@@ -25,6 +25,8 @@ namespace Marks {
     static const std::string HOYOLAB = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc/v1/map/point/";
     static const std::string HOYOLAB_QUERY = "app_sn=ys_obc&lang=en-us";
     static const std::string HOYOLAB_HEADERS = "Origin: https://act.hoyolab.com\r\nReferer: https://act.hoyolab.com/\r\nx-rpc-map_version: 4.5\r\n";
+    static const std::string NAME_URL = "https://bbs-api-os.hoyolab.com/community/user/wapi/getUserFullInfo?uid=";
+    static const std::string NAME_HEADERS = "Origin: https://www.hoyolab.com\r\nReferer: https://www.hoyolab.com/\r\n";
     static const std::string FIRESTORE = "https://firestore.googleapis.com/v1/";
     static const std::string DOCUMENTS = "projects/genshin-impact/databases/(default)/documents";
     static const std::string USERS = DOCUMENTS + "/users/";
@@ -70,6 +72,24 @@ namespace Marks {
         json list = json::array();
         for (int64_t id : ids) list.push_back({ { "point_id", id }, { "is_delete", unmark } });
         return json{ { "map_id", map }, { "list", list } }.dump();
+    }
+
+    std::string ReadHoyolabName(const Net::Response& response) {
+        json parsed = json::parse(response.body, nullptr, false);
+        if (!parsed.is_object() || parsed.value("retcode", -1) != 0) return "";
+        const json* at = &parsed;
+        for (const char* key : { "data", "user_info", "nickname" }) {
+            if (!at->is_object() || !at->contains(key)) return "";
+            at = &(*at)[key];
+        }
+        if (!at->is_string()) return "";
+        std::string name = at->get<std::string>();
+        // a line on the Accounts page, nothing that breaks it
+        name.erase(std::remove_if(name.begin(), name.end(), [](char c) { return (unsigned char)c < 0x20; }), name.end());
+        if (name.size() <= 64) return name;
+        size_t end = 64;
+        while (end > 0 && ((unsigned char)name[end] & 0xC0) == 0x80) end--;
+        return name.substr(0, end);
     }
 
     // a whole number from a Firestore value, which keeps ids as strings
@@ -238,6 +258,8 @@ namespace Marks {
         // each site's account when it was started; a job for an account
         // that's gone isn't run for the next one
         std::map<Site, std::string> accounts;
+        // the overlay's own nickname read, not a result anyone takes
+        bool name = false;
         // the player's answer to the summary question, once given, and the
         // points it was for
         Choice answer = Choice::None;
@@ -281,6 +303,12 @@ namespace Marks {
     static bool stopping = false;
     static std::thread worker;
     static Net::Stopper* stopper = nullptr;
+    // the account whose nickname was asked for last and when, frame thread
+    // only; nameFailed when HoYoLAB didn't answer it
+    static std::string nameAskedFor;
+    static Clock::time_point nameAskedAt;
+    static bool nameFailed = false;
+    static constexpr auto NAME_AGAIN = std::chrono::minutes(5);
 
     static LoginFor loginFor;
     static Sender sender;
@@ -604,6 +632,24 @@ namespace Marks {
         return true;
     }
 
+    // false when HoYoLAB didn't answer it; a player with no nickname is answered
+    static bool readName(const Job& job) {
+        std::optional<Login> login = currentLogin(Site::HoyolabMap);
+        if (!login) return false;
+        if (login->account != job.accounts.at(Site::HoyolabMap)) {
+            wipe(*login);
+            return true;
+        }
+        Net::Response response;
+        bool reached = send("GET", NAME_URL + login->account, *login, NAME_HEADERS, "", response);
+        HoyolabAnswer answer = ReadHoyolab(response);
+        std::string name = reached ? ReadHoyolabName(response) : "";
+        if (!name.empty()) Accounts::SetName(Site::HoyolabMap, login->account, name);
+        else std::cerr << "[marks] HoYoLAB's nickname couldn't be read" << (answer.read ? ": " + answer.message : "") << std::endl;
+        wipe(*login);
+        return reached && answer.read && answer.retcode == 0;
+    }
+
     // nothing when the job needs the player's answer first, the question is
     // in ask then
     static std::optional<Result> run(const Job& job, std::optional<Question>& ask) {
@@ -721,7 +767,7 @@ namespace Marks {
         // the first job whose owner isn't waiting for an answer
         auto next = [] {
             return std::find_if(queue.begin(), queue.end(), [](const Job& job) {
-                return std::none_of(asking.begin(), asking.end(), [&](const Asking& a) { return a.job.request.owner == job.request.owner; });
+                return job.name || std::none_of(asking.begin(), asking.end(), [&](const Asking& a) { return a.job.request.owner == job.request.owner; });
             });
         };
         for (;;) {
@@ -738,7 +784,9 @@ namespace Marks {
                 runningSites = job.request.sites;
             }
             std::optional<Question> ask;
-            std::optional<Result> result = run(job, ask);
+            std::optional<Result> result;
+            bool nameRead = !job.name || readName(job);
+            if (!job.name) result = run(job, ask);
             std::lock_guard<std::mutex> lock(mutex);
             // a cancelled one waiting for an answer isn't asked
             if (running == job.id && cancelling == job.id && !result) result = cancelled(job);
@@ -746,6 +794,7 @@ namespace Marks {
             if (running == job.id && result) results[job.id] = { std::move(*result), job.request.owner, Clock::now() };
             else if (running == job.id && ask) asking.push_back({ std::move(job), std::move(*ask) });
             cancelling = 0;
+            if (!nameRead) nameFailed = true;
             running = 0;
             runningOwner = nullptr;
         }
@@ -757,6 +806,7 @@ namespace Marks {
         std::lock_guard<std::mutex> lock(mutex);
         if (worker.joinable()) return;
         stopping = false;
+        nameAskedFor.clear();
         worker = std::thread(work);
     }
 
@@ -781,6 +831,29 @@ namespace Marks {
     }
 
     void Frame() {
+        // the nickname once for each account logged in
+        std::string account = loginFor ? "" : Accounts::AccountId(Site::HoyolabMap);
+        bool again = false;
+        if (!account.empty() && account == nameAskedFor && Clock::now() - nameAskedAt > NAME_AGAIN) {
+            std::lock_guard<std::mutex> lock(mutex);
+            again = nameFailed;
+        }
+        if (account != nameAskedFor || again) {
+            nameAskedFor = account;
+            nameAskedAt = Clock::now();
+            if (!account.empty()) {
+                Job job;
+                job.name = true;
+                job.request.sites = { Site::HoyolabMap };
+                job.accounts[Site::HoyolabMap] = account;
+                std::lock_guard<std::mutex> lock(mutex);
+                nameFailed = false;
+                job.id = nextJob++;
+                queue.push_back(std::move(job));
+                wake.notify_all();
+            }
+        }
+
         std::unique_lock<std::mutex> lock(mutex);
         for (auto it = results.begin(); it != results.end();) {
             if (Clock::now() - it->second.at > KeepResult) it = results.erase(it);
@@ -807,7 +880,7 @@ namespace Marks {
 
     int WaitingOf(const void* owner) {
         std::lock_guard<std::mutex> lock(mutex);
-        int count = (int)std::count_if(queue.begin(), queue.end(), [owner](const Job& job) { return job.request.owner == owner; });
+        int count = (int)std::count_if(queue.begin(), queue.end(), [owner](const Job& job) { return !job.name && job.request.owner == owner; });
         if (running > 0 && runningOwner == owner) count++;
         count += (int)std::count_if(asking.begin(), asking.end(), [owner](const Asking& a) { return a.job.request.owner == owner; });
         for (const auto& [id, done] : results) count += done.owner == owner ? 1 : 0;
@@ -851,7 +924,7 @@ namespace Marks {
 
     void Forget(const void* owner) {
         std::lock_guard<std::mutex> lock(mutex);
-        queue.erase(std::remove_if(queue.begin(), queue.end(), [owner](const Job& job) { return job.request.owner == owner; }), queue.end());
+        queue.erase(std::remove_if(queue.begin(), queue.end(), [owner](const Job& job) { return !job.name && job.request.owner == owner; }), queue.end());
         for (auto it = results.begin(); it != results.end();) {
             if (it->second.owner == owner) it = results.erase(it);
             else ++it;

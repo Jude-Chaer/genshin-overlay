@@ -60,6 +60,8 @@ namespace {
             headers.push_back(head);
             if (url.find("hoyolab.com") != std::string::npos && retcode)
                 return answer(out, 200, { { "retcode", retcode }, { "message", "no" }, { "data", nullptr } });
+            if (url.find("getUserFullInfo") != std::string::npos)
+                return answer(out, 200, { { "retcode", 0 }, { "data", { { "user_info", { { "nickname", "Paimonfan" } } } } } });
             if (url.find("mark_map_point_list") != std::string::npos) {
                 int map = std::stoi(url.substr(url.find("map_id=") + 7));
                 json list = json::array();
@@ -466,11 +468,19 @@ TEST_CASE("HoYoLAB Map's captcha and logged out answers go to the account") {
     Accounts::Frame();
     {
         Running run(true);
+        // the nickname is read once the account is logged in
+        Marks::Frame();
+        auto started = std::chrono::steady_clock::now();
+        while (Accounts::Get(Site::HoyolabMap).name.empty() && std::chrono::steady_clock::now() - started < std::chrono::seconds(5))
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        CHECK(Accounts::Get(Site::HoyolabMap).name == "Paimonfan");
+        CHECK(run.sites.count("getUserFullInfo?uid=123456789") == 1);
+        CHECK(run.sites.headers[0].find("Cookie: ltuid_v2=123456789; ltoken_v2=v2_token") == 0);
+
         run.sites.retcode = -5001;
         Marks::Request request;
         request.sites = { Site::HoyolabMap };
         auto result = waitFor(Marks::Start(request));
-        CHECK(run.sites.headers[0].find("Cookie: ltuid_v2=123456789; ltoken_v2=v2_token") == 0);
         REQUIRE(result);
         CHECK(result->sites[0].error == "captcha");
         CHECK(Accounts::Get(Site::HoyolabMap).state == Accounts::State::Captcha);
@@ -674,6 +684,7 @@ TEST_CASE("HoYoLAB Map's and appsample's real answers are read") {
     CHECK(refused.retcode == -2004);
     CHECK_FALSE(Marks::ReadHoyolabList(saved("hoyolab_refused.json", 200), ids));
     CHECK(Marks::ReadHoyolab(saved("hoyolab_batch.json", 200)).retcode == 0);
+    CHECK(Marks::ReadHoyolabName(saved("hoyolab_user.json", 200)) == "Paimonfan");
 
     CHECK(Marks::ReadAppsampleUser(saved("appsample_user.json", 200), ids));
     CHECK(ids == std::vector<int64_t>{ 29202, 28219 });
@@ -691,6 +702,13 @@ TEST_CASE("HoYoLAB Map's and appsample's answers are read") {
     list.body = R"({"retcode":-100,"message":"Please login","data":null})";
     CHECK_FALSE(Marks::ReadHoyolabList(list, ids));
     CHECK(Marks::ReadHoyolab(list).retcode == -100);
+
+    Net::Response name;
+    name.body = "{\"retcode\":0,\"data\":{\"user_info\":{\"nickname\":\"Pai\\nmon\"}}}";
+    CHECK(Marks::ReadHoyolabName(name) == "Paimon");
+    // cut at 64 bytes, never inside a character
+    name.body = "{\"retcode\":0,\"data\":{\"user_info\":{\"nickname\":\"" + std::string(63, 'a') + "\\u30d1\\u30a4\"}}}";
+    CHECK(Marks::ReadHoyolabName(name) == std::string(63, 'a'));
 
     Net::Response user;
     user.status = 200;

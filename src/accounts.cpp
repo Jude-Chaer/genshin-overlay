@@ -303,6 +303,15 @@ namespace Accounts {
         return site == Site::HoyolabMap ? login.status.account : login.uid;
     }
 
+    void SetName(Site site, const std::string& account, const std::string& name) {
+        std::lock_guard<std::mutex> lock(mutex);
+        Login& login = of(site);
+        std::string id = site == Site::HoyolabMap ? login.status.account : login.uid;
+        if (login.secret.empty() || id.empty() || id != account || login.status.name == name) return;
+        login.status.name = name;
+        changes++;
+    }
+
     std::optional<FirebaseUser> ReadFirebaseUser(const std::string& json) {
         nlohmann::json value = nlohmann::json::parse(json, nullptr, false);
         if (!value.is_object()) return std::nullopt;
