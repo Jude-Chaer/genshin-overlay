@@ -955,6 +955,8 @@ namespace Overlay {
         }
         pageList = PageOrder::Arrange(pageList, present);
 
+        // shown only once the list is longer than the window
+        static bool listScrolls = false;
         float sidebarWidth = sidebarMin;
         if (sidebarFonts > 0) sidebarWidth = sidebarFonts * font;
         else {
@@ -972,6 +974,7 @@ namespace Overlay {
                     sidebarWidth = std::max(sidebarWidth, width + Controls::PageIndent());
                 }
             }
+            if (listScrolls) sidebarWidth += ImGui::GetStyle().ScrollbarSize;
             // windows are whole pixels
             sidebarWidth = std::ceil(sidebarWidth + listPad * 2);
         }
@@ -983,10 +986,10 @@ namespace Overlay {
         ImGui::BeginChild(
             "Sidebar",
             ImVec2(sidebarWidth, contentSize.y),
-            ImGuiChildFlags_AlwaysUseWindowPadding,
-            ImGuiWindowFlags_NoScrollbar
+            ImGuiChildFlags_AlwaysUseWindowPadding
         );
         ImGui::PopStyleVar();
+        listScrolls = ImGui::GetScrollMaxY() > 0;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
 
         // by number, so an extension named "Settings" or two with one name are their own buttons
