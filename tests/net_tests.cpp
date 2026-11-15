@@ -625,6 +625,34 @@ TEST_CASE("a request held to its sites is refused on a redirect away from them")
 }
 
 
+TEST_CASE("a request with a login gets a redirect back and keeps no cookie") {
+    Replier proxy([](const std::string& head) {
+        if (head.find("GET http://example.com/away") == 0)
+            return std::string("HTTP/1.1 302 Found\r\nLocation: http://example.org/\r\nSet-Cookie: theirs=1\r\nContent-Length: 0\r\n\r\n");
+        return ok("marks");
+    });
+    Proxy use(proxy.address());
+
+    Net::Response redirected;
+    REQUIRE(Net::sendLogin("GET", "http://example.com/away", "Cookie: mine=1\r\n", "", redirected));
+    CHECK(redirected.status == 302);
+    CHECK(proxy.requests == 1);
+
+    Net::Response posted;
+    REQUIRE(Net::sendLogin("POST", "http://example.com/post", "Cookie: mine=1\r\n", "{}", posted));
+    CHECK(posted.body == "marks");
+    REQUIRE(proxy.requests == 2);
+    std::lock_guard<std::mutex> lock(proxy.mutex);
+    CHECK(proxy.seen[0].find("Cookie: mine=1") != std::string::npos);
+    CHECK(proxy.seen[1].find("Cookie: mine=1") != std::string::npos);
+    CHECK(proxy.seen[1].find("theirs") == std::string::npos);
+    CHECK(proxy.seen[1].find("Content-Type: application/json") != std::string::npos);
+
+    Net::Response other;
+    CHECK_FALSE(Net::sendLogin("PUT", "http://example.com/", "", "", other));
+    CHECK(proxy.requests == 2);
+}
+
 
 // Net_Start: an extension's request on its own thread, the answer given once.
 

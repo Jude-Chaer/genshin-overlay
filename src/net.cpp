@@ -227,6 +227,8 @@ namespace Net {
 		// that address is the proxy's, so the name asked for is looked up here
 		// instead (it can still look up differently for the proxy).
 		bool publicOnly = false;
+		// carries a login: a session of its own, no cookies kept, no redirect followed
+		bool login = false;
 		std::wstring host;       // the one asked for now, a redirect changes it
 		std::wstring resolving;  // what WinHTTP looks up: host, or the proxy
 		bool viaProxy = false;
@@ -394,7 +396,7 @@ namespace Net {
 		bool webSocket, const Stopper* stopper, HINTERNET& connection, int& status) {
 		connection = nullptr;
 		if (stopper && stopper->stopped()) return false;
-		HINTERNET session = call.publicOnly || !testProxy.empty() ? (call.ownSession = openSession(true)) : sharedSession();
+		HINTERNET session = call.publicOnly || call.login || !testProxy.empty() ? (call.ownSession = openSession(true)) : sharedSession();
 		if (!session) return false;
 
 		std::wstring wideUrl = widen(url);
@@ -424,6 +426,10 @@ namespace Net {
 		WinHttpSetOption(call.request, WINHTTP_OPTION_CONTEXT_VALUE, &context, sizeof(context));
 		WinHttpSetStatusCallback(call.request, onStatus, WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, 0);
 		if (webSocket && !WinHttpSetOption(call.request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0)) return false;
+		if (call.login) {
+			DWORD off = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS;
+			if (!WinHttpSetOption(call.request, WINHTTP_OPTION_DISABLE_FEATURE, &off, sizeof(off))) return false;
+		}
 
 		DWORD size = (DWORD)body.size();
 		if (!(WinHttpSendRequest(call.request, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(), headers.empty() ? 0 : (DWORD)-1L,
@@ -477,13 +483,14 @@ namespace Net {
 	}
 
 	static bool request(const wchar_t* verb, const std::string& url, const std::wstring& headers, const std::string& body, Response& out,
-		const Progress& progress, Stopper* stopper, const Limits& limits) {
+		const Progress& progress, Stopper* stopper, const Limits& limits, bool login = false) {
 		out.refused.clear();
 		out.notListed = false;
 		out.timedOut = false;
 		out.tooBig = false;
 		Call* call = new Call();
 		setLimits(*call, limits);
+		call->login = login;
 		HINTERNET connection = nullptr;
 		int status = 0;
 		bool ok = start(*call, verb, url, headers, body, false, stopper, connection, status);
@@ -510,6 +517,16 @@ namespace Net {
 		std::wstring headers = L"Content-Type: application/json\r\n";
 		if (hoyolab) headers += HOYOLAB_HEADERS;
 		return request(L"POST", url, headers, body, out, nullptr, stopper, limits);
+	}
+
+	bool sendLogin(const std::string& method, const std::string& url, const std::string& headers, const std::string& body, Response& out,
+		const Limits& limits, Stopper* stopper) {
+		if (method != "GET" && method != "POST") return false;
+		std::wstring wide(headers.begin(), headers.end());
+		if (!body.empty()) wide += L"Content-Type: application/json\r\n";
+		bool ok = request(method == "GET" ? L"GET" : L"POST", url, wide, body, out, nullptr, stopper, limits, true);
+		SecureZeroMemory(wide.data(), wide.size() * sizeof(wchar_t));
+		return ok;
 	}
 
     // The socket's own steps, told by onSocketStatus. Lives until WinHTTP says
