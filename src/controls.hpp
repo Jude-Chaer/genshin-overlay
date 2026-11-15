@@ -265,6 +265,20 @@ namespace Controls {
     // The width a page button needs for its name on one line and no word of
     // its summary broken, in the look's fonts.
     float PageButtonWidth(const char* label, const Summary& summary = {});
+    // one of the first four pages a folder shows on its icon
+    struct PageMark {
+        std::string label;
+        ImTextureID icon = 0;
+        PageIcon glyph = PageIcon::None;
+        unsigned int tile = 0;
+    };
+    // A folder's row in the page list, drawn like a page: its first four
+    // pages' icons small, its name and an arrow pointing down while it's
+    // open. True when clicked.
+    bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted = false);
+    float FolderButtonWidth(const char* label);
+    // how far a folder's pages sit in from it
+    float PageIndent();
     // A small filled tag after the item drawn last, like Official.
     void Tag(const char* text);
 

@@ -25,6 +25,7 @@
 #include <imgui_internal.h>
 #include "game_traffic_text.hpp"
 #include "menu_summary.hpp"
+#include "page_order.hpp"
 #include "npcap_download.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -46,6 +47,9 @@ namespace Overlay {
     static int activeTab = 0;
     // Home, Usage and Accounts come before the extensions' pages
     static const int OwnPages = 3;
+    // the player's order and folders of the extensions' pages
+    static PageOrder::List pageList;
+    static bool pageListLoaded = false;
     static std::string iniPath;
     static double startTime = 0.0;
 
@@ -887,6 +891,16 @@ namespace Overlay {
         ImGui::PopStyleColor();
     }
 
+    // an extension in the page order, by its folder
+    static std::string PageKey(const Extensions::Extension& ext, size_t index) {
+        if (!ext.folderKey.empty()) return ext.folderKey;
+        return "#" + std::to_string(index);
+    }
+
+    static ImTextureID PageImage(const Extensions::Extension& ext) {
+        return ext.extensionImage ? (ImTextureID)(intptr_t)ext.extensionImage : 0;
+    }
+
     // the official Map and Minimap get the overlay's own icons, any other
     // extension its icon.png or its first letter
     static Controls::PageIcon OfficialIcon(const Extensions::Extension& ext) {
@@ -927,12 +941,36 @@ namespace Overlay {
             { "Usage", { Settings::usageInList ? MenuSummary::Usage(cpu, ram) : "" } },
             { "Accounts", MenuSummary::AccountsPage(Accounts::Get(Accounts::Site::HoyolabMap), Accounts::Get(Accounts::Site::Appsample)) },
         };
-        for (auto& ext : Extensions::registeredExtensions) pages.push_back({ ext->name, {} });
+
+        if (!pageListLoaded) {
+            pageList = PageOrder::FromJson(Settings::LoadPageList());
+            pageListLoaded = true;
+        }
+        std::vector<std::string> present;
+        std::map<std::string, size_t> byKey;
+        for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+            std::string key = PageKey(*Extensions::registeredExtensions[i], i);
+            present.push_back(key);
+            byKey[key] = i;
+        }
+        pageList = PageOrder::Arrange(pageList, present);
+
         float sidebarWidth = sidebarMin;
         if (sidebarFonts > 0) sidebarWidth = sidebarFonts * font;
         else {
             for (const auto& [name, summary] : pages) {
                 sidebarWidth = std::max(sidebarWidth, Controls::PageButtonWidth(name.c_str(), summary));
+            }
+            for (const auto& item : pageList) {
+                if (!item.folder) {
+                    sidebarWidth = std::max(sidebarWidth, Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[item.key]]->name.c_str()));
+                    continue;
+                }
+                sidebarWidth = std::max(sidebarWidth, Controls::FolderButtonWidth(item.key.c_str()));
+                for (const auto& key : item.inside) {
+                    float width = Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[key]]->name.c_str());
+                    sidebarWidth = std::max(sidebarWidth, width + Controls::PageIndent());
+                }
             }
             // windows are whole pixels
             sidebarWidth = std::ceil(sidebarWidth + listPad * 2);
@@ -968,11 +1006,36 @@ namespace Overlay {
             ImGui::Separator();
         }
 
-        for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+        auto DrawExtension = [&](size_t i) {
             auto& ext = Extensions::registeredExtensions[i];
-            ImTextureID icon = ext->extensionImage ? (ImTextureID)(intptr_t)ext->extensionImage : 0;
-            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, icon, !ext->dots.empty(), 0, {}, OfficialIcon(*ext));
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, PageImage(*ext), !ext->dots.empty(), 0, {}, OfficialIcon(*ext));
+        };
+        bool listChanged = false;
+        for (size_t top = 0; top < pageList.size(); ++top) {
+            PageOrder::Item& item = pageList[top];
+            if (!item.folder) {
+                DrawExtension(byKey[item.key]);
+                continue;
+            }
+            std::vector<Controls::PageMark> marks;
+            bool dotted = false;
+            for (const auto& key : item.inside) {
+                auto& ext = Extensions::registeredExtensions[byKey[key]];
+                if (marks.size() < 4) marks.push_back({ ext->name, PageImage(*ext), OfficialIcon(*ext) });
+                if (!ext->dots.empty()) dotted = true;
+            }
+            ImGui::PushID(("folder " + std::to_string(top)).c_str());
+            if (Controls::FolderButton(item.key.c_str(), item.open, marks, dotted && !item.open)) {
+                item.open = !item.open;
+                listChanged = true;
+            }
+            ImGui::PopID();
+            if (!item.open) continue;
+            ImGui::Indent(Controls::PageIndent());
+            for (const auto& key : item.inside) DrawExtension(byKey[key]);
+            ImGui::Unindent(Controls::PageIndent());
         }
+        if (listChanged) Settings::SavePageList(PageOrder::ToJson(pageList));
 
         ImGui::PopStyleVar();
         ImGui::EndChild();
