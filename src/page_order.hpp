@@ -61,20 +61,28 @@ namespace PageOrder {
     extern bool Ungroup(List& list, int folder);
 
     // Earlier lists for undo and redo. Did is called with the list as it was
-    // before a change, which clears redo. A list Undo or Redo gives back can
-    // name extensions removed since, so it goes through Arrange.
+    // before a change and what the change was, which clears redo. A list Undo
+    // or Redo gives back can name extensions removed since, so it goes
+    // through Arrange.
     class History {
     public:
-        void Did(const List& before);
+        void Did(const List& before, const std::string& what = "");
         bool Undo(List& now);
         bool Redo(List& now);
         bool CanUndo() const { return !undo.empty(); }
         bool CanRedo() const { return !redo.empty(); }
+        // what the next Undo takes back or Redo does again, "" when none
+        std::string NextUndo() const { return undo.empty() ? "" : undo.back().what; }
+        std::string NextRedo() const { return redo.empty() ? "" : redo.back().what; }
         void Clear();
         static constexpr size_t Limit = 50;
     private:
-        std::vector<List> undo;
-        std::vector<List> redo;
+        struct Step {
+            List list;
+            std::string what;
+        };
+        std::vector<Step> undo;
+        std::vector<Step> redo;
     };
 
     // saved as ["minimap", {"folder": "Folder", "open": true, "items": ["map"]}]

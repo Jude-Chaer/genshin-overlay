@@ -911,13 +911,47 @@ namespace Overlay {
         ShellExecuteW(nullptr, L"open", folder.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
+    // Undo and redo of the page list's moves, asked by the arrows on the
+    // notice a move shows and done at the next frame's page list.
+    static PageOrder::History pageHistory;
+    static int pageNotice = 0;
+    enum class PageStep { None, Undo, Redo };
+    static PageStep pageStepAsked = PageStep::None;
+
+    // one notice for every step, its text the last one
+    static void PageNotice(const std::string& text) {
+        double now = glfwGetTime();
+        if (Notices::Update(pageNotice, text, now)) return;
+        pageNotice = Notices::Add("", "Genshin Overlay", Notices::Kind::Plain, text, now);
+        Notices::SetIcons(pageNotice, {
+            { Controls::ButtonIcon::Undo, "Undo", [] { return pageHistory.CanUndo(); }, [] { pageStepAsked = PageStep::Undo; } },
+            { Controls::ButtonIcon::Redo, "Redo", [] { return pageHistory.CanRedo(); }, [] { pageStepAsked = PageStep::Redo; } },
+        }, false);
+    }
+
+    static void ChangedPageList(const PageOrder::List& before, const std::string& text) {
+        pageHistory.Did(before, text);
+        Settings::SavePageList(PageOrder::ToJson(pageList));
+        PageNotice(text);
+    }
+
+    static std::string PageName(const std::string& key) {
+        for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+            if (PageKey(*Extensions::registeredExtensions[i], i) == key) return Extensions::registeredExtensions[i]->name;
+        }
+        return key;
+    }
+
     // A move in the page list, saved when something moved. The
     // folder an extension goes into opens.
     static void MovePage(const std::function<PageOrder::Place(PageOrder::List&)>& move) {
+        PageOrder::List before = pageList;
         PageOrder::Place moved = move(pageList);
         if (moved.top < 0) return;
+        const PageOrder::Item& item = pageList[moved.top];
+        std::string name = moved.inside >= 0 ? PageName(item.inside[moved.inside]) : item.folder ? item.key : PageName(item.key);
         if (moved.inside >= 0) pageList[moved.top].open = true;
-        Settings::SavePageList(PageOrder::ToJson(pageList));
+        ChangedPageList(before, "Moved " + name);
     }
 
     // a row of the page list is being dragged, its click doesn't count
@@ -1030,8 +1064,9 @@ namespace Overlay {
                 renameAsked = true;
             }
             if (ImGui::MenuItem("Ungroup")) {
-                PageOrder::Ungroup(pageList, at.top);
-                Settings::SavePageList(PageOrder::ToJson(pageList));
+                PageOrder::List before = pageList;
+                std::string name = item.key;
+                if (PageOrder::Ungroup(pageList, at.top)) ChangedPageList(before, "Ungrouped " + name);
             }
             return;
         }
@@ -1099,6 +1134,22 @@ namespace Overlay {
             std::string key = PageKey(*Extensions::registeredExtensions[i], i);
             present.push_back(key);
             byKey[key] = i;
+        }
+        if (pageStepAsked != PageStep::None) {
+            bool undo = pageStepAsked == PageStep::Undo;
+            pageStepAsked = PageStep::None;
+            std::string what = undo ? pageHistory.NextUndo() : pageHistory.NextRedo();
+            // folders keep being open or closed as they are now
+            std::map<std::string, bool> open;
+            for (const auto& item : pageList) if (item.folder) open[item.key] = item.open;
+            if (undo ? pageHistory.Undo(pageList) : pageHistory.Redo(pageList)) {
+                for (auto& item : pageList) {
+                    if (item.folder && open.count(item.key)) item.open = open[item.key];
+                }
+                pageList = PageOrder::Arrange(pageList, present);
+                Settings::SavePageList(PageOrder::ToJson(pageList));
+                PageNotice(undo ? "Undone: " + what : what);
+            }
         }
         pageList = PageOrder::Arrange(pageList, present);
 
@@ -1247,8 +1298,9 @@ namespace Overlay {
             options.confirm = true;
             options.maxBytes = 40;
             std::string name = folderName;
+            PageOrder::List before = pageList;
             if (Controls::Text("Name", name, options) && PageOrder::Rename(pageList, renamedFolder, name)) {
-                Settings::SavePageList(PageOrder::ToJson(pageList));
+                ChangedPageList(before, "Renamed " + before[renamedFolder].key + " to " + pageList[renamedFolder].key);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

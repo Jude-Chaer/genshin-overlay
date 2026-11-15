@@ -188,6 +188,10 @@ namespace Controls {
 
     // True when pressed, for Risky once Yes is pressed.
     bool Button(const char* label, const ButtonOptions& options = {});
+    enum class ButtonIcon { Undo, Redo };
+    // A square button showing only the icon, no frame of its own, a soft fill
+    // under the mouse. label shows as its tooltip.
+    bool IconButton(const char* label, ButtonIcon icon, bool enabled = true);
     // how big Button draws the label, for lining it up before it's drawn
     ImVec2 ButtonSize(const char* label);
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <imgui.h>
+#include "controls.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -28,6 +29,17 @@ namespace Notices {
         // a button on it, e.g. to open a page
         std::string actionLabel;
         std::function<void()> action;
+        // icon buttons after it, e.g. undo and redo; they leave the notice
+        // open and start its fade again
+        struct IconAction {
+            Controls::ButtonIcon icon;
+            std::string label;
+            std::function<bool()> enabled;
+            std::function<void()> action;
+        };
+        std::vector<IconAction> icons;
+        // the kind's icon in front of the text
+        bool kindIcon = true;
     };
 
     inline constexpr double FadeAfter = 8.0;
@@ -44,6 +56,10 @@ namespace Notices {
     int Add(const std::string& owner, const std::string& from, Kind kind, const std::string& text, double now, const std::string& tip = "",
         const std::string& actionLabel = "", std::function<void()> action = {});
     void Close(int id);
+    void SetIcons(int id, std::vector<Notice::IconAction> icons, bool kindIcon = true);
+    // New text for a notice still showing, which starts its fade again.
+    // False when it's closed, faded or gone.
+    bool Update(int id, const std::string& text, double now);
     // the owner's notices, newest first
     std::vector<const Notice*> Of(const std::string& owner);
     // an error still shows over the game, so the overlay draws

@@ -185,19 +185,24 @@ TEST_CASE("undo and redo step through the moves, a new move clears redo") {
     PageOrder::History history;
     List list = make({ one("a"), one("b"), one("c") });
 
-    history.Did(list);
+    history.Did(list, "Moved a");
     PageOrder::Down(list, { 0, -1 });
-    history.Did(list);
+    history.Did(list, "Moved c");
     PageOrder::NewFolder(list, { 2, -1 });
     CHECK(show(list) == "b a [Folder: c]");
+    CHECK(history.NextUndo() == "Moved c");
 
     CHECK(history.Undo(list));
     CHECK(show(list) == "b a c");
+    CHECK(history.NextUndo() == "Moved a");
+    CHECK(history.NextRedo() == "Moved c");
     CHECK(history.Undo(list));
     CHECK(show(list) == "a b c");
+    CHECK(history.NextUndo() == "");
     CHECK_FALSE(history.Undo(list));
     CHECK(history.Redo(list));
     CHECK(show(list) == "b a c");
+    CHECK(history.NextRedo() == "Moved c");
     CHECK(history.CanRedo());
 
     history.Did(list);

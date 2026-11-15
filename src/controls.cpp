@@ -1130,7 +1130,7 @@ namespace Controls {
     static std::unordered_map<ImGuiID, std::string> unsent;
 
     // a square button the height of a box, with a drawn mark on it
-    enum class Mark { Clear, Tick };
+    enum class Mark { Clear, Tick, Undo, Redo };
     // An X or a tick inside a text box's end, no frame of its own, a soft
     // fill under the mouse. accent: the tick that sends, a filled accent
     // button so it reads as one to press.
@@ -1148,6 +1148,9 @@ namespace Controls {
         ImGui::EndDisabled();
         ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
         ImU32 ink = accent ? Color(theme.onAccent) : ImGui::GetColorU32(enabled ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        // a greyed arrow well apart from one that can be pressed
+        bool arrow = mark == Mark::Undo || mark == Mark::Redo;
+        if (arrow && !enabled) ink = Color(Faded(theme.text, 0.25f));
         float inset = side * 0.32f;
         ImDrawList* draw = ImGui::GetWindowDrawList();
         if (accent) {
@@ -1162,9 +1165,33 @@ namespace Controls {
             draw->AddLine(ImVec2(min.x + inset, min.y + inset), ImVec2(max.x - inset, max.y - inset), ink, thick);
             draw->AddLine(ImVec2(max.x - inset, min.y + inset), ImVec2(min.x + inset, max.y - inset), ink, thick);
         }
-        else {
+        else if (mark == Mark::Tick) {
             ImGui::RenderCheckMark(draw, ImVec2(min.x + inset * 0.8f, min.y + inset * 0.8f), ink, side - inset * 1.6f);
         }
+        else {
+            // an arrow pointing back along the top, turning down round the
+            // far side, Redo mirrored
+            float thick = std::max(1.0f, side / 14);
+            bool redo = mark == Mark::Redo;
+            auto x = [&](float at) { return redo ? max.x - side * at : min.x + side * at; };
+            float top = min.y + side * 0.36f, radius = side * 0.17f, head = side * 0.11f;
+            draw->PathLineTo(ImVec2(x(0.32f), top + radius * 2));
+            draw->PathLineTo(ImVec2(x(0.55f), top + radius * 2));
+            if (redo) draw->PathArcTo(ImVec2(x(0.55f), top + radius), radius, IM_PI / 2, IM_PI * 1.5f);
+            else draw->PathArcTo(ImVec2(x(0.55f), top + radius), radius, IM_PI / 2, -IM_PI / 2);
+            draw->PathLineTo(ImVec2(x(0.27f), top));
+            draw->PathStroke(ink, 0, thick);
+            draw->AddLine(ImVec2(x(0.27f), top), ImVec2(x(0.27f) + (redo ? -head : head), top - head), ink, thick);
+            draw->AddLine(ImVec2(x(0.27f), top), ImVec2(x(0.27f) + (redo ? -head : head), top + head), ink, thick);
+        }
+        return pressed;
+    }
+
+    bool IconButton(const char* label, ButtonIcon icon, bool enabled) {
+        ImGui::PushID(label);
+        bool pressed = markButton("##icon", icon == ButtonIcon::Undo ? Mark::Undo : Mark::Redo, false, enabled);
+        ImGui::PopID();
+        Tooltip(label);
         return pressed;
     }
 

@@ -210,24 +210,24 @@ namespace PageOrder {
         return true;
     }
 
-    void History::Did(const List& before) {
-        undo.push_back(before);
+    void History::Did(const List& before, const std::string& what) {
+        undo.push_back({ before, what });
         if (undo.size() > Limit) undo.erase(undo.begin());
         redo.clear();
     }
 
     bool History::Undo(List& now) {
         if (undo.empty()) return false;
-        redo.push_back(now);
-        now = undo.back();
+        redo.push_back({ now, undo.back().what });
+        now = undo.back().list;
         undo.pop_back();
         return true;
     }
 
     bool History::Redo(List& now) {
         if (redo.empty()) return false;
-        undo.push_back(now);
-        now = redo.back();
+        undo.push_back({ now, redo.back().what });
+        now = redo.back().list;
         redo.pop_back();
         return true;
     }

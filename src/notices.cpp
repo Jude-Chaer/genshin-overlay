@@ -63,6 +63,26 @@ namespace Notices {
         return notices.back().id;
     }
 
+    void SetIcons(int id, std::vector<Notice::IconAction> icons, bool kindIcon) {
+        for (Notice& notice : notices) {
+            if (notice.id != id) continue;
+            notice.icons = std::move(icons);
+            notice.kindIcon = kindIcon;
+        }
+    }
+
+    bool Update(int id, const std::string& text, double now) {
+        for (Notice& notice : notices) {
+            if (notice.id != id) continue;
+            if (notice.closed || (notice.shownAt >= 0 && now - notice.shownAt >= FadeAfter)) return false;
+            notice.text = text.substr(0, MaxText);
+            notice.addedAt = now;
+            notice.shownAt = -1;
+            return true;
+        }
+        return false;
+    }
+
     void Close(int id) {
         for (Notice& notice : notices) {
             if (notice.id != id || notice.closed) continue;
@@ -152,9 +172,10 @@ namespace Notices {
         float icon = font * 0.75f;
         float closeSize = font * 1.2f;
         float textWidth = font * 20;
-        float width = pad + icon * 2 + pad + textWidth + pad;
+        float iconRoom = notice.kindIcon ? icon * 2 + pad : 0;
+        float width = pad + iconRoom + textWidth + pad;
         ImVec2 top = ImGui::GetCursorScreenPos();
-        float textX = top.x + pad + icon * 2 + pad;
+        float textX = top.x + pad + iconRoom;
         float right = top.x + width;
 
         ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -181,22 +202,34 @@ namespace Notices {
         ImGui::TextUnformatted(notice.text.c_str());
         ImGui::PopTextWrapPos();
         float bottom = ImGui::GetItemRectMax().y;
-        if (notice.action) {
+        if (notice.action || !notice.icons.empty()) {
             ImGui::SetCursorScreenPos(ImVec2(textX, bottom + font * 0.3f));
-            if (Controls::Button(notice.actionLabel.c_str())) {
+            bool closed = false;
+            if (notice.action && Controls::Button(notice.actionLabel.c_str())) {
                 notice.action();
-                Close(notice.id);
+                closed = true;
+            }
+            for (size_t i = 0; i < notice.icons.size() && !closed; ++i) {
+                const Notice::IconAction& icon = notice.icons[i];
+                if (i > 0 || notice.action) ImGui::SameLine(0, font * 0.2f);
+                ImGui::PushID((int)i);
+                if (Controls::IconButton(icon.label.c_str(), icon.icon, !icon.enabled || icon.enabled())) {
+                    icon.action();
+                    notice.shownAt = -1;
+                }
+                ImGui::PopID();
             }
             bottom = ImGui::GetItemRectMax().y;
+            if (closed) Close(notice.id);
         }
         if (closable && closeButton(ImVec2(right - pad * 0.5f - closeSize, top.y + pad * 0.5f), closeSize)) Close(notice.id);
-        bottom = std::max(bottom, top.y + pad + icon * 2) + pad;
+        bottom = std::max(bottom, top.y + pad + (notice.kindIcon ? icon * 2 : 0)) + pad;
 
         draw->ChannelsSetCurrent(0);
         ImVec2 end(right, bottom);
         draw->AddRectFilled(top, end, ImGui::GetColorU32(Controls::Color((theme.panel & 0xFFFFFF00) | 0xF0)), theme.rounding);
         draw->AddRect(top, end, ImGui::GetColorU32(Controls::Color(theme.line)), theme.rounding);
-        kindIcon(draw, ImVec2(top.x + pad + icon, top.y + pad + icon), icon, notice.kind);
+        if (notice.kindIcon) kindIcon(draw, ImVec2(top.x + pad + icon, top.y + pad + icon), icon, notice.kind);
         draw->ChannelsMerge();
 
         ImGui::SetCursorScreenPos(top);
