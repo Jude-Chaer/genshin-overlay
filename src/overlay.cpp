@@ -911,16 +911,22 @@ namespace Overlay {
         float splitterWidth = std::max(2.0f, font * 0.35f);
         float listPad = font * 0.35f;
 
-        std::vector<std::string> pageNames = { "Home", "Usage", "Accounts" };
-        for (auto& ext : Extensions::registeredExtensions) pageNames.push_back(ext->name);
+        float cpu = 0, ram = 0;
+        Stats::Latest(cpu, ram);
+        std::vector<std::pair<std::string, Controls::Summary>> pages = {
+            { "Home", {} },
+            { "Usage", { MenuSummary::Usage(cpu, ram) } },
+            { "Accounts", MenuSummary::AccountsPage(Accounts::Get(Accounts::Site::HoyolabMap), Accounts::Get(Accounts::Site::Appsample)) },
+        };
+        for (auto& ext : Extensions::registeredExtensions) pages.push_back({ ext->name, {} });
         float sidebarWidth = sidebarMin;
         if (sidebarFonts > 0) sidebarWidth = sidebarFonts * font;
         else {
-            // a page button's icon and gaps around its name
-            for (const std::string& name : pageNames) {
-                sidebarWidth = std::max(sidebarWidth, ImGui::CalcTextSize(name.c_str()).x + font * 3.45f + Controls::DotRoom());
+            for (const auto& [name, summary] : pages) {
+                sidebarWidth = std::max(sidebarWidth, Controls::PageButtonWidth(name.c_str(), summary));
             }
-            sidebarWidth += listPad * 2;
+            // windows are whole pixels
+            sidebarWidth = std::ceil(sidebarWidth + listPad * 2);
         }
         sidebarWidth = std::clamp(sidebarWidth, sidebarMin, sidebarMax);
 
@@ -946,11 +952,8 @@ namespace Overlay {
 
         // Apple's grey and orange tiles for the overlay's own pages
         DrawPage("Home", 0, 0, false, 0x8E8E93FF);
-        float cpu = 0, ram = 0;
-        Stats::Latest(cpu, ram);
-        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF, { MenuSummary::Usage(cpu, ram) });
-        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF, MenuSummary::AccountsPage(Accounts::Get(Accounts::Site::HoyolabMap),
-            Accounts::Get(Accounts::Site::Appsample)));
+        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF, pages[1].second);
+        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF, pages[2].second);
 
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();

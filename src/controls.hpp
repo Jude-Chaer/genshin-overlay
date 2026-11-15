@@ -257,6 +257,9 @@ namespace Controls {
     // name. True when clicked.
     bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0,
         const Summary& summary = {});
+    // The width a page button needs for its name on one line and no word of
+    // its summary broken, in the look's fonts.
+    float PageButtonWidth(const char* label, const Summary& summary = {});
     // A small filled tag after the item drawn last, like Official.
     void Tag(const char* text);
 

@@ -911,6 +911,37 @@ TEST_CASE("in every look a summary goes under a header's or page's name and wrap
     Controls::SetLook(Controls::Look::Windows, true);
 }
 
+TEST_CASE("in every look a page's name fits on one line at PageButtonWidth, not narrower") {
+    for (Controls::Look look : { Controls::Look::Windows, Controls::Look::Material, Controls::Look::Game, Controls::Look::Apple }) {
+        Controls::SetLook(look, true);
+        Frames frames;
+        float need = 0;
+        frame(300, [&] { need = Controls::PageButtonWidth("Accounts"); });
+        float sides = ImGui::GetStyle().WindowPadding.x * 2;
+        // two summary lines at both widths, so a second name line always makes it taller
+        auto height = [&](float width) {
+            float h = 0;
+            frame(std::ceil(width + sides), [&] { Controls::PageButton("Accounts", false, 0, false, 0, { "Accounts Accounts" }); h = ImGui::GetItemRectSize().y; });
+            return h;
+        };
+        INFO(Controls::LookName(look));
+        CHECK(height(need) == height(need + 20));
+        CHECK(height(need - 4) > height(need));
+
+        // summary words wider than the name: whole at the width, broken narrower
+        Controls::Summary word = { "appsample-appsample appsample-appsample" };
+        frame(300, [&] { need = Controls::PageButtonWidth("Home", word); });
+        auto withWord = [&](float width) {
+            float h = 0;
+            frame(std::ceil(width + sides), [&] { Controls::PageButton("Home", false, 0, false, 0, word); h = ImGui::GetItemRectSize().y; });
+            return h;
+        };
+        CHECK(withWord(need) == withWord(need + 20));
+        CHECK(withWord(need - 4) > withWord(need));
+    }
+    Controls::SetLook(Controls::Look::Windows, true);
+}
+
 TEST_CASE("a header with a summary still opens and closes on a click") {
     Frames frames;
     bool open = false;

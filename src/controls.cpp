@@ -1726,11 +1726,20 @@ namespace Controls {
         float height() const { return lineHeight * lines.size(); }
     };
 
+    static float summarySize(bool head) {
+        return isMaterial() ? (head ? 14.0f : 12.0f) : ImGui::GetCurrentContext()->FontSizeBase * 12 / 14;
+    }
+
+    // summaries are in the regular font, also under a medium or bold name
+    static void pushSummaryFont(float size) {
+        ImGui::PushFont(ImGui::GetIO().FontDefault, size);
+    }
+
     static SummaryLines summaryLines(const Summary& summary, float width, bool head) {
         SummaryLines out;
         if (summary.text.empty()) return out;
-        out.size = isMaterial() ? (head ? 14.0f : 12.0f) : ImGui::GetCurrentContext()->FontSizeBase * 12 / 14;
-        ImGui::PushFont(nullptr, out.size);
+        out.size = summarySize(head);
+        pushSummaryFont(out.size);
         bool cut = false;
         out.lines = FitLines(summary.text, std::max(width, ImGui::GetFontSize()), 64, cut);
         out.lineHeight = ImGui::GetTextLineHeight();
@@ -1748,7 +1757,7 @@ namespace Controls {
 
     static void drawSummary(ImDrawList* draw, ImVec2 at, const SummaryLines& lines, unsigned int ink) {
         if (lines.lines.empty()) return;
-        ImGui::PushFont(nullptr, lines.size);
+        pushSummaryFont(lines.size);
         for (const std::string& line : lines.lines) {
             draw->AddText(at, Color(ink), line.c_str());
             at.y += lines.lineHeight;
@@ -1951,13 +1960,50 @@ namespace Controls {
     static const unsigned int appleTiles[] = { 0x0A84FFFF, 0x30D158FF, 0xFF9F0AFF, 0xBF5AF2FF, 0xFF375FFF, 0x64D2FFFF, 0x5E5CE6FF, 0xFF453AFF };
 
     // Apple's sidebar row: filled blue while picked, the icon on a coloured tile
+    // a page button's room at each side, and where its name starts after the icon
+    static void pageRoom(float& pad, float& textX) {
+        float font = ImGui::GetFontSize();
+        switch (GetTheme().look) {
+        case Look::Apple:
+            pad = font * 0.5f;
+            textX = pad + std::floor(font * 22 / 14) + font * 0.6f;
+            return;
+        case Look::Material:
+            pad = 16 * dp();
+            textX = pad + 24 * dp() + 12 * dp();
+            return;
+        default:
+            pad = font * 0.75f;
+            textX = pad + font * 1.15f + font * 0.8f;
+        }
+    }
+
+    float PageButtonWidth(const char* label, const Summary& summary) {
+        float pad, textX, text;
+        {
+            LabelType type;
+            pageRoom(pad, textX);
+            text = ImGui::CalcTextSize(label).x;
+        }
+        pushSummaryFont(summarySize(false));
+        size_t at = 0;
+        while (at < summary.text.size()) {
+            size_t end = summary.text.find(' ', at);
+            if (end == std::string::npos) end = summary.text.size();
+            text = std::max(text, ImGui::CalcTextSize(summary.text.c_str() + at, summary.text.c_str() + end).x);
+            at = end + 1;
+        }
+        ImGui::PopFont();
+        return text + textX + pad + DotRoom();
+    }
+
     static bool applePageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary) {
         Theme theme = GetTheme();
         float font = ImGui::GetFontSize();
         float width = ImGui::GetContentRegionAvail().x;
-        float pad = font * 0.5f;
+        float pad, textX;
+        pageRoom(pad, textX);
         float iconSize = std::floor(font * 22 / 14);
-        float textX = pad + iconSize + font * 0.6f;
         bool cut = false;
         std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom(), 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
@@ -2006,8 +2052,9 @@ namespace Controls {
         LabelType type;
         float d = dp();
         float width = ImGui::GetContentRegionAvail().x;
-        float pad = 16 * d, iconSize = 24 * d;
-        float textX = pad + iconSize + 12 * d;
+        float pad, textX;
+        pageRoom(pad, textX);
+        float iconSize = 24 * d;
         bool cut = false;
         std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom(), 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
@@ -2051,9 +2098,9 @@ namespace Controls {
         if (theme.look == Look::Material) return materialPageButton(label, picked, icon, dotted, summary);
         float font = ImGui::GetFontSize();
         float width = ImGui::GetContentRegionAvail().x;
-        float pad = font * 0.75f;
+        float pad, textX;
+        pageRoom(pad, textX);
         float iconSize = font * 1.15f;
-        float textX = pad + iconSize + font * 0.8f;
         bool cut = false;
         std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom(), 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
