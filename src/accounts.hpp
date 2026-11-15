@@ -46,6 +46,8 @@ namespace Accounts {
     void OpenHoyolabMap();
     // closes the window, with wait until its thread has ended
     void CloseWindow(bool wait = true);
+    // the site whose window is open, its login or HoYoLAB's map
+    std::optional<Site> WindowSite();
     // puts the window back over the overlay after the overlay raised itself
     void RaiseWindow();
     // the window's browser folder, left behind when the overlay was killed

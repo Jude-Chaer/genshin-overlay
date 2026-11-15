@@ -90,6 +90,8 @@ namespace Accounts {
 
     static std::thread windowThread;
     static std::atomic<bool> windowOpen = false;
+    // the site of the open window, -1 for none
+    static std::atomic<int> windowSite = -1;
     static std::atomic<HWND> mainWindow = nullptr;
     static std::atomic<DWORD> windowThreadId = 0;
 
@@ -527,6 +529,7 @@ namespace Accounts {
             CoTaskMemFree(version);
             CoUninitialize();
             WindowClosed(site, "The login window needs Microsoft Edge WebView2, and it isn't installed.");
+            windowSite = -1;
             windowOpen = false;
             return;
         }
@@ -622,6 +625,7 @@ namespace Accounts {
         windowThreadId = 0;
         DeleteObject(current.ground);
         WindowClosed(site, problem);
+        windowSite = -1;
         windowOpen = false;
 
         // the browser takes a moment to let go of its files
@@ -646,6 +650,7 @@ namespace Accounts {
         // one before may still be deleting its folder
         if (windowThread.joinable()) windowThread.detach();
         windowOpen = true;
+        windowSite = (int)site;
         if (mode == Mode::LogIn) WindowOpened(site);
         windowThread = std::thread(runWindow, site, mode, Controls::GetTheme());
     }
@@ -658,6 +663,12 @@ namespace Accounts {
             if (IsWindowVisible(window)) SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
             return TRUE;
         }, 0);
+    }
+
+    std::optional<Site> WindowSite() {
+        int site = windowSite;
+        if (site < 0) return std::nullopt;
+        return (Site)site;
     }
 
     void DeleteWindowFolder() {

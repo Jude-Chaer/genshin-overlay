@@ -43,6 +43,8 @@ namespace Overlay {
     static bool menuOpen = false;
     // the menu's page: 0 = Home, 1 = Usage, 2+ = extensions
     static int activeTab = 0;
+    // Home, Usage and Accounts come before the extensions' pages
+    static const int OwnPages = 3;
     static std::string iniPath;
     static double startTime = 0.0;
 
@@ -254,12 +256,12 @@ namespace Overlay {
     }
 
     int ShownExtension() {
-        if (!menuOpen || activeTab < 2) return -1;
-        return activeTab - 2;
+        if (!menuOpen || activeTab < OwnPages) return -1;
+        return activeTab - OwnPages;
     }
 
     void ShowExtension(int index) {
-        activeTab = index + 2;
+        activeTab = index + OwnPages;
         SetMenuOpen(true);
     }
 
@@ -828,6 +830,90 @@ namespace Overlay {
         if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
     }
 
+    static std::string accountLine(Accounts::Site site, const Accounts::Status& status) {
+        std::string label = Accounts::SiteLabel(site);
+        switch (status.state) {
+        case Accounts::State::LoggedOut: return "Not logged in.";
+        case Accounts::State::WindowOpen: return "Log in in the " + label + " window.";
+        case Accounts::State::LoggedIn:
+            return site == Accounts::Site::HoyolabMap ? "Logged in, account " + status.account : "Logged in as " + status.account;
+        case Accounts::State::NeedsLogin: return label + " logged you out. Log in again.";
+        case Accounts::State::Captcha: return label + " wants to check you're not a bot.";
+        }
+        return "";
+    }
+
+    // the overlay's logins, and the extensions allowed to use each
+    static void DrawAccounts() {
+        Controls::PageTitle("Accounts");
+        Controls::Theme theme = Controls::GetTheme();
+        for (Accounts::Site site : { Accounts::Site::HoyolabMap, Accounts::Site::Appsample }) {
+            ImGui::PushID((int)site);
+            if (Controls::BeginSection(Accounts::SiteLabel(site), true)) {
+                Accounts::Status status = Accounts::Get(site);
+                std::string line = accountLine(site, status);
+                bool warn = status.state == Accounts::State::NeedsLogin || status.state == Accounts::State::Captcha;
+                if (status.state == Accounts::State::LoggedOut) ImGui::TextDisabled("%s", line.c_str());
+                else if (warn) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, Controls::Color(theme.warning));
+                    ImGui::TextWrapped("%s", line.c_str());
+                    ImGui::PopStyleColor();
+                }
+                else ImGui::TextWrapped("%s", line.c_str());
+                if (!status.problem.empty()) ImGui::TextWrapped("%s", status.problem.c_str());
+
+                Controls::ButtonOptions main;
+                main.look = Controls::ButtonOptions::Look::Main;
+                // one window at a time
+                std::optional<Accounts::Site> windowSite = Accounts::WindowSite();
+                bool otherWindow = windowSite && *windowSite != site;
+                if (otherWindow) {
+                    std::string open = std::string("The ") + Accounts::SiteLabel(*windowSite) + " window is open.";
+                    ImGui::TextDisabled("%s", open.c_str());
+                }
+                Controls::ButtonOptions logIn = main;
+                logIn.busy = otherWindow;
+                switch (status.state) {
+                case Accounts::State::LoggedOut:
+                    logIn.busyLabel = "Log in";
+                    if (Controls::Button("Log in", logIn)) Accounts::LogIn(site);
+                    break;
+                case Accounts::State::WindowOpen:
+                    if (Controls::Button("Cancel")) Accounts::CloseWindow(false);
+                    break;
+                case Accounts::State::LoggedIn:
+                    if (Controls::Button("Log out")) Accounts::LogOut(site);
+                    break;
+                case Accounts::State::NeedsLogin:
+                    logIn.busyLabel = "Log in again";
+                    if (Controls::Button("Log in again", logIn)) Accounts::LogIn(site);
+                    break;
+                case Accounts::State::Captcha:
+                    logIn.busyLabel = "Open HoYoLAB Map";
+                    if (Controls::Button("Open HoYoLAB Map", logIn)) Accounts::OpenHoyolabMap();
+                    ImGui::SameLine();
+                    if (Controls::Button("Log out")) Accounts::LogOut(site);
+                    break;
+                }
+
+                Extensions::ExtensionPermissionTypes permission = site == Accounts::Site::HoyolabMap
+                    ? Extensions::ExtensionPermissionTypes::HoyolabMapAccount : Extensions::ExtensionPermissionTypes::AppsampleAccount;
+                std::string users;
+                for (const auto& ext : Extensions::registeredExtensions) {
+                    if (!ext->extensionPermissions.count(permission)) continue;
+                    users += (users.empty() ? "" : ", ") + ext->name;
+                }
+                if (users.empty()) ImGui::TextDisabled("No extension can use it.");
+                else ImGui::TextWrapped("Used by: %s", users.c_str());
+                Controls::EndSection();
+            }
+            ImGui::PopID();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("Logging out keeps who's allowed. Logging in as another account switches them all off again.");
+        ImGui::PopStyleColor();
+    }
+
     static void DrawMenu() {
         float font = ImGui::GetFontSize();
         ImGui::SetNextWindowPos(ImVec2(font * 4, font * 4), ImGuiCond_FirstUseEver);
@@ -852,7 +938,7 @@ namespace Overlay {
         float splitterWidth = std::max(2.0f, font * 0.35f);
         float listPad = font * 0.35f;
 
-        std::vector<std::string> pageNames = { "Home", "Usage" };
+        std::vector<std::string> pageNames = { "Home", "Usage", "Accounts" };
         for (auto& ext : Extensions::registeredExtensions) pageNames.push_back(ext->name);
         float sidebarWidth = sidebarMin;
         if (sidebarFonts > 0) sidebarWidth = sidebarFonts * font;
@@ -887,6 +973,7 @@ namespace Overlay {
         // Apple's grey and orange tiles for the overlay's own pages
         DrawPage("Home", 0, 0, false, 0x8E8E93FF);
         DrawPage("Usage", 1, 0, false, 0xFF9F0AFF);
+        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF);
 
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();
@@ -895,7 +982,7 @@ namespace Overlay {
         for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
             auto& ext = Extensions::registeredExtensions[i];
             ImTextureID icon = ext->extensionImage ? (ImTextureID)(intptr_t)ext->extensionImage : 0;
-            DrawPage(ext->name.c_str(), static_cast<int>(i) + 2, icon, !ext->dots.empty());
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, icon, !ext->dots.empty());
         }
 
         ImGui::PopStyleVar();
@@ -1093,9 +1180,14 @@ namespace Overlay {
 
             break;
 
+        case 2:
+            DrawAccounts();
+
+            break;
+
         default:
             Extensions::drawExtensionMenus(
-                activeTab - 2
+                activeTab - OwnPages
             );
 
             break;

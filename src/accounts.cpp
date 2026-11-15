@@ -249,6 +249,8 @@ namespace Accounts {
     }
 
     void LogOut(Site site) {
+        // HoYoLAB's map, logged in, closes with it
+        if (WindowSite() == site) CloseWindow(false);
         Credentials::Delete(SiteName(site));
         std::lock_guard<std::mutex> lock(mutex);
         Login& login = of(site);
