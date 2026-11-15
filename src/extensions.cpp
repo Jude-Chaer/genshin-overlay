@@ -160,7 +160,8 @@ namespace Extensions {
 				skipSecond(ext->cost);
 				ext->cost.started = true;
 			}
-			else if (endSecond(ext->cost, turns)) {
+			// no notice for the overlay's own extensions
+			else if (endSecond(ext->cost, turns) && !ext->official) {
 				std::cerr << "[" << ext->name << "] slow: more than " << SlowMsPerFrame << " ms per frame for "
 					<< SlowSeconds << " s" << std::endl;
 				tellSlow(*ext);
@@ -1427,7 +1428,7 @@ namespace Extensions {
 		if (Controls::Toggle("Run this extension", &on)) setRunning(ext, on);
 		if (!ext.stopped && ext.stopReason.empty() && ext.cost.perFrame >= 0) {
 			if (ext.cost.perFrame < 0.05) ImGui::Text("Time it takes: less than 0.1 ms per frame");
-			else if (ext.cost.perFrame > SlowMsPerFrame) ImGui::Text("Time it takes: about %.1f ms per frame, it's slowing the overlay down", ext.cost.perFrame);
+			else if (ext.cost.perFrame > SlowMsPerFrame && !ext.official) ImGui::Text("Time it takes: about %.1f ms per frame, it's slowing the overlay down", ext.cost.perFrame);
 			else ImGui::Text("Time it takes: about %.1f ms per frame", ext.cost.perFrame);
 		}
 		ImGui::Separator();
