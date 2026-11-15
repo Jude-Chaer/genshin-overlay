@@ -911,13 +911,69 @@ namespace Overlay {
         ShellExecuteW(nullptr, L"open", folder.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
-    // A move from the page list's menu, saved when something moved. The
+    // A move in the page list, saved when something moved. The
     // folder an extension goes into opens.
     static void MovePage(const std::function<PageOrder::Place(PageOrder::List&)>& move) {
         PageOrder::Place moved = move(pageList);
         if (moved.top < 0) return;
         if (moved.inside >= 0) pageList[moved.top].open = true;
         Settings::SavePageList(PageOrder::ToJson(pageList));
+    }
+
+    // a row of the page list is being dragged, its click doesn't count
+    static bool pageDragging = false;
+
+    struct PageDrop {
+        bool set = false;
+        bool onto = false;
+        PageOrder::Place from, to;
+    };
+
+    // Drag and drop on the row drawn last. The top and bottom quarters drop
+    // before or after it, the middle of a folder or of an extension outside
+    // folders drops onto it. A folder dropped on a folder's extension goes
+    // after that folder.
+    static void PageDragDrop(PageOrder::Place at, const char* name, PageDrop& drop) {
+        using PageOrder::Place;
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+            pageDragging = true;
+            ImGui::SetDragDropPayload("page place", &at, sizeof at);
+            ImGui::TextUnformatted(name);
+            ImGui::EndDragDropSource();
+        }
+        if (!ImGui::BeginDragDropTarget()) return;
+        const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("page place",
+            ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+        if (payload) {
+            Place from = *static_cast<const Place*>(payload->Data);
+            const PageOrder::Item& target = pageList[at.top];
+            bool movingFolder = from.inside < 0 && pageList[from.top].folder;
+            bool folderRow = target.folder && at.inside < 0;
+            ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+            float y = ImGui::GetMousePos().y, quarter = (max.y - min.y) / 4;
+            bool canOnto = !movingFolder && at.inside < 0 && at.top != from.top;
+            enum { Before, Onto, After } zone;
+            if (movingFolder && at.inside >= 0) zone = After;
+            else if (canOnto) zone = y < min.y + quarter ? Before : y > max.y - quarter ? After : Onto;
+            else zone = y < (min.y + max.y) / 2 ? Before : After;
+
+            Place to = at;
+            if (zone == After) {
+                if (movingFolder || (at.inside < 0 && !(folderRow && target.open))) to = { at.top + 1, -1 };
+                else if (at.inside >= 0) to = { at.top, at.inside + 1 };
+                else to = { at.top, 0 };
+            }
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            ImU32 accent = Controls::Color(Controls::GetTheme().accent);
+            float line = std::max(2.0f, ImGui::GetFontSize() * 0.12f);
+            if (zone == Onto) draw->AddRect(min, max, accent, ImGui::GetStyle().FrameRounding, 0, line);
+            else {
+                float edge = zone == Before ? min.y : max.y;
+                draw->AddLine(ImVec2(min.x, edge), ImVec2(max.x, edge), accent, line);
+            }
+            if (payload->IsDelivery()) drop = { true, zone == Onto, from, to };
+        }
+        ImGui::EndDragDropTarget();
     }
 
     // a move picked in the ⋯ menu, done once the menu is drawn
@@ -1087,7 +1143,7 @@ namespace Overlay {
         auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile,
             const Controls::Summary& summary, Controls::PageIcon glyph, bool menu = false) {
             ImGui::PushID(index);
-            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary, glyph, menu)) activeTab = index;
+            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary, glyph, menu) && !pageDragging) activeTab = index;
             ImGui::PopID();
         };
 
@@ -1100,10 +1156,13 @@ namespace Overlay {
             ImGui::Separator();
         }
 
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) pageDragging = false;
+        PageDrop drop;
         auto DrawExtension = [&](size_t i, PageOrder::Place at) {
             auto& ext = Extensions::registeredExtensions[i];
             DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, PageImage(*ext), !ext->dots.empty(), 0, {}, OfficialIcon(*ext), true);
-            if (Controls::PageMenuAsked()) {
+            PageDragDrop(at, ext->name.c_str(), drop);
+            if (Controls::PageMenuAsked() && !pageDragging) {
                 pageMenuAt = at;
                 ImGui::OpenPopup("page menu");
             }
@@ -1125,12 +1184,13 @@ namespace Overlay {
                 if (activeTab == static_cast<int>(i) + OwnPages) holdsOpenPage = true;
             }
             ImGui::PushID(("folder " + std::to_string(top)).c_str());
-            if (Controls::FolderButton(item.key.c_str(), item.open, marks, dotted && !item.open, holdsOpenPage && !item.open)) {
+            if (Controls::FolderButton(item.key.c_str(), item.open, marks, dotted && !item.open, holdsOpenPage && !item.open) && !pageDragging) {
                 item.open = !item.open;
                 listChanged = true;
             }
             ImGui::PopID();
-            if (Controls::PageMenuAsked()) {
+            PageDragDrop({ top, -1 }, item.key.c_str(), drop);
+            if (Controls::PageMenuAsked() && !pageDragging) {
                 pageMenuAt = { top, -1 };
                 ImGui::OpenPopup("page menu");
             }
@@ -1139,7 +1199,32 @@ namespace Overlay {
             for (int inside = 0; inside < (int)item.inside.size(); ++inside) DrawExtension(byKey[item.inside[inside]], { top, inside });
             ImGui::Unindent(Controls::PageIndent());
         }
+        // under the last row, the end of the list outside folders
+        if (pageDragging && !pageList.empty()) {
+            float end = ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y;
+            // the rest of the window, or a line's height once the list scrolls
+            float room = ImGui::GetContentRegionAvail().y;
+            ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, room > 0 ? room : font));
+            if (ImGui::BeginDragDropTarget()) {
+                const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("page place",
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload) {
+                    float line = std::max(2.0f, ImGui::GetFontSize() * 0.12f);
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetItemRectMin().x, end), ImVec2(ImGui::GetItemRectMax().x, end),
+                        Controls::Color(Controls::GetTheme().accent), line);
+                    PageOrder::Place from = *static_cast<const PageOrder::Place*>(payload->Data);
+                    if (payload->IsDelivery()) drop = { true, false, from, { (int)pageList.size(), -1 } };
+                }
+                ImGui::EndDragDropTarget();
+            }
+        }
         if (listChanged) Settings::SavePageList(PageOrder::ToJson(pageList));
+        if (drop.set) {
+            MovePage([&](PageOrder::List& list) {
+                return drop.onto ? PageOrder::Onto(list, drop.from, drop.to) : PageOrder::Move(list, drop.from, drop.to);
+            });
+        }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) pageDragging = false;
 
         if (ImGui::BeginPopup("page menu")) {
             PageMenu(byKey);
