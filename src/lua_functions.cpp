@@ -287,9 +287,11 @@ namespace LuaFunctions {
 		return Extensions::inPhase(function, Extensions::Phase::Update);
 	}
 
-	void ImGUI_Text(const std::string& str) {
+	// ImGUI_Text(text, options), options is optional: { look = "title" } for a part's name
+	void ImGUI_Text(const std::string& str, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Text")) return;
-		ImGui::Text("%s", str.c_str());
+		if (table && table->get_or<std::string>("look", "") == "title") Controls::PartTitle(str.c_str());
+		else ImGui::Text("%s", str.c_str());
 	}
 
 	// while the extension's button or key function runs, lowered however it ends
@@ -557,14 +559,18 @@ namespace LuaFunctions {
 	}
 
 	// ImGUI_Toggle(label, value, options), options is optional:
-	// { look = "checkbox", size = "small", icon = a texture from LoadTexture }
+	// { look = "checkbox" or "chip", size = "small", icon = a texture from LoadTexture,
+	//   note = muted text after a chip's name }
 	bool ImGUI_Toggle(const std::string& label, bool currentValue, sol::optional<sol::table> table)
 	{
 		bool value = currentValue;
 		if (!inMenu("ImGUI_Toggle")) return value;
 		Controls::ToggleOptions options;
 		if (table) {
-			options.checkbox = table->get_or<std::string>("look", "") == "checkbox";
+			std::string look = table->get_or<std::string>("look", "");
+			options.checkbox = look == "checkbox";
+			options.chip = look == "chip";
+			options.note = table->get_or<std::string>("note", "");
 			options.compact = table->get_or<std::string>("size", "") == "small";
 			GLuint icon = table->get_or<GLuint>("icon", 0);
 			if (icon && ownsTexture(icon)) options.icon = (ImTextureID)(intptr_t)icon;
@@ -621,7 +627,8 @@ namespace LuaFunctions {
 
 	// ImGUI_InputText(label, text, options), options is optional: { hint, default (shows
 	// Reset), clear = true (an x), confirm = true (counts once sent), taken = true (sent
-	// text greyed), backToGame = false (keeps the focus after Enter or Esc, for the next box) }
+	// text greyed), backToGame = false (keeps the focus after Enter or Esc, for the next box),
+	// look = "search" (a search bar over the whole row, the label not shown) }
 	std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table)
 	{
 		std::string value = currentText;
@@ -634,6 +641,7 @@ namespace LuaFunctions {
 			options.clear = table->get_or("clear", false);
 			options.confirm = table->get_or("confirm", false);
 			options.taken = table->get_or("taken", false);
+			options.search = table->get_or<std::string>("look", "") == "search";
 		}
 		options.dotted = dotted(label);
 		used(label, Controls::Text(label.c_str(), value, options));

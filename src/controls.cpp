@@ -882,7 +882,71 @@ namespace Controls {
         return ImGui::CalcTextSize(question.c_str()).x + gap + ButtonSize("Yes").x + gap + ButtonSize("No").x;
     }
 
+    // the last chip, so the next one in the same window goes on its row
+    static ImGuiID lastChip = 0;
+    static int lastChipFrame = -1;
+
+    static bool chip(const char* label, bool* value, const ToggleOptions& options) {
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        if (window->SkipItems) return false;
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        Theme theme = GetTheme();
+        float font = ImGui::GetFontSize();
+        const char* labelEnd = ImGui::FindRenderedTextEnd(label);
+        ImVec2 name = ImGui::CalcTextSize(label, labelEnd);
+        ImVec2 note = options.note.empty() ? ImVec2(0, 0) : ImGui::CalcTextSize(options.note.c_str());
+        float padX = font * 0.7f, gap = font * 0.45f;
+        float iconSide = options.icon ? font * 2.0f : 0;
+        float tick = *value ? font * 0.8f : 0;
+        float height = std::max(font * 2.2f, iconSide + font * 0.6f);
+        float width = padX + (tick ? tick + gap : 0) + (iconSide ? iconSide + gap : 0) + name.x + (note.x ? gap + note.x : 0) + padX;
+
+        ImGuiID id = window->GetID(label);
+        if (lastChipFrame == ImGui::GetFrameCount() && g.LastItemData.ID == lastChip) {
+            ImGui::SameLine(0, font * 0.5f);
+            if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+        }
+        ImVec2 pos = window->DC.CursorPos;
+        ImRect box(pos, ImVec2(pos.x + width, pos.y + height));
+        ImGui::ItemSize(box.GetSize());
+        // kept before ItemAdd: a chip scrolled out of view still shares its line with the next
+        lastChip = id;
+        lastChipFrame = ImGui::GetFrameCount();
+        if (!ImGui::ItemAdd(box, id)) return false;
+
+        bool hovered, held;
+        bool clicked = ImGui::ButtonBehavior(box, id, &hovered, &held);
+        if (clicked) {
+            *value = !*value;
+            ImGui::MarkItemEdited(id);
+        }
+        ImDrawList* draw = window->DrawList;
+        float rounding = theme.rounding;
+        if (*value) {
+            draw->AddRectFilled(box.Min, box.Max, Color(Faded(theme.accent, held ? 0.28f : hovered ? 0.22f : 0.16f)), rounding);
+            draw->AddRect(box.Min, box.Max, Color(theme.accent), rounding);
+        }
+        else {
+            if (hovered) draw->AddRectFilled(box.Min, box.Max, Color(Faded(theme.text, held ? 0.1f : 0.06f)), rounding);
+            draw->AddRect(box.Min, box.Max, Color(theme.buttonLine), rounding);
+        }
+        float x = box.Min.x + padX, middle = box.Min.y + height / 2;
+        if (tick) {
+            ImGui::RenderCheckMark(draw, ImVec2(x, middle - tick / 2), Color(theme.accent), tick);
+            x += tick + gap;
+        }
+        if (iconSide) {
+            draw->AddImage(options.icon, ImVec2(x, middle - iconSide / 2), ImVec2(x + iconSide, middle + iconSide / 2));
+            x += iconSide + gap;
+        }
+        draw->AddText(ImVec2(x, std::floor(middle - name.y / 2)), Color(theme.text), label, labelEnd);
+        if (note.x) draw->AddText(ImVec2(x + name.x + gap, std::floor(middle - note.y / 2)), Color(theme.muted), options.note.c_str());
+        if (options.dotted) CornerDot(box.Min, box.Max, rounding);
+        return clicked;
+    }
+
     bool Toggle(const char* label, bool* value, const ToggleOptions& options) {
+        if (options.chip) return chip(label, value, options);
         if (options.checkbox) {
             // the name first, the box at the row's end where a switch would be
             RowCard row;
@@ -1195,7 +1259,68 @@ namespace Controls {
         return pressed;
     }
 
+    static bool searchBar(const char* label, std::string& value, const TextOptions& options) {
+        ImGui::PushID(label);
+        Theme theme = GetTheme();
+        float font = ImGui::GetFontSize();
+        float height = std::floor(font * 2.4f);
+        float rounding = height / 2;
+        float iconRoom = height * 0.95f;
+        float clearSide = height;
+        ImVec2 boxMin = ImGui::GetCursorScreenPos();
+        float width = std::max(font * 8, ImGui::GetContentRegionAvail().x);
+        ImVec2 boxMax(boxMin.x + width, boxMin.y + height);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_FrameBg), rounding);
+
+        // the magnifier: a ring and its handle
+        float r = font * 0.42f;
+        ImVec2 c(boxMin.x + height * 0.5f, boxMin.y + height * 0.5f - font * 0.06f);
+        float thick = std::max(1.5f, font * 0.1f);
+        unsigned int iconColor = Color(theme.muted);
+        draw->AddCircle(c, r, iconColor, 0, thick);
+        float d = r * 0.7071f;
+        draw->AddLine(ImVec2(c.x + d, c.y + d), ImVec2(c.x + d + r * 0.75f, c.y + d + r * 0.75f), iconColor, thick);
+
+        float textHeight = ImGui::GetFrameHeight();
+        ImGui::SetCursorScreenPos(ImVec2(boxMin.x + iconRoom, boxMin.y + (height - textHeight) / 2));
+        ImGui::SetNextItemWidth(width - iconRoom - clearSide);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ColorVec(0));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ColorVec(0));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ColorVec(0));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
+        std::string shown = value;
+        bool typed = Typing::InputText("##text", shown, options.maxBytes, options.backToGame, 0,
+            options.hint.empty() ? nullptr : options.hint.c_str());
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+        bool typing = ImGui::IsItemActive();
+        bool hovered = ImGui::IsItemHovered();
+        bool changed = typed && shown != value;
+        if (changed) value = shown;
+        if (ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && options.escaped) *options.escaped = true;
+
+        if (!value.empty()) {
+            float side = ImGui::GetFrameHeight();
+            ImGui::SetCursorScreenPos(ImVec2(boxMax.x - (clearSide + side) / 2, boxMin.y + (height - side) / 2));
+            if (markButton("##clear", Mark::Clear, false)) {
+                value.clear();
+                changed = true;
+            }
+        }
+        if (hovered && !typing) draw->AddRectFilled(boxMin, boxMax, Color(Faded(theme.text, 0.04f)), rounding);
+        float focused = isMaterial() ? 2 * dp() : std::max(1.0f, font * 0.1f);
+        if (typing) draw->AddRect(boxMin, boxMax, Color(theme.accent), rounding, 0, focused);
+        else if (ImGui::GetStyle().FrameBorderSize > 0) draw->AddRect(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_Border), rounding);
+        if (options.dotted) CornerDot(boxMin, boxMax, rounding);
+        ImGui::SetCursorScreenPos(boxMin);
+        ImGui::Dummy(ImVec2(width, height));
+        ImGui::PopID();
+        return changed;
+    }
+
     bool Text(const char* label, std::string& value, const TextOptions& options) {
+        if (options.search) return searchBar(label, value, options);
         bool changed = false;
         ImGui::PushID(label);
         RowCard row;
@@ -1972,6 +2097,14 @@ namespace Controls {
         // Material's Headline Small, 24 regular
         if (isMaterial()) ImGui::PushFont(nullptr, 24);
         else ImGui::PushFont(titleFont, ImGui::GetCurrentContext()->FontSizeBase * 1.45f);
+        ImGui::TextWrapped("%s", text);
+        ImGui::PopFont();
+    }
+
+    void PartTitle(const char* text) {
+        // Material's Title Medium, 16 medium; the others the title font a step up
+        if (isMaterial()) pushType(16, true);
+        else ImGui::PushFont(titleFont, ImGui::GetCurrentContext()->FontSizeBase * 1.15f);
         ImGui::TextWrapped("%s", text);
         ImGui::PopFont();
     }

@@ -45,7 +45,7 @@ namespace LuaFunctions {
     // removes the extension's intervals, see Extensions::unload
     void forgetIntervals(Extensions::Extension* owner);
 
-    void ImGUI_Text(const std::string& str);
+    void ImGUI_Text(const std::string& str, sol::optional<sol::table> table);
     void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> options);
     // ImGUI_Image(texture or web link, width, height, { onClick = function })
     // Sizes are pixels at 1080p. image is a texture, a handle from GetWebImage

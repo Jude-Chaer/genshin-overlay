@@ -132,6 +132,11 @@ namespace Controls {
 
     struct ToggleOptions {
         bool checkbox = false;
+        // a filter chip: the name in a framed box that fills with the accent
+        // and a tick while on; chips in a row wrap by themselves
+        bool chip = false;
+        // with chip: muted text after the name, e.g. "3/120"
+        std::string note;
         // an attention dot on the switch's corner
         bool dotted = false;
         // a smaller switch after the name, a row of them wraps by itself
@@ -154,6 +159,9 @@ namespace Controls {
     struct TextOptions {
         // an attention dot in the box's corner
         bool dotted = false;
+        // a search bar: the whole row, a magnifier and the hint inside, no
+        // name shown and no card, an x while there's text
+        bool search = false;
         // grey in the empty box
         std::string hint;
         // shows Reset, greyed out while the text is this
@@ -257,6 +265,8 @@ namespace Controls {
     void EndSection();
     // A page's name at its top, larger than its text.
     void PageTitle(const char* text);
+    // A part's name inside a page, between the page's name and its text.
+    void PartTitle(const char* text);
     // the look's bold font for page names, none: the text's own
     void SetTitleFont(ImFont* font);
     // The overlay's own icons for its pages and its official extensions, drawn
