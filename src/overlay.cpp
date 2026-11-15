@@ -1081,6 +1081,18 @@ namespace Overlay {
         if (ImGui::MenuItem(ext.enabled ? "Turn off" : "Turn on")) Extensions::setRunning(ext, !ext.enabled);
         if (ImGui::MenuItem("Permissions")) Extensions::openPermissionsTab(ext);
         if (ImGui::MenuItem("Show in folder", nullptr, false, !ext.folder.empty())) OpenFolder(ext.folder);
+        if (!ext.enabled || ext.stopped || !ext.stopReason.empty() || ext.menuItems.empty()) return;
+        ImGui::Separator();
+        // run once the menu is drawn, the function can add or remove items
+        std::function<bool()> picked;
+        for (const auto& menuItem : ext.menuItems) {
+            ImGui::PushID(menuItem.id.c_str());
+            if (ImGui::MenuItem(menuItem.label.c_str())) picked = menuItem.callback;
+            ImGui::PopID();
+        }
+        if (picked && !picked()) {
+            Notices::Add(ext.folderKey, ext.name, Notices::Kind::Error, ext.name + " couldn't do that.", glfwGetTime());
+        }
     }
 
     // the official Map and Minimap get the overlay's own icons, any other

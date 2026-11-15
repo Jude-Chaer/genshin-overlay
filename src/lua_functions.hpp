@@ -90,6 +90,9 @@ namespace LuaFunctions {
     std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, sol::optional<int> modifiers,
         sol::optional<std::string> label);
     bool DeleteKeybind(const std::string& uuid);
+    std::string WhyNotMenuLabel(const std::string& label);
+    std::string AddMenuItem(const std::string& label, sol::protected_function callbackFunction);
+    bool RemoveMenuItem(const std::string& id);
     void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue,
         sol::object minOrOptions, sol::optional<float> max);
     sol::object GetExtensionSetting(const std::string& id, sol::this_state state);

@@ -550,6 +550,7 @@ namespace Extensions {
 			if (!held.bound.empty()) Keybindings::DeleteKeybind(held.bound);
 		}
 		ext.keys.clear();
+		ext.menuItems.clear();
 		LuaFunctions::forgetIntervals(&ext);
 		Triggers::forget(&ext);
 		LuaFunctions::forgetNetRequests(&ext);

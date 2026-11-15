@@ -50,14 +50,17 @@ namespace LuaFunctions {
 	std::vector<LuaInterval> intervals;
 	static int nextIntervalId = 1;
 
-	// what is the kind of callback, for the log: "button", "key", "interval"
-	static void callLua(const sol::protected_function& function, const char* what) {
+	// what is the kind of callback, for the log: "button", "key", "interval", "menu item"
+	// false when it failed, the log says why
+	static bool callLua(const sol::protected_function& function, const char* what) {
 		auto result = function();
 		if (!result.valid()) {
 			sol::error err = result;
 			Extensions::Extension* ext = Extensions::currentExtension;
 			std::cerr << "[" << (ext ? ext->name : std::string("no extension")) << "] " << what << ": " << err.what() << std::endl;
+			return false;
 		}
+		return true;
 	}
 
 	// what a C++ function gave, as Lua values (a tuple gives one each)
@@ -177,6 +180,9 @@ namespace LuaFunctions {
 		// they ask for Keybinds themselves, a key waits until it's allowed
 		global("RegisterKeybind", None, RegisterKeybind);
 		global("DeleteKeybind", None, DeleteKeybind);
+		// its own items in its ⋯ menu in the page list
+		global("AddMenuItem", None, AddMenuItem);
+		global("RemoveMenuItem", None, RemoveMenuItem);
 
 		// drawing on the overlay
 		global("DrawImage", DisplayOverlay, DrawImage);
@@ -472,12 +478,16 @@ namespace LuaFunctions {
 		return sol::make_object(state, open);
 	}
 
+	static size_t utf8Characters(const std::string& text) {
+		size_t characters = 0;
+		for (unsigned char c : text) if ((c & 0xC0) != 0x80) characters++;
+		return characters;
+	}
+
 	// a summary line from an extension, its line breaks and tabs as spaces;
 	// none past MaxSummary characters
 	static std::string summaryText(const char* function, const std::string& text) {
-		size_t characters = 0;
-		for (unsigned char c : text) if ((c & 0xC0) != 0x80) characters++;
-		if (characters > Extensions::MaxSummary) {
+		if (utf8Characters(text) > Extensions::MaxSummary) {
 			Extensions::logOnce(function, "summary is longer than " + std::to_string(Extensions::MaxSummary) + " characters");
 			return "";
 		}
@@ -776,6 +786,65 @@ namespace LuaFunctions {
 		owner->keys.erase(it);
 		if (!bound.empty()) Keybindings::DeleteKeybind(bound);
 		else Asks::forgetKey(*owner, name);
+		return true;
+	}
+
+	// why a label can't be a menu item's, empty when it can
+	std::string WhyNotMenuLabel(const std::string& label) {
+		if (label.find_first_not_of(' ') == std::string::npos) return "the label is empty";
+		for (unsigned char c : label) {
+			if (c < 0x20 || c == 0x7F) return "the label has a line break, tab or other control character";
+		}
+		// ImGui reads ## as the start of an id
+		if (label.find("##") != std::string::npos) return "the label has ##";
+		size_t characters = utf8Characters(label);
+		if (characters > Extensions::MaxMenuItemLabel) {
+			return "the label has " + std::to_string(characters) + " characters, " +
+				std::to_string(Extensions::MaxMenuItemLabel) + " at most";
+		}
+		return "";
+	}
+
+	// AddMenuItem(label, function): an item under the line in the extension's
+	// own ⋯ menu in the page list, the function runs when the player picks it.
+	// Up to 3, the label up to 24 characters. The id for RemoveMenuItem, empty
+	// when it's refused, the log says why. The items go with the extension.
+	std::string AddMenuItem(const std::string& label, sol::protected_function callbackFunction) {
+		Extensions::Extension* owner = Extensions::currentExtension;
+		if (!owner) return "";
+		std::string whyNot = WhyNotMenuLabel(label);
+		if (whyNot.empty() && !callbackFunction.valid()) whyNot = "needs a function after the label";
+		if (whyNot.empty() && owner->menuItems.size() >= Extensions::MaxMenuItems) {
+			whyNot = "has " + std::to_string(Extensions::MaxMenuItems) + " menu items, no more are added";
+		}
+		if (!whyNot.empty()) {
+			Extensions::logOnce("AddMenuItem", whyNot);
+			return "";
+		}
+		Extensions::Extension::MenuItem item;
+		item.id = Helpers::GenerateUUID();
+		item.label = label;
+		item.callback = [owner, callbackFunction]() {
+			// stays false when the guard stopped it and nothing ran
+			bool worked = false;
+			Extensions::runForExtension(owner, [owner, &callbackFunction, &worked]() {
+				PlayerAction action(owner);
+				worked = callLua(callbackFunction, "menu item");
+				});
+			return worked;
+			};
+		owner->menuItems.push_back(std::move(item));
+		return owner->menuItems.back().id;
+	}
+
+	// only the extension's own items
+	bool RemoveMenuItem(const std::string& id) {
+		Extensions::Extension* owner = Extensions::currentExtension;
+		if (!owner) return false;
+		auto& items = owner->menuItems;
+		auto it = std::find_if(items.begin(), items.end(), [&](const auto& each) { return each.id == id; });
+		if (it == items.end()) return false;
+		items.erase(it);
 		return true;
 	}
 

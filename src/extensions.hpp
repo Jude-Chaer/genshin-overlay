@@ -130,6 +130,9 @@ namespace Extensions {
 	inline const size_t MaxTextures = 256;
 	inline const size_t MaxSettings = 128;
 	inline const size_t MaxTabs = 16;
+	// items in its ⋯ menu, and their labels' length in characters
+	inline const size_t MaxMenuItems = 3;
+	inline const size_t MaxMenuItemLabel = 24;
 	// headers whose open state is kept, and their labels' length
 	inline const size_t MaxHeaders = 64;
 	inline const size_t MaxHeaderLabel = 128;
@@ -331,6 +334,14 @@ namespace Extensions {
 			std::string bound;
 		};
 		std::vector<HeldKey> keys;
+		// An item AddMenuItem put under the line in its ⋯ menu in the page list
+		struct MenuItem {
+			std::string id;
+			std::string label;
+			// false when the Lua function failed
+			std::function<bool()> callback;
+		};
+		std::vector<MenuItem> menuItems;
 		// the textures it loaded with LoadTexture or from a web link, freed with it
 		std::vector<GLuint> textures;
 		std::filesystem::path folder;

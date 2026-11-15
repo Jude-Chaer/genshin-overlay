@@ -242,6 +242,98 @@ TEST_CASE("an extension can only delete its own keybinds") {
     CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9, Keybindings::KeybindModifiers_Alt) == nullptr);
 }
 
+TEST_CASE("an extension adds up to three menu items with short labels") {
+    auto lua = Extensions::newLuaState(DATA / "extensions" / "registers_in_init");
+    Extensions::Extension ext;
+    ext.name = "menu";
+    ext.extensionPermissions = Extensions::defaultPermissions;
+    RunAs runAs(ext);
+    CaptureLog log;
+    sol::function add = (*lua)["AddMenuItem"];
+    sol::protected_function nothing = lua->script("return function() end");
+    auto added = [&](const std::string& label) { return !add(label, nothing).get<std::string>().empty(); };
+
+    CHECK(added("Sync now"));
+    // 24 characters, also when one takes more bytes
+    CHECK(added("Show every item on a map"));
+    CHECK(added(u8"Ännoying label of 24 chr"));
+    CHECK_FALSE(added("Fourth"));
+    // a call made every frame logs it once
+    CHECK_FALSE(added("Fourth"));
+    CHECK(log.count("[menu] AddMenuItem has 3 menu items, no more are added") == 1);
+    REQUIRE(ext.menuItems.size() == 3);
+    CHECK(ext.menuItems[0].label == "Sync now");
+
+    ext.menuItems.clear();
+    CHECK_FALSE(added("Show every item on a map!"));
+    CHECK(log.count("AddMenuItem the label has 25 characters, 24 at most") == 1);
+    CHECK_FALSE(added(""));
+    CHECK_FALSE(added("   "));
+    CHECK_FALSE(added("Two\nlines"));
+    CHECK_FALSE(added("Tab\there"));
+    CHECK_FALSE(added("Hidden##id"));
+    CHECK(add("No function", sol::lua_nil).get<std::string>().empty());
+    CHECK(log.count("AddMenuItem needs a function after the label") == 1);
+    CHECK(ext.menuItems.empty());
+}
+
+TEST_CASE("a menu item that fails leaves the others working") {
+    auto lua = Extensions::newLuaState(DATA / "extensions" / "registers_in_init");
+    Extensions::Extension ext;
+    ext.name = "menu";
+    ext.extensionPermissions = Extensions::defaultPermissions;
+    CaptureLog log;
+    {
+        RunAs runAs(ext);
+        lua->script(R"(
+            picked = 0
+            AddMenuItem("Breaks", function() error("on purpose") end)
+            AddMenuItem("Counts", function() picked = picked + 1 end)
+        )");
+    }
+    REQUIRE(ext.menuItems.size() == 2);
+    CHECK_FALSE(ext.menuItems[0].callback());
+    CHECK(log.count("[menu] menu item:") == 1);
+    CHECK(log.count("on purpose") == 1);
+    CHECK(ext.menuItems[1].callback());
+    CHECK(ext.menuItems[1].callback());
+    CHECK((*lua)["picked"].get<int>() == 2);
+    CHECK(ext.menuItems.size() == 2);
+}
+
+TEST_CASE("menu items can remove themselves and go with their extension") {
+    auto lua = Extensions::newLuaState(DATA / "extensions" / "registers_in_init");
+    Extensions::Extension first, second;
+    first.name = "first";
+    second.name = "second";
+    first.extensionPermissions = second.extensionPermissions = Extensions::defaultPermissions;
+    std::string id;
+    {
+        RunAs runAs(first);
+        lua->script(R"(
+            once = AddMenuItem("Once", function() RemoveMenuItem(once) end)
+            AddMenuItem("Stays", function() end)
+        )");
+        id = (*lua)["once"].get<std::string>();
+    }
+    REQUIRE(first.menuItems.size() == 2);
+    {
+        RunAs runAs(second);
+        sol::function remove = (*lua)["RemoveMenuItem"];
+        CHECK(remove(id).get<bool>() == false);
+    }
+    CHECK(first.menuItems.size() == 2);
+    // the overlay copies the function before it runs it, like here
+    auto callback = first.menuItems[0].callback;
+    CHECK(callback());
+    REQUIRE(first.menuItems.size() == 1);
+    CHECK(first.menuItems[0].label == "Stays");
+
+    // turned off, it has none
+    Extensions::unload(first);
+    CHECK(first.menuItems.empty());
+}
+
 TEST_CASE("an extension that fails while loading leaves only its error behind") {
     fs::remove(Settings::file);
     Keybindings::keybinds.clear();
