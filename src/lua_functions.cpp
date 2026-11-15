@@ -22,6 +22,7 @@
 #include "notices.hpp"
 #include "screen_pictures.hpp"
 #include "packets/game_traffic.hpp"
+#include "accounts.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -208,6 +209,11 @@ namespace LuaFunctions {
 		global("GetItemRegions", MapInfo, GetItemRegions);
 		global("GetItemIcon", MapInfo, GetItemIcon);
 		global("GetGameTraffic", None, GetGameTraffic);
+
+		// the player's logins, each site's account permission checked inside
+		global("GetAccount", None, GetAccount);
+		global("LogIn", None, LogIn);
+		global("LogOut", None, LogOut);
 
 		// files, only in the extension's own folder (pathFor)
 		global("LoadTexture", InternalRead, LoadTextureFromFileLua);
@@ -2465,5 +2471,53 @@ namespace LuaFunctions {
 	sol::table GetGameTraffic(sol::this_state state)
 	{
 		return gameTrafficTable(Settings::readGameTraffic, GameTraffic::GetStatus(), state);
+	}
+
+	static Permission accountPermission(Accounts::Site site) {
+		return site == Accounts::Site::HoyolabMap ? Permission::HoyolabMapAccount : Permission::AppsampleAccount;
+	}
+
+	static std::optional<Accounts::Site> siteNamed(const char* function, const std::string& name) {
+		std::optional<Accounts::Site> site = Accounts::SiteNamed(name);
+		if (!site) Extensions::logOnce(function, "knows no site named " + name + ", only hoyolab_map and appsample");
+		return site;
+	}
+
+	// account only with the site's permission, so a login as another account
+	// isn't seen without it
+	sol::table accountTable(Accounts::Site site, const Accounts::Status& status, sol::state_view lua)
+	{
+		sol::table table = lua.create_table_with(
+			"site", std::string(Accounts::SiteName(site)),
+			"state", std::string(Accounts::StateName(status.state)),
+			"problem", status.problem);
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (ext && ext->extensionPermissions.count(accountPermission(site)) && !status.account.empty()) {
+			Extensions::markUsed(*ext, accountPermission(site));
+			table["account"] = status.account;
+		}
+		return table;
+	}
+
+	sol::object GetAccount(const std::string& site, sol::this_state state)
+	{
+		std::optional<Accounts::Site> named = siteNamed("GetAccount", site);
+		if (!named) return sol::make_object(state, sol::lua_nil);
+		return accountTable(*named, Accounts::Get(*named), state);
+	}
+
+	void LogIn(const std::string& site)
+	{
+		std::optional<Accounts::Site> named = siteNamed("LogIn", site);
+		if (!named || !Extensions::inPhase("LogIn", Extensions::Phase::Menu)) return;
+		if (!Extensions::allowed("LogIn", accountPermission(*named))) return;
+		Accounts::LogIn(*named);
+	}
+
+	void LogOut(const std::string& site)
+	{
+		std::optional<Accounts::Site> named = siteNamed("LogOut", site);
+		if (!named || !Extensions::allowed("LogOut", accountPermission(*named))) return;
+		Accounts::LogOut(*named);
 	}
 }

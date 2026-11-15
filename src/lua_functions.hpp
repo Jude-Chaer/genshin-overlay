@@ -10,6 +10,7 @@
 #include "controls.hpp"
 #include "screens.hpp"
 #include "packets/game_traffic.hpp"
+#include "accounts.hpp"
 
 namespace ItemCatalog { class Catalog; }
 namespace ItemFiles { struct Status; }
@@ -115,6 +116,18 @@ namespace LuaFunctions {
     sol::table GetGameTraffic(sol::this_state state);
     // what GetGameTraffic and the GameTraffic trigger give
     sol::table gameTrafficTable(bool on, const GameTraffic::Status& status, sol::state_view lua);
+    // GetAccount("hoyolab_map" or "appsample"): { site, state, problem, account }.
+    // state is logged_out, window_open, logged_in, needs_login or captcha,
+    // problem what went wrong last for the player, "" when nothing did.
+    // account (HoYoLAB's id, appsample's email) only with the site's account
+    // permission. Nil for a site it doesn't know.
+    sol::object GetAccount(const std::string& site, sol::this_state state);
+    // what GetAccount and the Account trigger give
+    sol::table accountTable(Accounts::Site site, const Accounts::Status& status, sol::state_view lua);
+    // Opens the site's login window, from its menu only, with the site's
+    // account permission. It closes on its own once logged in.
+    void LogIn(const std::string& site);
+    void LogOut(const std::string& site);
     // image is a texture the extension may draw, or a handle from GetWebImage
     void DrawImage(double image, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
     sol::variadic_results GetWebImage(const std::string& url, sol::this_state state);

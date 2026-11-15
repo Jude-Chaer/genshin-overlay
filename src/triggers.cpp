@@ -14,7 +14,7 @@ namespace Triggers {
 	using Extensions::Extension;
 	using Permission = Extensions::ExtensionPermissionTypes;
 
-	enum class Kind { Screens, ScreenPicture, MapView, Player, Items, GameTraffic, Page, Setting, Permission, Look };
+	enum class Kind { Screens, ScreenPicture, MapView, Player, Items, GameTraffic, Account, Page, Setting, Permission, Look };
 
 	static const std::vector<std::pair<std::string, Kind>> kinds = {
 		{ "Screens", Kind::Screens },
@@ -23,6 +23,7 @@ namespace Triggers {
 		{ "Player", Kind::Player },
 		{ "Items", Kind::Items },
 		{ "GameTraffic", Kind::GameTraffic },
+		{ "Account", Kind::Account },
 		{ "Page", Kind::Page },
 		{ "Setting", Kind::Setting },
 		{ "Permission", Kind::Permission },
@@ -52,6 +53,7 @@ namespace Triggers {
 		case Kind::Player: return { "found", "lost", "moved" };
 		case Kind::Items: return { "list", "loading" };
 		case Kind::GameTraffic: return { "on", "state" };
+		case Kind::Account: return { "hoyolab_map", "appsample" };
 		case Kind::Page: return { "shown", "hidden" };
 		case Kind::Look: return { "look", "dark", "accent", "size" };
 		default: return {};
@@ -186,6 +188,16 @@ namespace Triggers {
 			parts["on"] = now.trafficOn ? "1" : "0";
 			parts["state"] = std::string(GameTraffic::StateCode(now.traffic)) + " " + GameTraffic::ReasonCode(now.traffic);
 			break;
+		case Kind::Account:
+			for (Accounts::Site site : { Accounts::Site::HoyolabMap, Accounts::Site::Appsample }) {
+				const Accounts::Status& status = now.accounts[(size_t)site];
+				std::string& part = parts[Accounts::SiteName(site)];
+				part = std::string(Accounts::StateName(status.state)) + " " + status.problem;
+				// another account is a change only for what may see it
+				Permission permission = site == Accounts::Site::HoyolabMap ? Permission::HoyolabMapAccount : Permission::AppsampleAccount;
+				if (ext.extensionPermissions.count(permission)) part += "\n" + status.account;
+			}
+			break;
 		case Kind::Page:
 			parts["shown"] = now.pageShown >= 0 && now.pageShown == pageIndex(&ext) ? "1" : "0";
 			break;
@@ -267,6 +279,10 @@ namespace Triggers {
 		case Kind::Player: return LuaFunctions::playerTable(now.player, lua);
 		case Kind::Items: return LuaFunctions::Items::table(now.itemsVersion, now.items, lua);
 		case Kind::GameTraffic: return LuaFunctions::gameTrafficTable(now.trafficOn, now.traffic, lua);
+		case Kind::Account: {
+			Accounts::Site site = Accounts::SiteNamed(changed).value_or(Accounts::Site::HoyolabMap);
+			return LuaFunctions::accountTable(site, now.accounts[(size_t)site], lua);
+		}
 		case Kind::Page: return sol::make_object(lua, changed == "shown");
 		case Kind::Setting: return LuaFunctions::GetExtensionSetting(changed, sol::this_state{ lua.lua_state() });
 		case Kind::Permission: return LuaFunctions::PermissionState(changed, sol::this_state{ lua.lua_state() });
@@ -363,6 +379,7 @@ namespace Triggers {
 		now.items = ItemFiles::GetStatus();
 		now.trafficOn = Settings::readGameTraffic;
 		now.traffic = GameTraffic::GetStatus();
+		now.accounts = { Accounts::Get(Accounts::Site::HoyolabMap), Accounts::Get(Accounts::Site::Appsample) };
 		now.pageShown = Overlay::ShownExtension();
 		Controls::Theme theme = Controls::GetTheme();
 		now.look = theme.look;

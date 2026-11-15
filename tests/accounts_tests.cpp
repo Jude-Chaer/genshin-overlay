@@ -1,11 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
+#include <iostream>
+#include <sstream>
 #include "accounts.hpp"
 #include "credentials.hpp"
 #include "extensions.hpp"
 #include "files.hpp"
 #include "settings.hpp"
 #include "test_extension.hpp"
+#include "triggers.hpp"
 
 namespace fs = std::filesystem;
 using Accounts::Site;
@@ -28,6 +31,17 @@ namespace {
             Credentials::prefix = prefix;
         }
     };
+
+    struct CaptureLog {
+        std::ostringstream text;
+        std::streambuf* previous = std::cerr.rdbuf(text.rdbuf());
+        ~CaptureLog() { std::cerr.rdbuf(previous); }
+        bool has(const std::string& part) const { return text.str().find(part) != std::string::npos; }
+    };
+
+    sol::object global(Extensions::Extension* ext, const std::string& name) {
+        return (*ext->luaState)[name];
+    }
 
     Net::Response saved(const std::string& file, int status) {
         Net::Response response;
@@ -233,5 +247,102 @@ TEST_CASE("logging in as another account switches its permission off for every e
     CHECK(after.off == std::vector<std::string>{ "hoyolab_map_account" });
     CHECK(waiting->grantsBeforeChange == std::vector<std::string>{ "network" });
     CHECK(waiting->switchedOff.count("hoyolab_map_account"));
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("GetAccount gives each site's state, the account only with the site's permission") {
+    Clean clean;
+    Extensions::Extension* ext = TestExtension::load("reads_account", "function Init() end");
+    REQUIRE(ext != nullptr);
+    REQUIRE(Accounts::FoundHoyolabMap("123456789", "token"));
+    Accounts::Frame();
+    CaptureLog log;
+
+    REQUIRE(TestExtension::run(ext, "a = GetAccount('hoyolab_map') b = GetAccount('appsample') c = GetAccount('steam')"));
+    sol::table a = global(ext, "a");
+    CHECK(a["site"].get<std::string>() == "hoyolab_map");
+    CHECK(a["state"].get<std::string>() == "logged_in");
+    CHECK(a["problem"].get<std::string>() == "");
+    CHECK_FALSE(a["account"].valid());
+    CHECK(global(ext, "b").as<sol::table>()["state"].get<std::string>() == "logged_out");
+    CHECK(global(ext, "c").get_type() == sol::type::lua_nil);
+    CHECK(log.has("GetAccount knows no site named steam"));
+
+    Extensions::switchPermission(*ext, Permission::HoyolabMapAccount, true);
+    REQUIRE(TestExtension::run(ext, "a = GetAccount('hoyolab_map')"));
+    CHECK(global(ext, "a").as<sol::table>()["account"].get<std::string>() == "123456789");
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("LogIn and LogOut need the site's permission, LogIn works from the menu only") {
+    Clean clean;
+    Extensions::Extension* ext = TestExtension::load("logs_in", "function Init() end");
+    REQUIRE(ext != nullptr);
+    REQUIRE(Accounts::FoundHoyolabMap("123456789", "token"));
+    Accounts::Frame();
+    CaptureLog log;
+    {
+        Extensions::InPhase menu(Extensions::Phase::Menu);
+        REQUIRE(TestExtension::run(ext, "LogIn('appsample')"));
+    }
+    CHECK(log.has("LogIn needs appsample account"));
+    CHECK(Accounts::Get(Site::Appsample).state == State::LoggedOut);
+    REQUIRE(TestExtension::run(ext, "LogOut('hoyolab_map')"));
+    CHECK(log.has("LogOut needs HoYoLAB Map account"));
+    CHECK(Accounts::Get(Site::HoyolabMap).state == State::LoggedIn);
+
+    Extensions::switchPermission(*ext, Permission::AppsampleAccount, true);
+    Extensions::switchPermission(*ext, Permission::HoyolabMapAccount, true);
+    REQUIRE(TestExtension::run(ext, "LogIn('appsample')"));
+    CHECK(log.has("LogIn works only in Menu()"));
+    CHECK(Accounts::Get(Site::Appsample).state == State::LoggedOut);
+    REQUIRE(TestExtension::run(ext, "LogOut('hoyolab_map')"));
+    CHECK(Accounts::Get(Site::HoyolabMap).state == State::LoggedOut);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("the Account trigger runs for the site that changed, another account only with the permission") {
+    Clean clean;
+    Extensions::Extension* ext = TestExtension::load("account_trigger", R"(
+        _G.runs = 0
+        function Init()
+            AddTrigger("Account", function(account, changed)
+                _G.runs = _G.runs + 1
+                _G.given = account
+                _G.changed = changed
+            end)
+        end
+    )");
+    REQUIRE(ext != nullptr);
+    Extensions::runInit(*ext);
+    auto runs = [&] { return global(ext, "runs").as<int>(); };
+
+    Triggers::State state;
+    Triggers::check(state);
+    state.accounts[(size_t)Site::Appsample].state = State::LoggedIn;
+    state.accounts[(size_t)Site::Appsample].account = "you@example.com";
+    Triggers::check(state);
+    REQUIRE(runs() == 1);
+    CHECK(global(ext, "changed").as<std::string>() == "appsample");
+    sol::table given = global(ext, "given");
+    CHECK(given["state"].get<std::string>() == "logged_in");
+    CHECK_FALSE(given["account"].valid());
+
+    state.accounts[(size_t)Site::Appsample].account = "other@example.com";
+    Triggers::check(state);
+    CHECK(runs() == 1);
+
+    Extensions::switchPermission(*ext, Permission::AppsampleAccount, true);
+    Triggers::check(state);
+    int before = runs();
+    state.accounts[(size_t)Site::Appsample].account = "you@example.com";
+    Triggers::check(state);
+    CHECK(runs() == before + 1);
+    CHECK(global(ext, "given").as<sol::table>()["account"].get<std::string>() == "you@example.com");
+
+    state.accounts[(size_t)Site::HoyolabMap].state = State::NeedsLogin;
+    Triggers::check(state);
+    CHECK(runs() == before + 2);
+    CHECK(global(ext, "changed").as<std::string>() == "hoyolab_map");
     TestExtension::unloadAll();
 }

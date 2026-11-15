@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "accounts.hpp"
 #include "controls.hpp"
 #include "extensions.hpp"
 #include "item_files.hpp"
@@ -13,7 +14,7 @@
 
 // AddTrigger(name, function, only): the function runs once each time its
 // topic changes, with the table the topic's call gives (GetScreens,
-// GetMapView, GetPlayer, GetItems, GetGameTraffic...) and what changed. With only, it runs
+// GetMapView, GetPlayer, GetItems, GetGameTraffic, GetAccount...) and what changed. With only, it runs
 // only when that is what changed. Nothing runs for the state at the start.
 
 namespace Triggers {
@@ -45,6 +46,8 @@ namespace Triggers {
         // what GetGameTraffic gives
         bool trafficOn = false;
         GameTraffic::Status traffic;
+        // what GetAccount gives, by Accounts::Site
+        std::array<Accounts::Status, 2> accounts;
         // the extension whose page the menu shows, by its place in registeredExtensions, -1 for none
         int pageShown = -1;
         // the player's look and whether it's dark
