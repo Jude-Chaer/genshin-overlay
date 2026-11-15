@@ -1184,10 +1184,10 @@ namespace Overlay {
         ImGui::BeginChild(
             "Sidebar",
             ImVec2(sidebarWidth, contentSize.y),
-            ImGuiChildFlags_AlwaysUseWindowPadding
+            ImGuiChildFlags_AlwaysUseWindowPadding,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
         );
         ImGui::PopStyleVar();
-        listScrolls = ImGui::GetScrollMaxY() > 0;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
 
         // by number, so an extension named "Settings" or two with one name are their own buttons
@@ -1207,6 +1207,9 @@ namespace Overlay {
             ImGui::Separator();
         }
 
+        // only the extensions scroll, the overlay's own pages stay put
+        ImGui::BeginChild("Extensions");
+        listScrolls = ImGui::GetScrollMaxY() > 0;
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) pageDragging = false;
         PageDrop drop;
         auto DrawExtension = [&](size_t i, PageOrder::Place at) {
@@ -1305,6 +1308,7 @@ namespace Overlay {
             }
             ImGui::EndPopup();
         }
+        ImGui::EndChild();
 
         ImGui::PopStyleVar();
         ImGui::EndChild();
