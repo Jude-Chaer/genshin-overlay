@@ -709,6 +709,13 @@ namespace Extensions {
 		}
 	}
 
+	static void drawSettings(Extension& ext) {
+		for (const auto& id : ext.settingsOrder) {
+			auto it = ext.settings.find(id);
+			if (it != ext.settings.end() && drawSetting(it->second)) saveSettings();
+		}
+	}
+
 	void drawExtensionMenus(int extensionIndex) {
 		if (extensionIndex < 0 ||
 			extensionIndex >= static_cast<int>(registeredExtensions.size())) {
@@ -747,6 +754,9 @@ namespace Extensions {
 		ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.3f));
 
 		std::vector<std::string> tabs = { "General" };
+		// its settings get their own tab when it has a page of its own
+		bool settingsTab = ext->menuFunction && !ext->settingsOrder.empty();
+		if (settingsTab) tabs.push_back("Settings");
 		if (!::Notices::Of(ext->folderKey).empty()) tabs.push_back("Notices");
 		if (!ext->keys.empty()) tabs.push_back("Keys");
 		tabs.push_back("Permissions");
@@ -764,19 +774,14 @@ namespace Extensions {
 				else if (ext->stopped) {
 					ImGui::TextDisabled("Switched off.");
 				}
-				for (const auto& id : ext->settingsOrder) {
-					auto it = ext->settings.find(id);
-
-					if (it != ext->settings.end() && drawSetting(it->second)) {
-						saveSettings();
-					}
-				}
+				if (!settingsTab) drawSettings(*ext);
 
 				{
 					InPhase menu(Phase::Menu);
 					runForExtension(ext.get(), ext->menuFunction);
 				}
 			}
+			else if (tab == "Settings") drawSettings(*ext);
 			else if (tab == "Notices") ::Notices::DrawList(ext->folderKey);
 			else if (tab == "Keys") KeyChoices::drawKeysTab(*ext);
 			else if (tab == "Permissions") drawPermissionsTab(*ext);
