@@ -1021,14 +1021,16 @@ namespace Overlay {
                 continue;
             }
             std::vector<Controls::PageMark> marks;
-            bool dotted = false;
+            bool dotted = false, holdsOpenPage = false;
             for (const auto& key : item.inside) {
-                auto& ext = Extensions::registeredExtensions[byKey[key]];
+                size_t i = byKey[key];
+                auto& ext = Extensions::registeredExtensions[i];
                 if (marks.size() < 4) marks.push_back({ ext->name, PageImage(*ext), OfficialIcon(*ext) });
                 if (!ext->dots.empty()) dotted = true;
+                if (activeTab == static_cast<int>(i) + OwnPages) holdsOpenPage = true;
             }
             ImGui::PushID(("folder " + std::to_string(top)).c_str());
-            if (Controls::FolderButton(item.key.c_str(), item.open, marks, dotted && !item.open)) {
+            if (Controls::FolderButton(item.key.c_str(), item.open, marks, dotted && !item.open, holdsOpenPage && !item.open)) {
                 item.open = !item.open;
                 listChanged = true;
             }

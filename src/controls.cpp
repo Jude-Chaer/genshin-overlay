@@ -2204,7 +2204,7 @@ namespace Controls {
             y += lineHeight;
         }
         drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
-        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(theme.text));
+        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : theme.text));
         if (dotted) CornerDot(min, max, rounding);
         return clicked;
     }
@@ -2263,7 +2263,7 @@ namespace Controls {
             y += lineHeight;
         }
         drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
-        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(roles.onSurfaceVariant));
+        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
         if (dotted) CornerDot(min, max, rounding);
         return clicked;
     }
@@ -2321,7 +2321,7 @@ namespace Controls {
             y += lineHeight;
         }
         drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
-        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(theme.text));
+        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : theme.text));
         if (dotted) Dot();
         return clicked;
     }
@@ -2330,8 +2330,8 @@ namespace Controls {
         return pageRow({ label, picked, icon, dotted, tile, summary, glyph });
     }
 
-    bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted) {
-        PageRow row{ label };
+    bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted, bool picked) {
+        PageRow row{ label, picked };
         row.dotted = dotted;
         row.folder = &inside;
         row.open = open;

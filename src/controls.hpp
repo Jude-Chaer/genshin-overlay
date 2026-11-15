@@ -274,8 +274,9 @@ namespace Controls {
     };
     // A folder's row in the page list, drawn like a page: its first four
     // pages' icons small, its name and an arrow pointing down while it's
-    // open. True when clicked.
-    bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted = false);
+    // open. True when clicked. picked: the open page is in it while it's
+    // closed.
+    bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted = false, bool picked = false);
     float FolderButtonWidth(const char* label);
     // how far a folder's pages sit in from it
     float PageIndent();
