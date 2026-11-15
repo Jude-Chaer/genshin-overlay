@@ -1494,6 +1494,21 @@ TEST_CASE("a header past the saved ones still opens and stays open for the sessi
     TestExtension::unloadAll();
 }
 
+TEST_CASE("a header's summary goes under its name, one too long is left out") {
+    Extensions::Extension* ext = TestExtension::load("summed", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    auto below = [&](const std::string& options) {
+        frames.draw("ImGUI_Header('Sync', " + options + ") ImGUI_EndHeader() ImGUI_Text('after')");
+        return frames.last.y;
+    };
+    float plain = below("{}");
+    CHECK(below("{ summary = 'Synced 2 minutes ago' }") > plain);
+    CHECK(below("{ summary = string.rep('a', 121) }") == plain);
+    CHECK(below("{ summary = string.rep('é', 120) }") > plain);
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("an open header's part is one card, ended by the next header, ImGUI_EndHeader or the end of the code") {
     Extensions::Extension* ext = TestExtension::load("carded", "function Init() end");
     REQUIRE(ext != nullptr);

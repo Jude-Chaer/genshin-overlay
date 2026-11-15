@@ -133,6 +133,8 @@ namespace Extensions {
 	// headers whose open state is kept, and their labels' length
 	inline const size_t MaxHeaders = 64;
 	inline const size_t MaxHeaderLabel = 128;
+	// a header's summary line, in characters
+	inline const size_t MaxSummary = 120;
 	// headers past those, kept open or closed for the session only
 	inline const size_t MaxSessionHeaders = 256;
 	// attention dots on at once, and how long their part is open before one goes

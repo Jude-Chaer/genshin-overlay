@@ -472,16 +472,33 @@ namespace LuaFunctions {
 		return sol::make_object(state, open);
 	}
 
+	// a summary line from an extension, its line breaks and tabs as spaces;
+	// none past MaxSummary characters
+	static std::string summaryText(const char* function, const std::string& text) {
+		size_t characters = 0;
+		for (unsigned char c : text) if ((c & 0xC0) != 0x80) characters++;
+		if (characters > Extensions::MaxSummary) {
+			Extensions::logOnce(function, "summary is longer than " + std::to_string(Extensions::MaxSummary) + " characters");
+			return "";
+		}
+		std::string out = text;
+		for (char& c : out) if ((unsigned char)c < 0x20) c = ' ';
+		return out;
+	}
+
 	// ImGUI_Header(label, options) is true while the part under it is open. options is optional:
 	// { open = true } opens it until the player closes it. The player's choice is kept.
+	// { summary = "Synced 2 minutes ago" } is a short line under its name, open or closed.
 	// What's drawn while it's open sits in a card under the header, up to the next
 	// header, ImGUI_EndHeader() or the end of Menu().
 	bool ImGUI_Header(const std::string& label, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Header")) return false;
 		bool open = table ? table->get_or("open", false) : false;
+		Controls::Summary summary;
+		if (table) summary.text = summaryText("ImGUI_Header", table->get_or("summary", std::string()));
 		auto* ext = Extensions::currentExtension;
 		if (!ext) {
-			Controls::Header(label.c_str(), open);
+			Controls::Header(label.c_str(), open, false, summary);
 			return open;
 		}
 		ImGUI_EndHeader();
@@ -491,7 +508,7 @@ namespace LuaFunctions {
 		auto session = ext->sessionHeaders.find(label);
 		if (!known && session != ext->sessionHeaders.end()) open = session->second;
 		bool roomFor = known || (ext->openHeaders.size() < Extensions::MaxHeaders && label.size() <= Extensions::MaxHeaderLabel);
-		if (Controls::BeginHeader(label.c_str(), open, ext->dots.count(label) > 0).changed) {
+		if (Controls::BeginHeader(label.c_str(), open, ext->dots.count(label) > 0, summary).changed) {
 			if (roomFor) {
 				ext->openHeaders[label] = open;
 				Settings::SaveHeaders(ext->folderKey, ext->openHeaders);
