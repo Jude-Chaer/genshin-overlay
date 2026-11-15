@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <random>
 #include <set>
 #include <sstream>
@@ -59,6 +60,34 @@ TEST_CASE("appsample's points are on the surface when meta is missing or short")
     REQUIRE(points.size() == 2);
     CHECK((points[0].group == 197 && points[0].floor == 282));
     CHECK(points[1].group == 0);
+}
+
+TEST_CASE("appsample's level is read when it's there") {
+    std::ifstream file(fs::path(__FILE__).parent_path() / "data" / "items" / "appsample" / "markers.json", std::ios::binary);
+    std::ostringstream body;
+    body << file.rdbuf();
+    std::vector<Point> points;
+    REQUIRE(Appsample::decode(body.str(), points));
+    std::map<int64_t, int> levels;
+    for (const Point& point : points) levels[point.id] = point.level;
+    // read off markers.json: one point of each level it has
+    CHECK(levels[96362] == 5);
+    CHECK(levels[96365] == 6);
+    CHECK(levels[96573] == 4);
+    CHECK(levels[96455] == 3);
+    CHECK(levels[97624] == 0);
+
+    // without the column, or with one that's cut short, every level is 0
+    points.clear();
+    std::string without = R"({"code":0,"compressionVersion":1,"headers":["id","type","mid","lng","lat"],
+        "data":{"id":[1],"type":["o17"],"mid":[2],"lng":[0],"lat":[0]}})";
+    REQUIRE(Appsample::decode(without, points));
+    CHECK(points[0].level == 0);
+    points.clear();
+    std::string shortColumn = R"({"code":0,"compressionVersion":1,"headers":["id","type","mid","level","lng","lat"],
+        "data":{"id":[1,1],"type":["o17","o17"],"mid":[2,2],"level":[5],"lng":[0,0],"lat":[0,0]}})";
+    REQUIRE(Appsample::decode(shortColumn, points));
+    CHECK((points[0].level == 0 && points[1].level == 0));
 }
 
 TEST_CASE("appsample's file with a code isn't read") {

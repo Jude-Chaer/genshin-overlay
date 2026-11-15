@@ -257,6 +257,23 @@ TEST_CASE("a point whose values don't fit is skipped, the others stay") {
     CHECK(loaded->points(189).size() == 11);
 }
 
+TEST_CASE("a point keeps its pair's appsample level, a bad one costs only the level") {
+    auto loaded = loadFolder(folderWith(231, R"([
+        {"id":1,"map_id":2,"x_pos":1,"y_pos":2,"area_id":3,"point_group":null,"appsample":11,"appsample_level":5},
+        {"id":2,"map_id":2,"x_pos":1,"y_pos":2,"area_id":3,"point_group":null,"appsample":12},
+        {"id":3,"map_id":2,"x_pos":1,"y_pos":2,"area_id":3,"point_group":null,"appsample":13,"appsample_level":256},
+        {"id":4,"map_id":2,"x_pos":1,"y_pos":2,"area_id":3,"point_group":null,"appsample_level":5}
+    ])"));
+    REQUIRE(loaded);
+    CHECK(loaded->points(231).size() == 4);
+    CHECK(loaded->point(1)->appsampleLevel == 5);
+    CHECK(loaded->point(2)->appsampleLevel == 0);
+    CHECK(loaded->point(3)->appsampleLevel == 0);
+    CHECK(loaded->point(3)->appsample == 13);
+    // no pair, so no level
+    CHECK(loaded->point(4)->appsampleLevel == 0);
+}
+
 TEST_CASE("a positions file that isn't JSON costs only its type") {
     auto loaded = loadFolder(folderWith(231, "{ cut short"));
     REQUIRE(loaded);

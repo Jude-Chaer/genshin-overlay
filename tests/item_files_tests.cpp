@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -219,6 +220,31 @@ namespace {
         REQUIRE(ItemFiles::pack(folder, raw));
         return raw;
     }
+}
+
+TEST_CASE("the builder writes a pair's appsample level, and none for a point without a pair") {
+    fs::path folder = WORK / "level";
+    fs::remove_all(folder);
+    ItemFiles::Source source;
+    source.points[17] = {
+        json::parse(R"({"id":1,"map_id":2,"x_pos":1,"y_pos":2,"area_id":3,"point_group":null})"),
+        json::parse(R"({"id":2,"map_id":2,"x_pos":1,"y_pos":2,"area_id":3,"point_group":null})"),
+        json::parse(R"({"id":3,"map_id":2,"x_pos":1,"y_pos":2,"area_id":3,"point_group":null})"),
+    };
+    source.pairs = { { 1, 11 }, { 2, 12 } };
+    source.appsampleLevels = { { 11, 5 }, { 13, 6 } };
+    REQUIRE(ItemFiles::write(source, folder));
+    std::ifstream file(folder / "positions" / "17.json", std::ios::binary);
+    json points = json::parse(file);
+    REQUIRE(points.size() == 3);
+    CHECK(points[0]["appsample"] == 11);
+    CHECK(points[0]["appsample_level"] == 5);
+    CHECK(points[1]["appsample"] == 12);
+    CHECK_FALSE(points[1].contains("appsample_level"));
+    CHECK_FALSE(points[2].contains("appsample"));
+    CHECK_FALSE(points[2].contains("appsample_level"));
+    file.close();
+    fs::remove_all(folder);
 }
 
 TEST_CASE("the builder counts each map's points, types and pairs") {

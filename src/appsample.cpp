@@ -65,10 +65,11 @@ namespace Appsample {
         const json& headers = file["headers"];
         const json& data = file["data"];
         if (!headers.is_array()) return false;
-        // meta is extra, without it every point is on the surface
-        const int COLUMNS = 6, NEEDED = 5;
-        int column[COLUMNS] = { -1, -1, -1, -1, -1, -1 };
-        const char* names[COLUMNS] = { "id", "type", "mid", "lng", "lat", "meta" };
+        // meta and level are extra: without meta every point is on the surface,
+        // without level every point's is 0
+        const int COLUMNS = 7, NEEDED = 5;
+        int column[COLUMNS] = { -1, -1, -1, -1, -1, -1, -1 };
+        const char* names[COLUMNS] = { "id", "type", "mid", "lng", "lat", "meta", "level" };
         for (int i = 0; i < (int)headers.size(); i++) {
             for (int c = 0; c < COLUMNS; c++) {
                 if (headers[i] == names[c]) column[c] = i;
@@ -78,6 +79,7 @@ namespace Appsample {
             if (column[c] < 0) return false;
         }
         bool hasMeta = column[5] >= 0;
+        bool hasLevel = column[6] >= 0;
 
         // either one array per column with the ids as steps, or one array per point
         bool byColumn = file.contains("compressionVersion") && file["compressionVersion"] == 1;
@@ -93,6 +95,8 @@ namespace Appsample {
             }
             const char* meta = names[5];
             if (hasMeta && (!data.contains(meta) || !data[meta].is_array() || data[meta].size() != count)) hasMeta = false;
+            const char* level = names[6];
+            if (hasLevel && (!data.contains(level) || !data[level].is_array() || data[level].size() != count)) hasLevel = false;
         }
         else {
             if (!data.is_array()) return false;
@@ -119,6 +123,10 @@ namespace Appsample {
             point.lat = value(4).get<double>();
             // a row too short for meta is on the surface
             if (hasMeta && (byColumn || data[i].size() > (size_t)column[5])) floorOf(value(5), point);
+            if (hasLevel && (byColumn || data[i].size() > (size_t)column[6])) {
+                const json& level = value(6);
+                if (level.is_number_integer() && level.get<int64_t>() > 0 && level.get<int64_t>() <= 255) point.level = level.get<int>();
+            }
             out.push_back(point);
         }
         return !out.empty();

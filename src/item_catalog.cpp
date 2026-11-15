@@ -61,6 +61,7 @@ namespace ItemCatalog {
 		}
 		// the pair is extra, a bad one costs the pair and not the point
 		if (from.contains("appsample") && !integer(from, "appsample", point.appsample, 1)) point.appsample = 0;
+		if (point.appsample && from.contains("appsample_level") && !integer(from, "appsample_level", point.appsampleLevel)) point.appsampleLevel = 0;
 		return nullptr;
 	}
 
