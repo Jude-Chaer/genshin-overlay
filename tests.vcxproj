@@ -59,7 +59,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;crypt32.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;crypt32.lib;advapi32.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildProjectDirectory)\tools\official_extensions.ps1" "$(MSBuildProjectDirectory)\extensions" "$(IntDir)official_extensions.inc"</Command>
@@ -142,6 +142,7 @@
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\asks.cpp" />
     <ClCompile Include="src\controls.cpp" />
+    <ClCompile Include="src\credentials.cpp" />
     <ClCompile Include="src\notices.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
@@ -187,6 +188,7 @@
     <ClCompile Include="src\web_images.cpp" />
     <ClCompile Include="tests\asks_tests.cpp" />
     <ClCompile Include="tests\controls_tests.cpp" />
+    <ClCompile Include="tests\credentials_tests.cpp" />
     <ClCompile Include="tests\notices_tests.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
@@ -227,6 +229,7 @@
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\asks.hpp" />
     <ClInclude Include="src\controls.hpp" />
+    <ClInclude Include="src\credentials.hpp" />
     <ClInclude Include="src\notices.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\game_ui.hpp" />
