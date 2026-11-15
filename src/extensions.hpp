@@ -34,7 +34,9 @@ namespace Extensions {
 		Notices,
 		Dots,
 		TakeClicks,
-		MapInfo
+		MapInfo,
+		HoyolabMapAccount,
+		AppsampleAccount
 	};
 
 	// Saved in settings.json and named in Lua by name, shown to the player by
@@ -45,6 +47,9 @@ namespace Extensions {
 		const char* name;
 		const char* label;
 		const char* reason;
+		// Only the player turns it on, with a red Allow on the Permissions tab;
+		// it's never asked for.
+		bool playerOnly = false;
 	};
 
 	inline const std::vector<PermissionInfo> permissionList = {
@@ -59,6 +64,8 @@ namespace Extensions {
 		{ExtensionPermissionTypes::Notices, "notices", "Notices", "It can show you short messages."},
 		{ExtensionPermissionTypes::Dots, "dots", "Attention dots", "It can mark what needs your attention."},
 		{ExtensionPermissionTypes::TakeClicks, "take_clicks", "Take clicks", "Clicks on parts of what it draws go to it instead of the game, while the map or the menu is open."},
+		{ExtensionPermissionTypes::HoyolabMapAccount, "hoyolab_map_account", "HoYoLAB Map account", "It can use your HoYoLAB Map account to mark and unmark anything on your map.", true},
+		{ExtensionPermissionTypes::AppsampleAccount, "appsample_account", "appsample account", "It can use your appsample account to mark and unmark anything on your map.", true},
 	};
 
 	// saved names of permissions that no longer exist, dropped when grants are loaded
@@ -74,7 +81,7 @@ namespace Extensions {
 		ExtensionPermissionTypes::Dots
 	};
 
-	inline const int PermissionCount = (int)ExtensionPermissionTypes::MapInfo + 1;
+	inline const int PermissionCount = (int)ExtensionPermissionTypes::AppsampleAccount + 1;
 
 	// nullptr for None and for a name this overlay doesn't know
 	const PermissionInfo* findPermission(ExtensionPermissionTypes type);
@@ -404,7 +411,7 @@ namespace Extensions {
 	// start), or "not_asked".
 	extern std::string permissionState(const Extension& ext, ExtensionPermissionTypes permission);
 	// Whether asking for it would show a question: not allowed, off, never or
-	// refused already.
+	// refused already, and not one only the player turns on.
 	extern bool mayAsk(const Extension& ext, ExtensionPermissionTypes permission);
 	// the player's answers, saved
 	extern void allow(Extension& ext, ExtensionPermissionTypes permission);
@@ -415,6 +422,8 @@ namespace Extensions {
 	extern void letAsk(Extension& ext, const std::string& name);
 	// the Permissions tab on its page
 	extern void drawPermissionsTab(Extension& ext);
+	// opens the menu on its page's Permissions tab
+	extern void openPermissionsTab(const Extension& ext);
 	// its About tab: metadata.about, version, author, folder
 	extern void drawAboutTab(const Extension& ext);
 	// Switched off on its Permissions tab: Shutdown runs, everything it

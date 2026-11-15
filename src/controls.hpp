@@ -214,6 +214,9 @@ namespace Controls {
     // name, 0 when there are none. dotted: the tabs with an attention dot, by
     // index; each tab keeps room for one.
     int Tabs(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted = {});
+    // the tab row id opens on the tab with this name the next time it's
+    // drawn, if it has one
+    void OpenTab(const char* id, const std::string& name);
     // The same choice as a segmented button, for views inside a page (an
     // extension's ImGUI_Tabs), so they're told apart from the page's own tabs:
     // one framed row, the open piece filled (Material You: its tonal colour,

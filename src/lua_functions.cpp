@@ -170,6 +170,7 @@ namespace LuaFunctions {
 		global("GetOSTimeMS", None, GetOSTimeMS);
 		global("PermissionState", None, PermissionState);
 		global("AskForPermission", None, AskForPermission);
+		global("OpenPermissions", None, OpenPermissions);
 
 		// they ask for Keybinds themselves, a key waits until it's allowed
 		global("RegisterKeybind", None, RegisterKeybind);
@@ -2121,8 +2122,15 @@ namespace LuaFunctions {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		const Extensions::PermissionInfo* info = permissionNamed("AskForPermission", name);
 		if (!ext) return;
-		if (info) Asks::askPermission(*ext, info->type);
+		if (info && info->playerOnly) Extensions::logOnce("AskForPermission", name + " is only turned on by the player, on its Permissions tab; OpenPermissions() opens it");
+		else if (info) Asks::askPermission(*ext, info->type);
 		else Asks::askSetting(*ext, name);
+	}
+
+	void OpenPermissions() {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext || !Extensions::inPhase("OpenPermissions", Extensions::Phase::Menu)) return;
+		Extensions::openPermissionsTab(*ext);
 	}
 
 	std::optional<std::pair<int, int>> mouseFor(POINT cursor, const std::optional<RECT>& game, POINT overlay, bool anywhere) {

@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <unordered_map>
 #include <climits>
 #include <cctype>
 #include <cmath>
@@ -1528,10 +1529,22 @@ namespace Controls {
         return open;
     }
 
+    static std::unordered_map<std::string, std::string> tabsToOpen;
+
+    void OpenTab(const char* id, const std::string& name) {
+        tabsToOpen[id] = name;
+    }
+
     int Tabs(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted) {
         if (names.empty()) return 0;
         ImGui::PushID(id);
         int open = openTab(names);
+        auto asked = tabsToOpen.find(id);
+        if (asked != tabsToOpen.end()) {
+            auto named = std::find(names.begin(), names.end(), asked->second);
+            if (named != names.end()) open = (int)(named - names.begin());
+            tabsToOpen.erase(asked);
+        }
         if (isMaterial()) {
             open = materialTabs(names, dotted, open);
             keepTab(names, open);

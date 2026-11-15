@@ -696,6 +696,16 @@ namespace Extensions {
 	}
 
 	// one section per extension: icon, info, settings, then its own Menu()
+	static const char* ExtensionTabs = "##extensionTabs";
+
+	void openPermissionsTab(const Extension& ext) {
+		for (size_t i = 0; i < registeredExtensions.size(); i++) {
+			if (registeredExtensions[i].get() != &ext) continue;
+			Overlay::ShowExtension((int)i);
+			Controls::OpenTab(ExtensionTabs, "Permissions");
+		}
+	}
+
 	void drawExtensionMenus(int extensionIndex) {
 		if (extensionIndex < 0 ||
 			extensionIndex >= static_cast<int>(registeredExtensions.size())) {
@@ -738,7 +748,7 @@ namespace Extensions {
 		if (!ext->keys.empty()) tabs.push_back("Keys");
 		tabs.push_back("Permissions");
 		tabs.push_back("About");
-		const std::string& tab = tabs[Controls::Tabs("##extensionTabs", tabs)];
+		const std::string& tab = tabs[Controls::Tabs(ExtensionTabs, tabs)];
 		{
 			if (tab == "General") {
 				if (!ext->stopReason.empty() || !ext->startError.empty()) {
@@ -1429,7 +1439,8 @@ namespace Extensions {
 			}
 			if (permission.type == ExtensionPermissionTypes::Keybinds && !ext.allowedKeys.empty())
 				row.lines.push_back({ "Keys: " + Helpers::joined(ext.allowedKeys), false });
-			row.lines.push_back({ reasonLine(ext, permission) });
+			row.lines.push_back({ reasonLine(ext, permission), !permission.playerOnly, permission.playerOnly });
+			if (permission.playerOnly) row.allowLabel = "Allow";
 			if (!has && ext.refused.count(permission.type)) row.lines.push_back({ "Refused at this start." });
 			std::string used = lastUsedLine(ext, permission.type, (long long)std::time(nullptr));
 			if (!used.empty()) row.lines.push_back({ used });
@@ -1493,7 +1504,9 @@ namespace Extensions {
 		}
 		if (grants.hash != ext->extensionHash) {
 			for (const std::string& name : grants.names) {
-				if (!isRetired(name)) ext->grantsBeforeChange.push_back(name);
+				// a player-only permission isn't given back with the others
+				const PermissionInfo* info = findPermission(name);
+				if (!isRetired(name) && !(info && info->playerOnly)) ext->grantsBeforeChange.push_back(name);
 			}
 			ext->hashBeforeChange = grants.hash;
 			std::cout << "[" << ext->folderKey << "] changed since its permissions were set, it runs with the defaults it had" << std::endl;
@@ -1547,7 +1560,8 @@ namespace Extensions {
 	}
 
 	bool mayAsk(const Extension& ext, ExtensionPermissionTypes permission) {
-		return findPermission(permission) && permissionState(ext, permission) == "not_asked";
+		const PermissionInfo* info = findPermission(permission);
+		return info && !info->playerOnly && permissionState(ext, permission) == "not_asked";
 	}
 
 	void allow(Extension& ext, ExtensionPermissionTypes permission) {
