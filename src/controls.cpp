@@ -1918,7 +1918,7 @@ namespace Controls {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(font * 1.1f, font * 0.8f));
         ImGui::BeginChild(ImHashStr("##part", 0, id), ImVec2(0, 0),
             ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-            ImGuiWindowFlags_NoScrollbar);
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleVar();
         openParts.push_back(ImGui::GetCurrentWindow());
         // the card behind the part, at its size of the last frame
