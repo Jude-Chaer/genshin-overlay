@@ -261,6 +261,15 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
   <ItemGroup>
     <None Include="extensions\example\main.lua" />
     <None Include="extensions\map\main.lua" />
+    <None Include="extensions\markers\bar.lua" />
+    <None Include="extensions\markers\catalog.lua" />
+    <None Include="extensions\markers\collected.lua" />
+    <None Include="extensions\markers\guide.lua" />
+    <None Include="extensions\markers\main.lua" />
+    <None Include="extensions\markers\map.lua" />
+    <None Include="extensions\markers\menu.lua" />
+    <None Include="extensions\markers\minimap.lua" />
+    <None Include="extensions\markers\selection.lua" />
     <None Include="extensions\minimap\main.lua" />
     <None Include="tools\publish_map_index.bat" />
     <None Include="vcpkg.json" />

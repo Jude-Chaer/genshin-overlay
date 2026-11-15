@@ -1126,12 +1126,13 @@ namespace Overlay {
         }
     }
 
-    // the official Map and Minimap get the overlay's own icons, any other
+    // the official Map, Minimap and Markers get the overlay's own icons, any other
     // extension its icon.png or its first letter
     static Controls::PageIcon OfficialIcon(const Extensions::Extension& ext) {
         if (!ext.official) return Controls::PageIcon::None;
         if (ext.folderKey == "map") return Controls::PageIcon::Map;
         if (ext.folderKey == "minimap") return Controls::PageIcon::Minimap;
+        if (ext.folderKey == "markers") return Controls::PageIcon::Markers;
         return Controls::PageIcon::None;
     }
 
