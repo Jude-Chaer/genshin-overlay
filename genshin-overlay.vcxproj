@@ -150,6 +150,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClCompile Include="src\accounts_window.cpp" />
     <ClCompile Include="src\marks.cpp" />
     <ClCompile Include="src\menu_summary.cpp" />
+    <ClCompile Include="src\page_order.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\asks.cpp" />
     <ClCompile Include="src\controls.cpp" />
@@ -204,6 +205,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClInclude Include="src\accounts.hpp" />
     <ClInclude Include="src\marks.hpp" />
     <ClInclude Include="src\menu_summary.hpp" />
+    <ClInclude Include="src\page_order.hpp" />
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\asks.hpp" />
     <ClInclude Include="src\controls.hpp" />

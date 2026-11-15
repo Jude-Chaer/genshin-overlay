@@ -217,6 +217,20 @@ namespace Settings {
         write(settings);
     }
 
+    nlohmann::json LoadPageList() {
+        nlohmann::json settings = read();
+        auto it = settings.find("pageList");
+        if (it == settings.end() || !it->is_array()) return nlohmann::json::array();
+        return *it;
+    }
+
+    void SavePageList(const nlohmann::json& list) {
+        nlohmann::json settings = read();
+        if (list.empty()) settings.erase("pageList");
+        else settings["pageList"] = list;
+        write(settings);
+    }
+
     std::set<std::string> LoadClosedTips(const std::string& folder) {
         std::set<std::string> closed;
         nlohmann::json settings = read();
