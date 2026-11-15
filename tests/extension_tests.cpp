@@ -1657,6 +1657,29 @@ TEST_CASE("a renamed tab keeps its row's open tab") {
     TestExtension::unloadAll();
 }
 
+TEST_CASE("a text box tells Enter and Esc as its second value on the frame typing ends") {
+    Extensions::Extension* ext = TestExtension::load("named", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    const std::string code = "text, key = ImGUI_InputText('Name', text or '') if key then ended = key end";
+    for (ImGuiKey end : { ImGuiKey_Enter, ImGuiKey_Escape }) {
+        TestExtension::run(ext, "ended = nil");
+        frames.clickLast(code);
+        REQUIRE(ImGui::GetActiveID() != 0);
+        ImGui::GetIO().AddInputCharactersUTF8("Ore run");
+        frames.draw(code);
+        CHECK(TestExtension::run(ext, "assert(ended == nil)"));
+        ImGui::GetIO().AddKeyEvent(end, true);
+        frames.draw(code);
+        ImGui::GetIO().AddKeyEvent(end, false);
+        frames.draw(code);
+        CHECK(ImGui::GetActiveID() == 0);
+        CHECK(TestExtension::run(ext, end == ImGuiKey_Enter ? "assert(ended == 'enter')" : "assert(ended == 'escape')"));
+        CHECK(TestExtension::run(ext, "assert(text:find('Ore run'))"));
+    }
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("what's drawn after a side list sits beside it, up to ImGUI_EndSideList or the end of the code") {
     Extensions::Extension* ext = TestExtension::load("sided", "function Init() end");
     REQUIRE(ext != nullptr);

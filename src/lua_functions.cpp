@@ -814,7 +814,8 @@ namespace LuaFunctions {
 	// text greyed), backToGame = false (keeps the focus after Enter or Esc, for the next box),
 	// look = "search" (a search bar over the whole row, the label not shown), with search:
 	// tabs = { "Everywhere", "Here" } and tab = the open one's name, a segmented row at
-	// the bar's end, and then the open tab's name comes back second }
+	// the bar's end, and then the open tab's name comes back second }. Without tabs,
+	// "enter" or "escape" comes back second on the frame the typing ends with that key.
 	sol::variadic_results ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table,
 		sol::this_state state)
 	{
@@ -847,10 +848,15 @@ namespace LuaFunctions {
 				}
 			}
 		}
+		bool sent = false, escaped = false;
+		options.sent = &sent;
+		options.escaped = &escaped;
 		options.dotted = dotted(label);
 		used(label, Controls::Text(label.c_str(), value, options));
 		out.push_back(sol::make_object(state, value));
 		if (options.tab) out.push_back(sol::make_object(state, options.tabs[tab]));
+		else if (sent) out.push_back(sol::make_object(state, "enter"));
+		else if (escaped) out.push_back(sol::make_object(state, "escape"));
 		return out;
 	}
 
