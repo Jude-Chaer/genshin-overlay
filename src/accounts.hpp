@@ -29,7 +29,7 @@ namespace Accounts {
 
     // reads both logins from the store; one that doesn't read is deleted
     void Init();
-    // forgets the secrets in memory
+    // closes the window and forgets the secrets in memory
     void Shutdown();
     Status Get(Site site);
     // counts up at every change of either site
@@ -38,7 +38,21 @@ namespace Accounts {
     // extension after a login as another account.
     void Frame();
 
+    // Opens the login window for the site, or brings it to the front. It
+    // closes on its own once logged in.
+    void LogIn(Site site);
     void LogOut(Site site);
+    // HoYoLAB's map in the window, already logged in, for its captcha
+    void OpenHoyolabMap();
+    // closes the window, with wait until its thread has ended
+    void CloseWindow(bool wait = true);
+    // puts the window back over the overlay after the overlay raised itself
+    void RaiseWindow();
+    // the window's browser folder, left behind when the overlay was killed
+    void DeleteWindowFolder();
+    // the pages and frames the site's window may open: https to the site and
+    // the sites it logs in with, and about:blank
+    bool AllowedUrl(Site site, const std::wstring& url);
 
     // What Firebase keeps in the page's IndexedDB under firebase:authUser:,
     // as JSON. Nothing when it has no uid or refresh token.

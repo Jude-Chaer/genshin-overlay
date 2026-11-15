@@ -108,6 +108,7 @@ namespace Accounts {
     }
 
     void Init() {
+        DeleteWindowFolder();
         for (Site site : Sites) {
             std::optional<Credentials::Saved> saved = Credentials::Read(SiteName(site));
             if (!saved) continue;
@@ -130,6 +131,7 @@ namespace Accounts {
     }
 
     void Shutdown() {
+        CloseWindow();
         std::lock_guard<std::mutex> lock(mutex);
         for (Site site : Sites) forget(of(site));
     }

@@ -90,6 +90,37 @@ TEST_CASE("a refused refresh token is told apart from a network or server proble
     }
 }
 
+TEST_CASE("the login window opens only its site and the sites it logs in with") {
+    CHECK(Accounts::AllowedUrl(Site::HoyolabMap, L"https://account.hoyolab.com/login"));
+    CHECK(Accounts::AllowedUrl(Site::HoyolabMap, L"https://WWW.HoYoLAB.com"));
+    CHECK(Accounts::AllowedUrl(Site::HoyolabMap, L"https://accounts.google.com/o/oauth2?x=1"));
+    CHECK(Accounts::AllowedUrl(Site::HoyolabMap, L"about:blank"));
+    CHECK(Accounts::AllowedUrl(Site::Appsample, L"https://genshin-impact-map.appsample.com/"));
+    CHECK(Accounts::AllowedUrl(Site::Appsample, L"https://genshin-impact.firebaseapp.com/__/auth/handler"));
+    CHECK(Accounts::AllowedUrl(Site::Appsample, L"https://accounts.google.com/signin"));
+    CHECK(Accounts::AllowedUrl(Site::Appsample, L"https://accounts.google.com.sa/accounts/SetSID"));
+    CHECK(Accounts::AllowedUrl(Site::HoyolabMap, L"https://accounts.google.co.uk/accounts/SetSID"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://www.google.de/"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"https://docs.google.com/forms/d/x"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://sites.google.com/view/x"));
+    CHECK(Accounts::AllowedUrl(Site::Appsample, L"https://accounts.youtube.com/accounts/SetSID"));
+
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"http://www.hoyolab.com"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"https://hoyolab.com.example.com"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"https://myhoyolab.com"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://notgoogle.de/"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://google.example.com/"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://google.de.example.com/"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://www.youtube.com/"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"https://hoyolab.com@example.com"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"https://example.com\\.hoyolab.com"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"javascript:alert(1)"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::HoyolabMap, L"file:///C:/"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://www.hoyolab.com"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://other.firebaseapp.com"));
+    CHECK_FALSE(Accounts::AllowedUrl(Site::Appsample, L"https://facebook.com"));
+}
+
 TEST_CASE("a HoYoLAB Map login goes through each state") {
     Clean clean;
     int changes = Accounts::Changes();

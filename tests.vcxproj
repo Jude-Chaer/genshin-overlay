@@ -59,7 +59,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;crypt32.lib;advapi32.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;crypt32.lib;advapi32.lib;psapi.lib;user32.lib;shell32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildProjectDirectory)\tools\official_extensions.ps1" "$(MSBuildProjectDirectory)\extensions" "$(IntDir)official_extensions.inc"</Command>
@@ -140,6 +140,7 @@
   <ItemGroup>
     <ClCompile Include="src\appsample.cpp" />
     <ClCompile Include="src\accounts.cpp" />
+    <ClCompile Include="src\accounts_window.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\asks.cpp" />
     <ClCompile Include="src\controls.cpp" />

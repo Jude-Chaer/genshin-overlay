@@ -304,6 +304,7 @@ namespace Overlay {
         lastRaise = now;
 
         SetWindowPos(glfwGetWin32Window(Overlay::Window), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        Accounts::RaiseWindow();
     }
 
     void MouseClaims::claim(float left, float top, float right, float bottom, const std::string& owner) {
