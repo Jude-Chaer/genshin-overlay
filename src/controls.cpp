@@ -1367,6 +1367,22 @@ namespace Controls {
         return pressed;
     }
 
+    float DotRoom();
+    static void keepTab(const std::vector<std::string>& names, int open);
+    static int segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted, bool pill);
+
+    // the width Segments gives these names on one row
+    static float segmentsWidth(const std::vector<std::string>& names) {
+        bool material = GetTheme().look == Look::Material;
+        LabelType type;
+        float font = ImGui::GetFontSize();
+        float pad = material ? 12 * dp() : font * 0.9f;
+        float tick = material ? 26 * dp() : 0;
+        float width = 0;
+        for (const std::string& name : names) width += ImGui::CalcTextSize(name.c_str()).x + pad * 2 + tick + DotRoom();
+        return width;
+    }
+
     static bool searchBar(const char* label, std::string& value, const TextOptions& options) {
         ImGui::PushID(label);
         Theme theme = GetTheme();
@@ -1376,7 +1392,11 @@ namespace Controls {
         float iconRoom = height * 0.95f;
         float clearSide = height;
         ImVec2 boxMin = ImGui::GetCursorScreenPos();
-        float width = std::max(font * 8, ImGui::GetContentRegionAvail().x);
+        float avail = ImGui::GetContentRegionAvail().x;
+        float gap = ImGui::GetStyle().ItemSpacing.x * 2;
+        float tabsWidth = options.tabs.empty() ? 0 : std::ceil(segmentsWidth(options.tabs)) + 1;
+        bool tabsBeside = tabsWidth > 0 && avail - tabsWidth - gap >= font * 12;
+        float width = std::max(font * 8, tabsBeside ? avail - tabsWidth - gap : avail);
         ImVec2 boxMax(boxMin.x + width, boxMin.y + height);
         ImDrawList* draw = ImGui::GetWindowDrawList();
         draw->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_FrameBg), rounding);
@@ -1423,6 +1443,21 @@ namespace Controls {
         if (options.dotted) CornerDot(boxMin, boxMax, rounding);
         ImGui::SetCursorScreenPos(boxMin);
         ImGui::Dummy(ImVec2(width, height));
+        if (!options.tabs.empty() && options.tab) {
+            // the row follows the caller's choice, its pieces as tall as the bar
+            int shown = std::clamp(*options.tab, 0, (int)options.tabs.size() - 1);
+            ImGui::PushID("##tabs");
+            keepTab(options.tabs, shown);
+            ImGui::PopID();
+            if (tabsBeside) {
+                ImGui::SameLine(0, gap);
+                ImGui::SetCursorScreenPos(ImVec2(boxMax.x + gap, boxMin.y));
+            }
+            float lineHeight = ImGui::GetFontSize();
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, std::max(0.0f, (height - lineHeight) / 2)));
+            *options.tab = segments("##tabs", options.tabs, {}, true);
+            ImGui::PopStyleVar();
+        }
         ImGui::PopID();
         return changed;
     }
@@ -1857,11 +1892,15 @@ namespace Controls {
     // Apple's segmented control: each row of pieces on a grey track, the
     // open piece raised on it, a thin line between the others
     static void appleSegments(ImDrawList* draw, const std::vector<std::string>& names, const std::vector<bool>& dotted,
-        const std::vector<ImRect>& boxes, const std::vector<bool>& hovers, int open, float pad, float height) {
+        const std::vector<ImRect>& boxes, const std::vector<bool>& hovers, int open, float pad, float height, bool pill) {
         Theme theme = GetTheme();
         float font = ImGui::GetFontSize();
         float inset = std::max(1.0f, std::floor(font * 2 / 14));
         float outer = font * 8 / 14, inner = font * 6 / 14;
+        if (pill) {
+            outer = height / 2;
+            inner = std::max(0.0f, height / 2 - inset);
+        }
         // the tracks, one per row
         for (int i = 0; i < (int)boxes.size();) {
             int end = i;
@@ -1895,7 +1934,8 @@ namespace Controls {
         }
     }
 
-    int Segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted) {
+    // pill: ends as round as a pill, to match the search bar it sits beside
+    static int segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted, bool pill) {
         if (names.empty()) return 0;
         ImGui::PushID(id);
         int open = openTab(names);
@@ -1908,7 +1948,7 @@ namespace Controls {
         float font = ImGui::GetFontSize();
         float pad = material ? 12 * dp() : font * 0.9f;
         float tick = material ? 26 * dp() : 0;
-        float rounding = material ? height / 2 : ImGui::GetStyle().FrameRounding;
+        float rounding = material || pill ? height / 2 : ImGui::GetStyle().FrameRounding;
         float rowStart = ImGui::GetCursorScreenPos().x;
         float rowEnd = rowStart + ImGui::GetContentRegionAvail().x;
         ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -1932,7 +1972,7 @@ namespace Controls {
             hovers.push_back(ImGui::IsItemHovered());
         }
         if (theme.look == Look::Apple) {
-            appleSegments(draw, names, dotted, boxes, hovers, open, pad, height);
+            appleSegments(draw, names, dotted, boxes, hovers, open, pad, height, pill);
             ImGui::ItemSize(ImVec2(0, theme.gap * 0.25f));
             keepTab(names, open);
             ImGui::PopID();
@@ -1975,6 +2015,10 @@ namespace Controls {
         keepTab(names, open);
         ImGui::PopID();
         return open;
+    }
+
+    int Segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted) {
+        return segments(id, names, dotted, false);
     }
 
     // the label up to "##"

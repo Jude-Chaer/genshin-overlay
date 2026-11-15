@@ -68,7 +68,8 @@ namespace LuaFunctions {
     sol::object ImGUI_Tabs(sol::table names, sol::this_state state);
     bool ImGUI_Header(const std::string& label, sol::optional<sol::table> options);
     void ImGUI_EndHeader();
-    std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options);
+    sol::variadic_results ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options,
+        sol::this_state state);
     void ImGUI_SameLine();
     void ImGUI_Tooltip(const std::string& text);
     // Notice(text, { kind = "error" | "tip" | "done", id }): a short message

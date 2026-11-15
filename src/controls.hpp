@@ -182,6 +182,11 @@ namespace Controls {
         bool* sent = nullptr;
         // set when Esc ends the typing
         bool* escaped = nullptr;
+        // with search: a segmented row at the bar's end, the same height
+        // (under it when the page is too narrow for both); tab is the open
+        // piece's index, set when another is picked
+        std::vector<std::string> tabs;
+        int* tab = nullptr;
     };
 
     // A text box, the label, Reset. True when value changed. With confirm,

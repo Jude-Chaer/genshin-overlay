@@ -628,12 +628,20 @@ namespace LuaFunctions {
 	// ImGUI_InputText(label, text, options), options is optional: { hint, default (shows
 	// Reset), clear = true (an x), confirm = true (counts once sent), taken = true (sent
 	// text greyed), backToGame = false (keeps the focus after Enter or Esc, for the next box),
-	// look = "search" (a search bar over the whole row, the label not shown) }
-	std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table)
+	// look = "search" (a search bar over the whole row, the label not shown), with search:
+	// tabs = { "Everywhere", "Here" } and tab = the open one's name, a segmented row at
+	// the bar's end, and then the open tab's name comes back second }
+	sol::variadic_results ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table,
+		sol::this_state state)
 	{
 		std::string value = currentText;
-		if (!inMenu("ImGUI_InputText")) return value;
+		sol::variadic_results out;
+		if (!inMenu("ImGUI_InputText")) {
+			out.push_back(sol::make_object(state, value));
+			return out;
+		}
 		Controls::TextOptions options;
+		int tab = 0;
 		if (table) {
 			options.backToGame = table->get_or("backToGame", true);
 			options.hint = table->get_or<std::string>("hint", "");
@@ -642,10 +650,24 @@ namespace LuaFunctions {
 			options.confirm = table->get_or("confirm", false);
 			options.taken = table->get_or("taken", false);
 			options.search = table->get_or<std::string>("look", "") == "search";
+			if (options.search) {
+				if (auto tabs = table->get<sol::optional<sol::table>>("tabs")) {
+					std::string open = table->get_or<std::string>("tab", "");
+					for (size_t i = 1; i <= Extensions::MaxTabs; i++) {
+						sol::optional<std::string> name = (*tabs)[i];
+						if (!name) break;
+						if (*name == open) tab = (int)options.tabs.size();
+						options.tabs.push_back(*name);
+					}
+					if (!options.tabs.empty()) options.tab = &tab;
+				}
+			}
 		}
 		options.dotted = dotted(label);
 		used(label, Controls::Text(label.c_str(), value, options));
-		return value;
+		out.push_back(sol::make_object(state, value));
+		if (options.tab) out.push_back(sol::make_object(state, options.tabs[tab]));
+		return out;
 	}
 
 	void ImGUI_SameLine()
