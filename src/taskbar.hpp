@@ -1,8 +1,9 @@
 #pragma once
 
-// The app's taskbar button and the rule that only one copy runs. The button
-// belongs to a window of its own that stays minimized; pressing it, picking it
-// in Alt+Tab or starting the exe again reaches the running copy as a request.
+// The app's taskbar button, its tray icon and the rule that only one copy
+// runs. Both belong to a window of its own that stays minimized; pressing
+// either, picking it in Alt+Tab or starting the exe again reaches the running
+// copy as a request.
 namespace Taskbar {
     enum class Ask { None, ToggleMenu, OpenMenu, RestartAsAdmin, Quit };
 
@@ -14,7 +15,7 @@ namespace Taskbar {
     // Starts this exe again as admin, waiting for this copy to end. False when
     // the prompt was declined.
     extern bool RestartAsAdmin();
-    // the taskbar button, and its right-click list's tasks
+    // the taskbar button with its right-click list's tasks, and the tray icon
     extern void Start();
     extern void Stop();
 

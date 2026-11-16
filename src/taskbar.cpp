@@ -1,6 +1,8 @@
 #include "taskbar.hpp"
 #include "helpers.hpp"
 #include <windows.h>
+#include <windowsx.h>
+#include <shellapi.h>
 #include <shobjidl.h>
 #include <atomic>
 #include <string>
@@ -10,12 +12,17 @@ namespace Taskbar {
     static const wchar_t* MUTEX_NAME = L"Local\\PocketEsoptron";
     static const UINT OPEN_MENU = WM_APP + 1;
     static const UINT RESTART_AS_ADMIN = WM_APP + 2;
+    static const UINT TRAY = WM_APP + 3;
+    enum TrayItem : UINT { TRAY_OPEN_MENU = 1, TRAY_RESTART_AS_ADMIN, TRAY_QUIT };
     // PKEY_Title, a jump list task's name
     static const PROPERTYKEY TITLE = { { 0xF29F85E0, 0x4FF9, 0x1068, { 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3, 0xD9 } }, 2 };
 
     static HANDLE mutex = nullptr;
     static HWND window = nullptr;
     static std::atomic<Ask> asked{ Ask::None };
+    static NOTIFYICONDATAW trayIcon = {};
+    // sent to every window when Explorer starts again, the tray icon has to be added again
+    static UINT taskbarCreated = 0;
 
     void WaitForCopy(unsigned long processId) {
         HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, processId);
@@ -43,6 +50,29 @@ namespace Taskbar {
         return Helpers::relaunchAsAdmin(L"--after " + std::to_wstring(GetCurrentProcessId()));
     }
 
+    static void addTrayIcon() {
+        Shell_NotifyIconW(NIM_ADD, &trayIcon);
+        Shell_NotifyIconW(NIM_SETVERSION, &trayIcon);
+    }
+
+    // the tray icon's right-click list, at x, y on the screen
+    static void showTrayList(int x, int y) {
+        HMENU list = CreatePopupMenu();
+        if (!list) return;
+        AppendMenuW(list, MF_STRING, TRAY_OPEN_MENU, L"Open menu");
+        if (!Helpers::isElevated()) AppendMenuW(list, MF_STRING, TRAY_RESTART_AS_ADMIN, L"Restart as admin");
+        AppendMenuW(list, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(list, MF_STRING, TRAY_QUIT, L"Quit");
+        // the list closes on a click elsewhere only while its window is in front
+        SetForegroundWindow(window);
+        UINT picked = TrackPopupMenuEx(list, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_BOTTOMALIGN, x, y, window, nullptr);
+        PostMessageW(window, WM_NULL, 0, 0);
+        DestroyMenu(list);
+        if (picked == TRAY_OPEN_MENU) asked = Ask::OpenMenu;
+        else if (picked == TRAY_RESTART_AS_ADMIN) asked = Ask::RestartAsAdmin;
+        else if (picked == TRAY_QUIT) asked = Ask::Quit;
+    }
+
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         switch (message) {
         case WM_SYSCOMMAND:
@@ -65,6 +95,21 @@ namespace Taskbar {
             return 0;
         case RESTART_AS_ADMIN:
             asked = Ask::RestartAsAdmin;
+            return 0;
+        case TRAY:
+            switch (LOWORD(lParam)) {
+            case NIN_SELECT:
+            case NIN_KEYSELECT:
+                asked = Ask::ToggleMenu;
+                break;
+            case WM_CONTEXTMENU:
+                showTrayList(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam));
+                break;
+            }
+            return 0;
+        }
+        if (message == taskbarCreated && taskbarCreated) {
+            addTrayIcon();
             return 0;
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -147,9 +192,23 @@ namespace Taskbar {
         ChangeWindowMessageFilterEx(window, RESTART_AS_ADMIN, MSGFLT_ALLOW, nullptr);
         ShowWindow(window, SW_SHOWMINNOACTIVE);
         setTasks();
+
+        taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+        if (taskbarCreated) ChangeWindowMessageFilterEx(window, taskbarCreated, MSGFLT_ALLOW, nullptr);
+        trayIcon.cbSize = sizeof(trayIcon);
+        trayIcon.hWnd = window;
+        trayIcon.uID = 1;
+        trayIcon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
+        trayIcon.uCallbackMessage = TRAY;
+        trayIcon.hIcon = windowClass.hIconSm;
+        wcscpy_s(trayIcon.szTip, L"Pocket Esoptron");
+        trayIcon.uVersion = NOTIFYICON_VERSION_4;
+        addTrayIcon();
     }
 
     void Stop() {
+        if (trayIcon.hWnd) Shell_NotifyIconW(NIM_DELETE, &trayIcon);
+        trayIcon.hWnd = nullptr;
         if (window) DestroyWindow(window);
         window = nullptr;
         if (mutex) CloseHandle(mutex);
