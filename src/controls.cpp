@@ -2373,6 +2373,16 @@ namespace Controls {
             line(10, 3, 22, 3);
             line(22, 3, 22, 13.5f);
             break;
+        case PageIcon::Collected:
+            // a tick in a ring
+            draw->AddCircle(p(12, 12), 8.5f * u, color, 0, width);
+            draw->PathLineTo(p(8, 12.3f));
+            draw->PathLineTo(p(10.8f, 15));
+            draw->PathLineTo(p(16, 9.3f));
+            draw->PathStroke(color, 0, width);
+            cap(8, 12.3f);
+            cap(16, 9.3f);
+            break;
         case PageIcon::None:
             break;
         }

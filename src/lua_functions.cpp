@@ -561,8 +561,8 @@ namespace LuaFunctions {
 	// page list and gives the open one's number, from 1. items: { { name = "Chests",
 	// icon = a texture, summary = "3 on", on = true }, ... }, all but name optional;
 	// on draws the summary in the accent, for an item with picks in it; glyph =
-	// "sets" draws the overlay's own icon instead of a picture, for an item that
-	// isn't one of the others; line = true puts a line under the item. A third
+	// "sets" or "collected" draws the overlay's own icon instead of a picture,
+	// for an item that isn't one of the others; line = true puts a line under the item. A third
 	// argument { open = 2 } picks the item open until the player picks one. What's
 	// drawn after it sits beside the list, up to ImGUI_EndSideList() or the end of
 	// Menu(); the list and the part beside it each scroll by themselves, down to
@@ -583,10 +583,10 @@ namespace LuaFunctions {
 			item.icon = iconOf("ImGUI_SideList", *entry);
 			item.summary.text = summaryText("ImGUI_SideList", entry->get_or<std::string>("summary", ""));
 			if (entry->get_or("on", false)) item.summary.kind = Controls::Summary::Kind::On;
-			if (entry->get_or<std::string>("glyph", "") == "sets") {
-				item.glyph = Controls::PageIcon::Sets;
-				item.icon = 0;
-			}
+			std::string glyph = entry->get_or<std::string>("glyph", "");
+			if (glyph == "sets") item.glyph = Controls::PageIcon::Sets;
+			if (glyph == "collected") item.glyph = Controls::PageIcon::Collected;
+			if (item.glyph != Controls::PageIcon::None) item.icon = 0;
 			item.line = entry->get_or("line", false);
 			list.push_back(item);
 		}
