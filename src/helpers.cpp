@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <iostream>
 #include <bcrypt.h>
 #include <algorithm>
@@ -137,8 +138,26 @@ namespace Helpers {
         return std::filesystem::path(buffer).parent_path();
     }
 
+    std::filesystem::path localAppData() {
+        PWSTR local = nullptr;
+        std::filesystem::path folder;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) folder = local;
+        CoTaskMemFree(local);
+        return folder;
+    }
+
     std::filesystem::path dataDirectory() {
-        return exeDirectory();
+        static const std::filesystem::path folder = []() {
+            std::filesystem::path exe = exeDirectory();
+            std::error_code ec;
+            if (std::filesystem::exists(exe / "portable", ec)) return exe;
+            std::filesystem::path local = localAppData();
+            if (local.empty()) return exe;
+            std::filesystem::path data = local / "PocketEsoptron";
+            std::filesystem::create_directories(data, ec);
+            return ec ? exe : data;
+        }();
+        return folder;
     }
 
     std::string appVersion() {

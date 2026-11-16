@@ -23,7 +23,11 @@ namespace Helpers {
     extern std::string utf8(const std::filesystem::path& path);
     extern std::filesystem::path fromUtf8(const std::string& text);
     extern std::filesystem::path exeDirectory();
-    // where the overlay keeps what it writes: settings, the window layout, downloads
+    // %LOCALAPPDATA%, empty when Windows doesn't say
+    extern std::filesystem::path localAppData();
+    // Where the overlay keeps what it writes: settings, the window layout,
+    // downloads. %LOCALAPPDATA%\PocketEsoptron, or the exe's folder when a file
+    // named "portable" is next to the exe.
     extern std::filesystem::path dataDirectory();
     // the release it was built for, like "v0.3.0", or "dev"
     extern std::string appVersion();
