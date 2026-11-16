@@ -84,3 +84,36 @@ TEST_CASE("Wipe clears a secret") {
     Credentials::Wipe(secret);
     CHECK(secret.empty());
 }
+
+TEST_CASE("a login saved under the old name moves to the new one, never over a newer login") {
+    TestPrefix testPrefix;
+    const std::wstring oldPrefix = L"genshin-overlay-tests-old/";
+    auto writeOld = [&](const Credentials::Saved& saved) {
+        Credentials::prefix = oldPrefix;
+        bool ok = Credentials::Write("appsample", saved, L"old");
+        Credentials::prefix = L"genshin-overlay-tests/";
+        return ok;
+    };
+    auto oldOne = [&]() {
+        Credentials::prefix = oldPrefix;
+        auto saved = Credentials::Read("appsample");
+        Credentials::prefix = L"genshin-overlay-tests/";
+        return saved;
+    };
+
+    REQUIRE(writeOld({ "uid-old", "refresh-old" }));
+    CHECK(Credentials::MoveFrom(oldPrefix, "appsample", L"test"));
+    auto moved = Credentials::Read("appsample");
+    REQUIRE(moved);
+    CHECK(moved->account == "uid-old");
+    CHECK(moved->secret == "refresh-old");
+    CHECK_FALSE(oldOne());
+    CHECK_FALSE(Credentials::MoveFrom(oldPrefix, "appsample", L"test"));
+
+    // an older copy wrote under the old name again: the newer login stays
+    REQUIRE(Credentials::Write("appsample", { "uid-new", "refresh-new" }, L"test"));
+    REQUIRE(writeOld({ "uid-old", "refresh-old" }));
+    CHECK_FALSE(Credentials::MoveFrom(oldPrefix, "appsample", L"test"));
+    CHECK(Credentials::Read("appsample")->secret == "refresh-new");
+    CHECK_FALSE(oldOne());
+}

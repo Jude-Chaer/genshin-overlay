@@ -3,7 +3,7 @@
 #include <wincred.h>
 
 namespace Credentials {
-    std::wstring prefix = L"genshin-overlay/";
+    std::wstring prefix = L"PocketEsoptron/";
 
     static std::wstring widen(const std::string& text) {
         if (text.empty()) return L"";
@@ -58,6 +58,24 @@ namespace Credentials {
         CredFree(credential);
         if (saved.secret.empty()) return std::nullopt;
         return saved;
+    }
+
+    bool MoveFrom(const std::wstring& oldPrefix, const std::string& site, const std::wstring& comment) {
+        if (site.empty() || oldPrefix == prefix) return false;
+        std::wstring old = oldPrefix + widen(site);
+        PCREDENTIALW credential = nullptr;
+        if (!CredReadW(old.c_str(), CRED_TYPE_GENERIC, 0, &credential)) return false;
+        Saved saved;
+        saved.account = narrow(credential->UserName);
+        saved.secret.assign((const char*)credential->CredentialBlob, credential->CredentialBlobSize);
+        SecureZeroMemory(credential->CredentialBlob, credential->CredentialBlobSize);
+        CredFree(credential);
+        std::optional<Saved> current = Read(site);
+        bool moved = !current && Write(site, saved, comment);
+        if (current) Wipe(current->secret);
+        Wipe(saved.secret);
+        if (moved || current) CredDeleteW(old.c_str(), CRED_TYPE_GENERIC, 0);
+        return moved;
     }
 
     bool Delete(const std::string& site) {

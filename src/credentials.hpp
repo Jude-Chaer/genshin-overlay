@@ -13,14 +13,19 @@ namespace Credentials {
         std::string secret;
     };
 
-    // "genshin-overlay/"; the tests use their own
+    // "PocketEsoptron/"; the tests use their own
     extern std::wstring prefix;
+    // what prefix was in earlier versions
+    inline const std::wstring OLD_PREFIX = L"genshin-overlay/";
 
     // a secret of 2560 bytes at most, Windows' limit
     bool Write(const std::string& site, const Saved& saved, const std::wstring& comment);
     std::optional<Saved> Read(const std::string& site);
     // true when it's gone, also when there was none
     bool Delete(const std::string& site);
+    // A login saved under oldPrefix moves to prefix with comment, unless prefix
+    // has one already. True when one moved.
+    bool MoveFrom(const std::wstring& oldPrefix, const std::string& site, const std::wstring& comment);
     // overwritten before it's freed
     void Wipe(std::string& secret);
 }
