@@ -213,8 +213,10 @@ int main(int argc, char** argv) {
     else {
         // a restart as admin waits for the copy that started it
         if (const char* after = flagValue(argc, argv, "--after")) Taskbar::WaitForCopy(std::strtoul(after, nullptr, 10));
+        bool restart = hasFlag(argc, argv, "--restart-as-admin");
         // before the log, which the running copy has open
-        if (Taskbar::AnotherCopyRuns()) return 0;
+        if (Taskbar::AnotherCopyRuns(restart ? Taskbar::Ask::RestartAsAdmin : Taskbar::Ask::OpenMenu)) return 0;
+        if (restart && !Helpers::isElevated() && Taskbar::RestartAsAdmin()) return 0;
         LogFile::StartOverlay(Helpers::dataDirectory(), hasFlag(argc, argv, "--console"));
     }
 

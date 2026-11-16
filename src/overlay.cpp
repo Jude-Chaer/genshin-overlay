@@ -1630,6 +1630,7 @@ namespace Overlay {
         switch (Taskbar::Take()) {
         case Taskbar::Ask::ToggleMenu: SetMenuOpen(!menuOpen); break;
         case Taskbar::Ask::OpenMenu: SetMenuOpen(true); break;
+        case Taskbar::Ask::RestartAsAdmin: restartAsAdmin(); break;
         case Taskbar::Ask::Quit: glfwSetWindowShouldClose(Overlay::Window, true); break;
         case Taskbar::Ask::None: break;
         }

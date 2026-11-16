@@ -4,16 +4,17 @@
 // belongs to a window of its own that stays minimized; pressing it, picking it
 // in Alt+Tab or starting the exe again reaches the running copy as a request.
 namespace Taskbar {
-    enum class Ask { None, ToggleMenu, OpenMenu, Quit };
+    enum class Ask { None, ToggleMenu, OpenMenu, RestartAsAdmin, Quit };
 
     // waits up to 30 s for the copy with this process id to end
     extern void WaitForCopy(unsigned long processId);
-    // True when another copy runs: it's asked to open its menu, this one
-    // should end. Otherwise this copy now holds the name.
-    extern bool AnotherCopyRuns();
+    // True when another copy runs: it's sent the request (OpenMenu or
+    // RestartAsAdmin), this one should end. Otherwise this copy now holds the name.
+    extern bool AnotherCopyRuns(Ask request);
     // Starts this exe again as admin, waiting for this copy to end. False when
     // the prompt was declined.
     extern bool RestartAsAdmin();
+    // the taskbar button, and its right-click list's tasks
     extern void Start();
     extern void Stop();
 
