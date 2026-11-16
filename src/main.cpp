@@ -212,6 +212,9 @@ int main(int argc, char** argv) {
         LogFile::StartTool();
     }
     else {
+        // files next to the exe load by relative path, also when Windows starts it from System32
+        std::error_code ignored;
+        std::filesystem::current_path(Helpers::exeDirectory(), ignored);
         // a restart as admin waits for the copy that started it
         if (const char* after = flagValue(argc, argv, "--after")) Taskbar::WaitForCopy(std::strtoul(after, nullptr, 10));
         bool restart = hasFlag(argc, argv, "--restart-as-admin");
