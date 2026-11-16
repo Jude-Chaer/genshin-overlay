@@ -7,12 +7,16 @@ metadata = {
     permissions = {
         take_clicks = { reason = "So you can tap a marker for its comments, and the bar on the map." },
         network = { reason = "For the comments: the marker's picture, text and appsample's comments." },
+        hoyolab_map_account = { reason = "To keep what you collected the same as your marks on HoYoLAB Map." },
+        appsample_account = { reason = "To keep what you collected the same as your marks on appsample." },
     },
 }
 
 local catalog = require("catalog")
 local selection = require("selection")
 local collected = require("collected")
+local sync = require("sync")
+local collectedPage = require("collectedpage")
 local map = require("map")
 local bar = require("bar")
 local guide = require("guide")
@@ -34,6 +38,11 @@ end
 function Init()
     selection.load()
     collected.load()
+    sync.load()
+    AddTrigger("Account", function(_, site)
+        sync.accountChanged(site)
+        collectedPage.accountChanged(site)
+    end)
 end
 
 local asked = false
@@ -44,6 +53,8 @@ function Update()
         selection.ready()
     end
     if #catalog.groups == 0 then return end
+    -- the sites' marks need the map items
+    sync.update()
 
     -- without this there's no view while the map moves
     FollowMapWhileMoving()

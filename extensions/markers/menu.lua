@@ -1,9 +1,11 @@
 -- The menu page: search, where (everywhere, where I am, picked regions), the
--- saved sets, and the groups down the side with their types as rows beside.
+-- saved sets, collected and its sync, and the groups down the side with their
+-- types as rows beside.
 
 local catalog = require("catalog")
 local selection = require("selection")
 local collected = require("collected")
+local collectedPage = require("collectedpage")
 
 local menu = {}
 
@@ -313,20 +315,27 @@ function menu.draw()
         return
     end
 
-    -- the list: Sets first, then the groups
+    -- the list: Sets and Collected first, then the groups
     local summary = setsSummary()
-    local list = { { name = "Sets", glyph = "sets", summary = summary, on = summary ~= nil, line = true } }
+    local list = {
+        { name = "Sets", glyph = "sets", summary = summary, on = summary ~= nil },
+        { name = "Collected", glyph = "collected", summary = collectedPage.summary(), line = true },
+    }
     for _, group in ipairs(catalog.groups) do
         summary = groupSummary(group)
         list[#list + 1] = { name = group.name, icon = catalog.icon(group.icon), summary = summary, on = summary ~= nil }
     end
-    -- the first group opens at first, the Sets page only once picked
-    local picked = ImGUI_SideList("groups", list, { open = 2 }) or 2
+    -- the first group opens at first, Sets and Collected only once picked
+    local picked = ImGUI_SideList("groups", list, { open = 3 }) or 3
     if picked == 1 then
         setsPage()
         return
     end
-    local open = catalog.groups[picked - 1]
+    if picked == 2 then
+        collectedPage.draw()
+        return
+    end
+    local open = catalog.groups[picked - 2]
     if not open then return end
     ImGUI_Text(open.name, { look = "title" })
     allButton(open.types, "group" .. open.id)

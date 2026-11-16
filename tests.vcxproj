@@ -208,6 +208,7 @@
     <ClCompile Include="tests\item_lua_tests.cpp" />
     <ClCompile Include="tests\marks_tests.cpp" />
     <ClCompile Include="tests\markers_sets_tests.cpp" />
+    <ClCompile Include="tests\markers_sync_tests.cpp" />
     <ClCompile Include="tests\menu_summary_tests.cpp" />
     <ClCompile Include="tests\page_order_tests.cpp" />
     <ClCompile Include="tests\net_tests.cpp" />
