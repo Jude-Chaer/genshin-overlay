@@ -24,6 +24,12 @@ namespace UpdateCheck {
     static std::mutex lock;
     static std::condition_variable wake;
     static bool stopping = false;
+    static bool daily = false;
+    static bool askNow = false;
+    // an ask is running, started at generation; Stop moves generation on
+    static bool asking = false;
+    static unsigned generation = 0;
+    static Checked checked = Checked::Never;
     static std::unique_ptr<Net::Stopper> stopper;
     static Release found;
     static Download download = Download::None;
@@ -176,12 +182,16 @@ namespace UpdateCheck {
     bool PutInPlace(const std::filesystem::path& unpacked, const std::filesystem::path& folder) {
         std::error_code ec;
         std::filesystem::path exe = folder / EXE, old = folder / (std::wstring(EXE) + L".old");
+        std::filesystem::path backup = unpacked.parent_path() / "replaced";
         std::filesystem::remove(old, ec);
+        std::filesystem::remove_all(backup, ec);
         // a running exe can be renamed, not written over
         if (std::filesystem::exists(exe, ec)) {
             std::filesystem::rename(exe, old, ec);
             if (ec) return false;
         }
+        // each file copied over, and whether it was there before (then kept in backup)
+        std::vector<std::pair<std::filesystem::path, bool>> written;
         bool ok = true;
         auto it = std::filesystem::recursive_directory_iterator(unpacked, ec);
         if (ec) ok = false;
@@ -196,14 +206,35 @@ namespace UpdateCheck {
                 continue;
             }
             std::filesystem::path target = folder / relative;
-            if (it->is_directory(ec)) std::filesystem::create_directories(target, ec);
-            else std::filesystem::copy_file(it->path(), target, std::filesystem::copy_options::overwrite_existing, ec);
+            if (it->is_directory(ec)) {
+                std::filesystem::create_directories(target, ec);
+                ok = !ec;
+                continue;
+            }
+            bool existed = relative != EXE && std::filesystem::exists(target, ec);
+            if (existed) {
+                std::filesystem::create_directories((backup / relative).parent_path(), ec);
+                if (!ec) std::filesystem::copy_file(target, backup / relative, std::filesystem::copy_options::overwrite_existing, ec);
+                if (ec) {
+                    ok = false;
+                    break;
+                }
+            }
+            written.push_back({ relative, existed });
+            std::filesystem::copy_file(it->path(), target, std::filesystem::copy_options::overwrite_existing, ec);
             if (ec) ok = false;
         }
-        if (!ok && std::filesystem::exists(old, ec)) {
-            std::filesystem::remove(exe, ec);
-            std::filesystem::rename(old, exe, ec);
+        if (!ok) {
+            for (const auto& [relative, existed] : written) {
+                if (existed) std::filesystem::copy_file(backup / relative, folder / relative, std::filesystem::copy_options::overwrite_existing, ec);
+                else std::filesystem::remove(folder / relative, ec);
+            }
+            if (std::filesystem::exists(old, ec)) {
+                std::filesystem::remove(exe, ec);
+                std::filesystem::rename(old, exe, ec);
+            }
         }
+        std::filesystem::remove_all(backup, ec);
         return ok;
     }
 
@@ -235,26 +266,33 @@ namespace UpdateCheck {
         setDownload(Download::Downloading);
         std::string name = url.substr(url.rfind('/') + 1);
         std::filesystem::path folder = updatesFolder();
+        std::filesystem::path saved = folder / name;
         std::error_code ec;
-        std::filesystem::remove_all(folder, ec);
+        // all but an earlier download of the same file
+        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+            if (entry.path() != saved) std::filesystem::remove_all(entry.path(), ec);
+        }
         std::filesystem::create_directories(folder, ec);
 
         Net::Response sums, file;
         Net::Limits small, big;
         small.maxBody = 64 * 1024;
         small.deadlineMs = 30000;
-        big.maxBody = 256 * 1024 * 1024;
+        big.maxBody = 64 * 1024 * 1024;
         big.deadlineMs = 20 * 60 * 1000;
         std::optional<std::string> sum;
         if (Net::get(release.sums, sums, false, nullptr, stopper.get(), small) && sums.status == 200) sum = SumFor(sums.body, name);
-        bool got = sum && Net::get(url, file, false, nullptr, stopper.get(), big) && file.status == 200;
-        if (stopper->stopped()) return setDownload(Download::None);
-        if (!got || Files::sha256(file.body) != *sum) {
-            std::cerr << "Update check: couldn't download " << name << (got ? ", its sha256 isn't the one in SHA256SUMS.txt" : "") << std::endl;
-            return setDownload(Download::Failed);
+        bool have = false;
+        if (sum && std::filesystem::exists(saved, ec)) have = Files::sha256(Files::readText(saved)) == *sum;
+        if (!have) {
+            bool got = sum && Net::get(url, file, false, nullptr, stopper.get(), big) && file.status == 200;
+            if (stopper->stopped()) return setDownload(Download::None);
+            if (!got || Files::sha256(file.body) != *sum) {
+                std::cerr << "Update check: couldn't download " << name << (got ? ", its sha256 isn't the one in SHA256SUMS.txt" : "") << std::endl;
+                return setDownload(Download::Failed);
+            }
+            if (!Files::writeFile(saved, file.body)) return setDownload(Download::Failed);
         }
-        std::filesystem::path saved = folder / name;
-        if (!Files::writeFile(saved, file.body)) return setDownload(Download::Failed);
         std::filesystem::path ready = saved;
         if (!installed) {
             ready = Unpack(saved, folder / "unpacked");
@@ -267,22 +305,32 @@ namespace UpdateCheck {
         setDownload(Download::Ready, release.version, ready);
     }
 
-    static void ask() {
+    static bool stale(unsigned asked) {
+        std::lock_guard<std::mutex> hold(lock);
+        return generation != asked;
+    }
+
+    static void ask(unsigned asked) {
         Net::Response response;
         Net::Limits limits;
         limits.maxBody = 2 * 1024 * 1024;
         limits.deadlineMs = 30000;
         if (!Net::get(RELEASES, response, false, nullptr, stopper.get(), limits) || response.status != 200) {
             if (!stopper->stopped()) std::cerr << "Update check: couldn't reach GitHub (" << response.status << ")" << std::endl;
+            std::lock_guard<std::mutex> hold(lock);
+            if (generation == asked) checked = Checked::Failed;
             return;
         }
         Release newer = Pick(response.body, Helpers::appVersion());
         if (!newer.version.empty()) std::cout << "Update check: " << newer.version << " is out" << std::endl;
         {
             std::lock_guard<std::mutex> hold(lock);
+            if (generation != asked) return;
             found = newer;
+            checked = Checked::Done;
         }
         if (!newer.version.empty()) fetch(newer);
+        if (stale(asked)) setDownload(Download::None);
         else {
             // what an earlier update left
             std::error_code ec;
@@ -290,29 +338,90 @@ namespace UpdateCheck {
         }
     }
 
-    void Start() {
-        if (Helpers::appVersion() == "dev" || worker.joinable()) return;
-        stopping = false;
-        stopper = std::make_unique<Net::Stopper>();
-        worker = std::thread([]() {
-            while (true) {
-                ask();
+    // asks when told to, and once a day while daily is on
+    static void loop() {
+        auto next = std::chrono::steady_clock::now();
+        unsigned asked = 0;
+        while (true) {
+            {
                 std::unique_lock<std::mutex> hold(lock);
-                if (wake.wait_for(hold, std::chrono::hours(24), []() { return stopping; })) return;
+                while (!stopping && !askNow && !(daily && std::chrono::steady_clock::now() >= next)) {
+                    if (daily) wake.wait_until(hold, next);
+                    else wake.wait(hold);
+                }
+                if (stopping) return;
+                askNow = false;
+                checked = Checked::Checking;
+                asking = true;
+                asked = generation;
             }
-        });
+            ask(asked);
+            {
+                std::lock_guard<std::mutex> hold(lock);
+                asking = false;
+                // Stop came while asking
+                if (generation != asked) {
+                    std::error_code ec;
+                    std::filesystem::remove_all(updatesFolder(), ec);
+                }
+            }
+            next = std::chrono::steady_clock::now() + std::chrono::hours(24);
+        }
+    }
+
+    static void askSoon(bool everyDay) {
+        if (Helpers::appVersion() == "dev") return;
+        {
+            std::lock_guard<std::mutex> hold(lock);
+            if (everyDay) daily = true;
+            askNow = true;
+        }
+        if (!worker.joinable()) {
+            stopping = false;
+            stopper = std::make_unique<Net::Stopper>();
+            worker = std::thread(loop);
+        }
+        wake.notify_all();
+    }
+
+    void Start() {
+        askSoon(true);
+    }
+
+    void CheckNow() {
+        askSoon(false);
     }
 
     void Stop() {
+        std::lock_guard<std::mutex> hold(lock);
+        generation++;
+        daily = false;
+        found = {};
+        checked = Checked::Never;
+        download = Download::None;
+        readyVersion.clear();
+        readyPath.clear();
+        // a running ask removes it when it ends
+        if (!asking) {
+            std::error_code ec;
+            std::filesystem::remove_all(updatesFolder(), ec);
+        }
+    }
+
+    void Shutdown() {
         if (!worker.joinable()) return;
         {
             std::lock_guard<std::mutex> hold(lock);
             stopping = true;
-            found = {};
         }
         stopper->stop();
         wake.notify_all();
         worker.join();
+    }
+
+    Checked LastCheck() {
+        std::lock_guard<std::mutex> hold(lock);
+        return checked;
     }
 
     Release Newer() {

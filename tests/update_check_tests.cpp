@@ -153,6 +153,27 @@ TEST_CASE("a portable update puts the new files over the old, moves the exe asid
     fs::remove_all(root);
 }
 
+TEST_CASE("a portable update that can't write a file leaves the folder as it was", "[update_check]") {
+    fs::path root = fs::temp_directory_path() / "genshin-overlay-tests" / "portable-update-fails";
+    fs::remove_all(root);
+    fs::path app = root / "app";
+    fs::create_directories(app / "extensions" / "markers");
+    Files::writeFile(app / "PocketEsoptron.exe", "old exe");
+    Files::writeFile(app / "extensions" / "markers" / "main.lua", "-- old markers");
+    fs::path locked = app / "extensions" / "markers" / "main.lua";
+    fs::permissions(locked, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write, fs::perm_options::remove);
+
+    fs::path unpacked = UpdateCheck::Unpack(data("PocketEsoptron-v9.9.9-portable.zip"), root / "unpacked");
+    REQUIRE_FALSE(unpacked.empty());
+    CHECK_FALSE(UpdateCheck::PutInPlace(unpacked, app));
+    CHECK(Files::readText(app / "PocketEsoptron.exe") == "old exe");
+    CHECK_FALSE(fs::exists(app / "PocketEsoptron.exe.old"));
+    CHECK(Files::readText(locked) == "-- old markers");
+
+    fs::permissions(locked, fs::perms::owner_write, fs::perm_options::add);
+    fs::remove_all(root);
+}
+
 TEST_CASE("a zip that isn't an update unpacks to nothing", "[update_check]") {
     fs::path root = fs::temp_directory_path() / "genshin-overlay-tests" / "not-an-update";
     fs::remove_all(root);

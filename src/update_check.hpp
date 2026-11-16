@@ -19,11 +19,19 @@ namespace UpdateCheck {
     };
 
     enum class Download { None, Downloading, Ready, Failed };
+    enum class Checked { Never, Checking, Done, Failed };
 
     // On its own thread: asks now, then once a day while Check for updates is
-    // on. A local build ("dev") never asks. Does nothing while it runs.
+    // on. Stop ends the daily asking and forgets the release found and its
+    // download. A local build ("dev") never asks.
     extern void Start();
     extern void Stop();
+    // asks once now, also while Check for updates is off
+    extern void CheckNow();
+    // how the last ask went
+    extern Checked LastCheck();
+    // ends the thread, a download too
+    extern void Shutdown();
     // the newer release last found
     extern Release Newer();
     // how far its download is

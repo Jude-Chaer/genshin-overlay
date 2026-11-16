@@ -1081,6 +1081,31 @@ namespace Overlay {
         }
     }
 
+    // the button and how the last check went
+    static void DrawCheckNow() {
+        if (Helpers::appVersion() == "dev") {
+            ImGui::TextDisabled("A local build has no version to compare.");
+            return;
+        }
+        UpdateCheck::Checked checked = UpdateCheck::LastCheck();
+        ImGui::BeginDisabled(checked == UpdateCheck::Checked::Checking);
+        if (Controls::Button("Check now")) UpdateCheck::CheckNow();
+        ImGui::EndDisabled();
+        switch (checked) {
+        case UpdateCheck::Checked::Checking: ImGui::TextDisabled("Checking..."); break;
+        case UpdateCheck::Checked::Failed: ImGui::TextDisabled("Couldn't reach GitHub."); break;
+        case UpdateCheck::Checked::Done:
+            if (UpdateCheck::Newer().version.empty()) ImGui::TextDisabled("Up to date.");
+            else {
+                ImGui::PushID("check");
+                DrawNewerVersion();
+                ImGui::PopID();
+            }
+            break;
+        case UpdateCheck::Checked::Never: break;
+        }
+    }
+
     static void DrawGameTraffic(const GameTrafficText::Line& line) {
         bool on = Settings::readGameTraffic;
         if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
@@ -1786,6 +1811,7 @@ namespace Overlay {
                     if (Settings::checkUpdates) UpdateCheck::Start();
                     else UpdateCheck::Stop();
                 }
+                DrawCheckNow();
 
                 // settings, the log and the player's own extensions
                 if (Controls::Button("Open the data folder")) OpenFolder(Helpers::dataDirectory());

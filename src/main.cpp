@@ -283,6 +283,7 @@ int main(int argc, char** argv) {
     // the Run value follows the exe when it's moved
     if (Taskbar::StartsWithWindows()) Taskbar::StartWithWindows(true);
     if (Settings::checkUpdates) UpdateCheck::Start();
+    else UpdateCheck::Stop();
 
     Marks::Init();
     MapTracking::Start(Helpers::dataDirectory() / "map_data");
@@ -308,7 +309,7 @@ int main(int argc, char** argv) {
     MapCheck::Stop();
     MapTiles::Shutdown();
     ScreenPictures::clear();
-    UpdateCheck::Stop();
+    UpdateCheck::Shutdown();
     Taskbar::Stop();
     Overlay::Shutdown();
     Marks::Shutdown();
