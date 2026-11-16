@@ -1525,19 +1525,8 @@ namespace Overlay {
         case 0:
 
             {
-                // Shutdown at the end of the title, or beside the title and the
-                // line under it when it's taller than the title
-                ImVec2 top = ImGui::GetCursorPos();
                 Controls::PageTitle("Home");
-                float titleHeight = ImGui::GetCursorPosY() - top.y;
                 ImGui::TextDisabled("Press %s to hide", KeyChoices::menuKeyName().c_str());
-                ImVec2 below = ImGui::GetCursorPos();
-                ImVec2 quit = Controls::ButtonSize("Shutdown");
-                float quitHeight = quit.y;
-                float block = quitHeight > titleHeight - ImGui::GetStyle().ItemSpacing.y ? below.y - top.y - ImGui::GetStyle().ItemSpacing.y : titleHeight - ImGui::GetStyle().ItemSpacing.y;
-                ImGui::SetCursorPos(ImVec2(std::max(top.x, ImGui::GetWindowContentRegionMax().x - quit.x), top.y + (block - quitHeight) / 2));
-                if (Controls::Button("Shutdown")) glfwSetWindowShouldClose(Overlay::Window, true);
-                ImGui::SetCursorPos(below);
             }
             ImGui::Dummy(ImVec2(0, font * 0.4f));
 
