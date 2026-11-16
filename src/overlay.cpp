@@ -241,8 +241,8 @@ namespace Overlay {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         Overlay::IO = &ImGui::GetIO();
-        // keep imgui.ini next to the exe, not wherever it was launched from
-        iniPath = (Helpers::exeDirectory() / "imgui.ini").string();
+        // keep imgui.ini in the data folder, not wherever it was launched from
+        iniPath = (Helpers::dataDirectory() / "imgui.ini").string();
         Overlay::IO->IniFilename = iniPath.c_str();
 
         // Segoe UI Variable at Windows' 14 px, ImGui's own font without it

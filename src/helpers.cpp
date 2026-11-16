@@ -132,6 +132,10 @@ namespace Helpers {
         return std::filesystem::path(buffer).parent_path();
     }
 
+    std::filesystem::path dataDirectory() {
+        return exeDirectory();
+    }
+
     bool isElevated() {
         HANDLE token = nullptr;
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;

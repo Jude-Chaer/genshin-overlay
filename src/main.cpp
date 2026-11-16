@@ -32,7 +32,7 @@
 // runs the map matching on one image and prints where it is
 static int locateImage(const std::string& imagePath) {
     MapLocator::Index index;
-    std::filesystem::path manifest = Helpers::exeDirectory() / "map_data" / "manifest.tsv";
+    std::filesystem::path manifest = Helpers::dataDirectory() / "map_data" / "manifest.tsv";
     if (!index.Load(manifest)) {
         std::cerr << "Could not load map data from " << manifest << std::endl;
         return 1;
@@ -58,7 +58,7 @@ static int locateImage(const std::string& imagePath) {
 
 // the map matching for the minimap commands, like the live thread has it
 static MiniMap::Locate locateWith(MapLocator::Index& index) {
-    index.Load(Helpers::exeDirectory() / "map_data" / "manifest.tsv");
+    index.Load(Helpers::dataDirectory() / "map_data" / "manifest.tsv");
     return [&index](const cv::Mat& grab) { return index.Match(grab, grab.cols / 2.0, grab.rows / 2.0, false, false); };
 }
 
@@ -70,7 +70,7 @@ static int locatePlayer(const std::string& imagePath) {
         std::cerr << "Could not read " << imagePath << std::endl;
         return 1;
     }
-    MiniMap::Load(Helpers::exeDirectory() / "map_data");
+    MiniMap::Load(Helpers::dataDirectory() / "map_data");
 
     RECT rect = MiniMap::rect({ 0, 0, image.cols, image.rows });
     cv::Mat grab = image(cv::Rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top));
@@ -118,7 +118,7 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
     std::vector<std::filesystem::path> pictures;
     for (const auto& entry : std::filesystem::directory_iterator(folder)) pictures.push_back(entry.path());
     std::sort(pictures.begin(), pictures.end());
-    MiniMap::Load(Helpers::exeDirectory() / "map_data");
+    MiniMap::Load(Helpers::dataDirectory() / "map_data");
     MiniMap::OneThread alone;
 
     struct Open {
@@ -229,11 +229,11 @@ int main(int argc, char** argv) {
     }
 
     Marks::Init();
-    MapTracking::Start(Helpers::exeDirectory() / "map_data");
-    ItemFiles::Start(Helpers::exeDirectory() / "items", Settings::downloadItems);
-    MapTiles::Init(Helpers::exeDirectory() / "map_data");
-    MapCheck::Start(Helpers::exeDirectory() / "map_data");
-    MiniMap::Start(Helpers::exeDirectory() / "map_data");
+    MapTracking::Start(Helpers::dataDirectory() / "map_data");
+    ItemFiles::Start(Helpers::dataDirectory() / "items", Settings::downloadItems);
+    MapTiles::Init(Helpers::dataDirectory() / "map_data");
+    MapCheck::Start(Helpers::dataDirectory() / "map_data");
+    MiniMap::Start(Helpers::dataDirectory() / "map_data");
     // off until the player turns it on in the menu
     if (Settings::readGameTraffic) GameTraffic::Start();
     Extensions::initExtensions();

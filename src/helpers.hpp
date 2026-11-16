@@ -23,6 +23,8 @@ namespace Helpers {
     extern std::string utf8(const std::filesystem::path& path);
     extern std::filesystem::path fromUtf8(const std::string& text);
     extern std::filesystem::path exeDirectory();
+    // where the overlay keeps what it writes: settings, the window layout, downloads
+    extern std::filesystem::path dataDirectory();
     // "a, b, c"
     extern std::string joined(const std::vector<std::string>& list);
     extern bool isElevated();

@@ -170,7 +170,7 @@ namespace Marks {
     // ---- backups ----
 
     std::filesystem::path BackupFolder() {
-        return Helpers::exeDirectory() / "backups";
+        return Helpers::dataDirectory() / "backups";
     }
 
     std::string AccountHash(Site site, const std::string& account) {

@@ -31,7 +31,7 @@ namespace Settings {
 
     static std::filesystem::path settingsPath() {
         if (!file.empty()) return file;
-        return Helpers::exeDirectory() / "settings.json";
+        return Helpers::dataDirectory() / "settings.json";
     }
 
     // The whole file, or {} when there's none. One that isn't a JSON object is
