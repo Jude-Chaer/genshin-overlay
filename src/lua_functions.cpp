@@ -2440,15 +2440,20 @@ namespace LuaFunctions {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		const Extensions::PermissionInfo* info = permissionNamed("AskForPermission", name);
 		if (!ext) return;
-		if (info && info->playerOnly) Extensions::logOnce("AskForPermission", name + " is only turned on by the player, on its Permissions tab; OpenPermissions() opens it");
+		if (info && info->playerOnly) Extensions::logOnce("AskForPermission", name + " is only turned on by the player, on its Permissions tab; OpenPermissions(\"" + name + "\") opens it there");
 		else if (info) Asks::askPermission(*ext, info->type);
 		else Asks::askSetting(*ext, name);
 	}
 
-	void OpenPermissions() {
+	void OpenPermissions(sol::optional<std::string> name) {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		if (!ext || !Extensions::inPhase("OpenPermissions", Extensions::Phase::Menu)) return;
-		Extensions::openPermissionsTab(*ext);
+		std::string permission;
+		if (name) {
+			if (Extensions::findPermission(*name)) permission = *name;
+			else Extensions::logOnce("OpenPermissions", "knows no permission named " + *name + ", the tab opens at the top");
+		}
+		Extensions::openPermissionsTab(*ext, permission);
 	}
 
 	std::optional<std::pair<int, int>> mouseFor(POINT cursor, const std::optional<RECT>& game, POINT overlay, bool anywhere) {

@@ -271,8 +271,9 @@ namespace LuaFunctions {
     // it shows while the map or menu is open.
     sol::object PermissionState(const std::string& name, sol::this_state state);
     void AskForPermission(const std::string& name);
-    // its Permissions tab, from its menu only
-    void OpenPermissions();
+    // OpenPermissions(name): its Permissions tab, from its menu only; with a
+    // permission's name the tab scrolls to its row and outlines it for a moment
+    void OpenPermissions(sol::optional<std::string> name);
 
     // The cursor in overlay pixels. Without Mouse anywhere only over the game
     // window, nil anywhere else.

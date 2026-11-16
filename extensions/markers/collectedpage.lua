@@ -196,7 +196,7 @@ local function siteCard(site)
     local id = "##" .. site
     if not allowed(site) then
         ImGUI_Empty("To sync, let Markers use your " .. label .. " account on its Permissions tab.")
-        ImGUI_Button("Open Permissions" .. id, function() OpenPermissions() end, { look = "main" })
+        ImGUI_Button("Open Permissions" .. id, function() OpenPermissions(sync.PERMISSION[site]) end, { look = "main" })
         return
     end
     local a = GetAccount(site)

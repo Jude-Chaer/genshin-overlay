@@ -232,6 +232,18 @@ TEST_CASE("OpenPermissions opens the menu on the extension's page, from its menu
         if (Extensions::registeredExtensions[i].get() == ext) index = (int)i;
     }
     CHECK(Overlay::ShownExtension() == index);
+    CHECK(ext->pointedAt.empty());
+
+    // with a name the tab points at that row; an unknown name opens it at the top
+    {
+        Extensions::InPhase menu(Extensions::Phase::Menu);
+        REQUIRE(TestExtension::run(ext, "OpenPermissions('hoyolab_map_account')"));
+        CHECK(ext->pointedAt == "hoyolab_map_account");
+        CHECK(ext->pointedSince < 0);
+        REQUIRE(TestExtension::run(ext, "OpenPermissions('no_such_one')"));
+        CHECK(ext->pointedAt.empty());
+    }
+    CHECK(log.has("OpenPermissions knows no permission named no_such_one, the tab opens at the top"));
     Overlay::SetMenuOpen(menuWas);
     TestExtension::unloadAll();
 }

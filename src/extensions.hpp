@@ -290,6 +290,11 @@ namespace Extensions {
 		// Permissions tab (never asked again either)
 		std::unordered_set<std::string> neverAsk;
 		std::unordered_set<std::string> switchedOff;
+		// the row openPermissionsTab points at, when that was asked, and when
+		// the row was first drawn (negative: not yet, the tab scrolls to it then)
+		std::string pointedAt;
+		double pointedAsked = 0;
+		double pointedSince = -1;
 		// "Don't allow" or "Not now", asked again at the next start
 		std::unordered_set<ExtensionPermissionTypes> refused;
 		// the keys it may take by their shown name (Ctrl+F5), saved, and the
@@ -444,8 +449,9 @@ namespace Extensions {
 	extern void letAsk(Extension& ext, const std::string& name);
 	// the Permissions tab on its page
 	extern void drawPermissionsTab(Extension& ext);
-	// opens the menu on its page's Permissions tab
-	extern void openPermissionsTab(const Extension& ext);
+	// opens the menu on its page's Permissions tab; with a permission's name,
+	// scrolled to its row, lit up for a moment
+	extern void openPermissionsTab(Extension& ext, const std::string& permission = "");
 	// its About tab: metadata.about, version, author, folder
 	extern void drawAboutTab(const Extension& ext);
 	// Switched off on its Permissions tab: Shutdown runs, everything it

@@ -706,13 +706,25 @@ namespace Extensions {
 	// one section per extension: icon, info, settings, then its own Menu()
 	static const char* ExtensionTabs = "##extensionTabs";
 
-	void openPermissionsTab(const Extension& ext) {
+	static double secondsNow() {
+		return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	}
+
+	void openPermissionsTab(Extension& ext, const std::string& permission) {
 		for (size_t i = 0; i < registeredExtensions.size(); i++) {
 			if (registeredExtensions[i].get() != &ext) continue;
 			Overlay::ShowExtension((int)i);
 			Controls::OpenTab(ExtensionTabs, "Permissions");
+			ext.pointedAt = permission;
+			ext.pointedAsked = secondsNow();
+			ext.pointedSince = -1;
 		}
 	}
+
+	// how long a row openPermissionsTab points at stays lit, fading out, and
+	// how soon it has to be drawn (the menu closed first, or no such row)
+	static const double PointedFor = 1.5;
+	static const double PointedWait = 1.0;
 
 	static void drawSettings(Extension& ext) {
 		for (const auto& id : ext.settingsOrder) {
@@ -1422,7 +1434,27 @@ namespace Extensions {
 		ImGui::Text("Folder: %s", ext.folderKey.c_str());
 	}
 
+	// the row just drawn, scrolled to on its first frame and outlined in the
+	// accent, fading out over PointedFor
+	static void drawPointed(Extension& ext) {
+		double now = secondsNow();
+		if (ext.pointedSince < 0) {
+			ext.pointedSince = now;
+			ImGui::SetScrollHereY(0.3f);
+		}
+		double gone = (now - ext.pointedSince) / PointedFor;
+		if (gone >= 1) {
+			ext.pointedAt.clear();
+			return;
+		}
+		Controls::Theme theme = Controls::GetTheme();
+		unsigned int lit = Controls::Faded(theme.accent, (float)(1 - gone));
+		ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), Controls::Color(lit),
+			theme.rounding, 0, std::max(2.0f, theme.font / 8));
+	}
+
 	void drawPermissionsTab(Extension& ext) {
+		if (!ext.pointedAt.empty() && ext.pointedSince < 0 && secondsNow() - ext.pointedAsked > PointedWait) ext.pointedAt.clear();
 		// its files weren't read, so what's saved for it wasn't either
 		if (ext.extensionHash.empty()) {
 			ImGui::TextDisabled("Its files can't be read.");
@@ -1457,10 +1489,14 @@ namespace Extensions {
 			if (!has && ext.refused.count(permission.type)) row.lines.push_back({ "Refused at this start." });
 			std::string used = lastUsedLine(ext, permission.type, (long long)std::time(nullptr));
 			if (!used.empty()) row.lines.push_back({ used });
+			bool pointed = ext.pointedAt == permission.name;
+			ImGui::BeginGroup();
 			if (Controls::Toggle((std::string(permission.label) + "##" + permission.name).c_str(), &has, row)) {
 				switchPermission(ext, permission.type, has);
 				changedOnTab(ext);
 			}
+			ImGui::EndGroup();
+			if (pointed) drawPointed(ext);
 		}
 
 		std::vector<std::string> never(ext.neverAsk.begin(), ext.neverAsk.end());
