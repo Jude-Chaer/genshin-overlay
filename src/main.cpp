@@ -28,6 +28,7 @@
 #include "marks.hpp"
 #include "web_images.hpp"
 #include "log_file.hpp"
+#include "taskbar.hpp"
 
 // PocketEsoptron.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -203,6 +204,8 @@ int main(int argc, char** argv) {
         LogFile::StartTool();
     }
     else {
+        // before the log, which the running copy has open
+        if (Taskbar::AnotherCopyRuns()) return 0;
         LogFile::StartOverlay(Helpers::dataDirectory(), hasFlag(argc, argv, "--console"));
     }
 
@@ -243,6 +246,7 @@ int main(int argc, char** argv) {
         glfwTerminate();
         return 1;
     }
+    Taskbar::Start();
 
     Marks::Init();
     MapTracking::Start(Helpers::dataDirectory() / "map_data");
@@ -268,6 +272,7 @@ int main(int argc, char** argv) {
     MapCheck::Stop();
     MapTiles::Shutdown();
     ScreenPictures::clear();
+    Taskbar::Stop();
     Overlay::Shutdown();
     Marks::Shutdown();
     Accounts::Shutdown();

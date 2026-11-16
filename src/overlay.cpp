@@ -28,6 +28,7 @@
 #include "menu_summary.hpp"
 #include "page_order.hpp"
 #include "npcap_download.hpp"
+#include "taskbar.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -1605,11 +1606,21 @@ namespace Overlay {
         }
     }
 
+    static void takeTaskbarAsk() {
+        switch (Taskbar::Take()) {
+        case Taskbar::Ask::ToggleMenu: SetMenuOpen(!menuOpen); break;
+        case Taskbar::Ask::OpenMenu: SetMenuOpen(true); break;
+        case Taskbar::Ask::Quit: glfwSetWindowShouldClose(Overlay::Window, true); break;
+        case Taskbar::Ask::None: break;
+        }
+    }
+
     void MainLoop() {
         bool drewLastFrame = true;
         while (!glfwWindowShouldClose(Overlay::Window)) {
             Extensions::countTurn();
             glfwPollEvents();
+            takeTaskbarAsk();
             Keybindings::ProcessKeybindings();
             keepOnTop(false);
             // sends the tracker a new screenshot when it's ready for one
