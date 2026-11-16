@@ -1,0 +1,2 @@
+4b00b58dc38c0df822ec4b3392e1f58fd9d71de961e23c97510b09857478f061  PocketEsoptron-Setup-v9.9.9.exe
+874befcf94caf35d975e41c52f358a98025fe47c397230633a7f7ff7eef6c3bc  PocketEsoptron-v9.9.9-portable.zip

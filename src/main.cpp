@@ -233,6 +233,7 @@ int main(int argc, char** argv) {
         // before the log, which the running copy has open
         Taskbar::Ask request = restart ? Taskbar::Ask::RestartAsAdmin : withWindows ? Taskbar::Ask::None : Taskbar::Ask::OpenMenu;
         if (Taskbar::AnotherCopyRuns(request)) return 0;
+        UpdateCheck::RemoveOld();
         if (restart && !Helpers::isElevated() && Taskbar::RestartAsAdmin()) return 0;
         std::vector<std::string> moved;
         if (Helpers::dataDirectory() != Helpers::exeDirectory()) moved = Helpers::moveOldData(Helpers::exeDirectory(), Helpers::dataDirectory());

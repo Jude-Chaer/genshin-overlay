@@ -1063,6 +1063,18 @@ namespace Overlay {
         UpdateCheck::Release newer = UpdateCheck::Newer();
         if (newer.version.empty()) return;
         ImGui::TextWrapped("Version %s is out.", newer.version.c_str());
+        switch (UpdateCheck::Downloaded()) {
+        case UpdateCheck::Download::Downloading:
+            ImGui::TextDisabled("Downloading it...");
+            break;
+        case UpdateCheck::Download::Ready:
+            if (Controls::Button("Restart to update") && UpdateCheck::Apply()) glfwSetWindowShouldClose(Overlay::Window, true);
+            break;
+        case UpdateCheck::Download::Failed:
+            ImGui::TextWrapped("Couldn't update here. Its page has the download.");
+            break;
+        case UpdateCheck::Download::None: break;
+        }
         if (Controls::Button("Open its page")) {
             std::wstring page(newer.page.begin(), newer.page.end());
             ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL);

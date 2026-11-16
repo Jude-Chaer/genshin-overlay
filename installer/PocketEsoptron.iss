@@ -53,7 +53,7 @@ Name: "{autodesktop}\Pocket Esoptron"; Filename: "{app}\PocketEsoptron.exe"; Tas
 
 [Run]
 Filename: "{app}\PocketEsoptron.exe"; Description: "{cm:LaunchProgram,Pocket Esoptron}"; Flags: nowait postinstall skipifsilent
-; the app's own update runs this with /VERYSILENT /UPDATE=1
+; the app's own update runs this with /VERYSILENT /UPDATE=1 /WAITPID=<its process id>
 Filename: "{app}\PocketEsoptron.exe"; Flags: nowait; Check: StartAfterUpdate
 
 [UninstallDelete]
@@ -72,6 +72,31 @@ const
 var
   DeleteData: Boolean;
 
+function OpenProcess(Access: DWORD; Inherit: BOOL; ProcessId: DWORD): THandle;
+  external 'OpenProcess@kernel32.dll stdcall';
+function WaitForSingleObject(Handle: THandle; Milliseconds: DWORD): DWORD;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function CloseHandle(Handle: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+// up to 30 s for the process /WAITPID names to end
+procedure WaitForApp;
+var
+  Id: Integer;
+  Process: THandle;
+begin
+  Id := StrToIntDef(ExpandConstant('{param:WAITPID|0}'), 0);
+  if Id = 0 then
+    Exit;
+  // SYNCHRONIZE
+  Process := OpenProcess($00100000, False, Id);
+  if Process <> 0 then
+  begin
+    WaitForSingleObject(Process, 30000);
+    CloseHandle(Process);
+  end;
+end;
+
 function StartAfterUpdate: Boolean;
 begin
   Result := ExpandConstant('{param:UPDATE|0}') = '1';
@@ -89,6 +114,7 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  WaitForApp;
   QuitRunningCopy;
   if CheckForMutexes('Local\PocketEsoptron') then
     Result := 'Pocket Esoptron is running. Quit it from its tray icon, then try again.'
