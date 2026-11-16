@@ -23,6 +23,8 @@ namespace Credentials {
     std::optional<Saved> Read(const std::string& site);
     // true when it's gone, also when there was none
     bool Delete(const std::string& site);
+    // every login whose name starts with under, the number deleted
+    int DeleteAll(const std::wstring& under);
     // A login saved under oldPrefix moves to prefix with comment, unless prefix
     // has one already. True when one moved.
     bool MoveFrom(const std::wstring& oldPrefix, const std::string& site, const std::wstring& comment);

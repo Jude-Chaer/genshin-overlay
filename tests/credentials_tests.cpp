@@ -117,3 +117,22 @@ TEST_CASE("a login saved under the old name moves to the new one, never over a n
     CHECK(Credentials::Read("appsample")->secret == "refresh-new");
     CHECK_FALSE(oldOne());
 }
+
+TEST_CASE("deleting every login leaves other programs' entries alone") {
+    TestPrefix testPrefix;
+    REQUIRE(Credentials::Write("hoyolab_map", { "1", "one" }, L"test"));
+    REQUIRE(Credentials::Write("appsample", { "2", "two" }, L"test"));
+    Credentials::prefix = L"genshin-overlay-tests-other/";
+    REQUIRE(Credentials::Write("appsample", { "3", "three" }, L"test"));
+    Credentials::prefix = L"genshin-overlay-tests/";
+
+    CHECK(Credentials::DeleteAll(Credentials::prefix) == 2);
+    CHECK_FALSE(Credentials::Read("hoyolab_map"));
+    CHECK_FALSE(Credentials::Read("appsample"));
+    CHECK(Credentials::DeleteAll(Credentials::prefix) == 0);
+
+    Credentials::prefix = L"genshin-overlay-tests-other/";
+    CHECK(Credentials::Read("appsample"));
+    CHECK(Credentials::Delete("appsample"));
+    Credentials::prefix = L"genshin-overlay-tests/";
+}

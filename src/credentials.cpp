@@ -82,4 +82,17 @@ namespace Credentials {
         if (site.empty()) return false;
         return CredDeleteW(target(site).c_str(), CRED_TYPE_GENERIC, 0) || GetLastError() == ERROR_NOT_FOUND;
     }
+
+    int DeleteAll(const std::wstring& under) {
+        DWORD count = 0;
+        PCREDENTIALW* found = nullptr;
+        std::wstring filter = under + L"*";
+        if (!CredEnumerateW(filter.c_str(), 0, &count, &found)) return 0;
+        int deleted = 0;
+        for (DWORD i = 0; i < count; i++) {
+            if (found[i]->Type == CRED_TYPE_GENERIC && CredDeleteW(found[i]->TargetName, CRED_TYPE_GENERIC, 0)) deleted++;
+        }
+        CredFree(found);
+        return deleted;
+    }
 }

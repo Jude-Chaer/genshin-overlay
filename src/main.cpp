@@ -30,6 +30,7 @@
 #include "log_file.hpp"
 #include "taskbar.hpp"
 #include "update_check.hpp"
+#include "credentials.hpp"
 
 // PocketEsoptron.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -211,6 +212,16 @@ int main(int argc, char** argv) {
     std::vector<std::string> tools = { "--minimap-replay", "--locate", "--minimap", "--make-index", "--make-items" };
     if (argc >= 2 && std::find(tools.begin(), tools.end(), argv[1]) != tools.end()) {
         LogFile::StartTool();
+    }
+    // for the installer and the uninstaller
+    else if (hasFlag(argc, argv, "--quit")) {
+        Taskbar::QuitRunningCopy();
+        return 0;
+    }
+    else if (hasFlag(argc, argv, "--forget-logins")) {
+        Credentials::DeleteAll(Credentials::prefix);
+        Credentials::DeleteAll(Credentials::OLD_PREFIX);
+        return 0;
     }
     else {
         // files next to the exe load by relative path, also when Windows starts it from System32

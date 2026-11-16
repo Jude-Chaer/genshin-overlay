@@ -14,6 +14,7 @@ namespace Taskbar {
     static const UINT OPEN_MENU = WM_APP + 1;
     static const UINT RESTART_AS_ADMIN = WM_APP + 2;
     static const UINT TRAY = WM_APP + 3;
+    static const UINT QUIT = WM_APP + 4;
     enum TrayItem : UINT { TRAY_OPEN_MENU = 1, TRAY_RESTART_AS_ADMIN, TRAY_QUIT };
     // PKEY_Title, a jump list task's name
     static const PROPERTYKEY TITLE = { { 0xF29F85E0, 0x4FF9, 0x1068, { 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3, 0xD9 } }, 2 };
@@ -44,6 +45,23 @@ namespace Taskbar {
             other = FindWindowW(WINDOW_CLASS, nullptr);
         }
         if (other && request != Ask::None) PostMessageW(other, request == Ask::RestartAsAdmin ? RESTART_AS_ADMIN : OPEN_MENU, 0, 0);
+        return true;
+    }
+
+    bool QuitRunningCopy() {
+        HWND other = FindWindowW(WINDOW_CLASS, nullptr);
+        if (!other) return false;
+        DWORD processId = 0;
+        GetWindowThreadProcessId(other, &processId);
+        HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, processId);
+        PostMessageW(other, QUIT, 0, 0);
+        if (process) {
+            WaitForSingleObject(process, 30000);
+            CloseHandle(process);
+        }
+        else {
+            for (int i = 0; i < 300 && IsWindow(other); i++) Sleep(100);
+        }
         return true;
     }
 
@@ -96,6 +114,9 @@ namespace Taskbar {
             return 0;
         case RESTART_AS_ADMIN:
             asked = Ask::RestartAsAdmin;
+            return 0;
+        case QUIT:
+            asked = Ask::Quit;
             return 0;
         case TRAY:
             switch (LOWORD(lParam)) {
@@ -191,6 +212,7 @@ namespace Taskbar {
         // a second copy started without admin can still reach one running as admin
         ChangeWindowMessageFilterEx(window, OPEN_MENU, MSGFLT_ALLOW, nullptr);
         ChangeWindowMessageFilterEx(window, RESTART_AS_ADMIN, MSGFLT_ALLOW, nullptr);
+        ChangeWindowMessageFilterEx(window, QUIT, MSGFLT_ALLOW, nullptr);
         ShowWindow(window, SW_SHOWMINNOACTIVE);
         setTasks();
 

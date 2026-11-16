@@ -6,7 +6,8 @@
 // copy as a request.
 namespace Taskbar {
     // the Tray ones came from the tray icon; Close is the window's close (the
-    // X in Alt+Tab, Close window on the button), Quit the tray list's Quit
+    // X in Alt+Tab, Close window on the button), Quit the tray list's Quit or
+    // a start with --quit
     enum class Ask { None, ToggleMenu, OpenMenu, TrayToggleMenu, TrayOpenMenu, RestartAsAdmin, Close, Quit };
 
     // waits up to 30 s for the copy with this process id to end
@@ -15,6 +16,9 @@ namespace Taskbar {
     // RestartAsAdmin, nothing for None), this one should end. Otherwise this
     // copy now holds the name.
     extern bool AnotherCopyRuns(Ask request);
+    // Asks the running copy to quit and waits up to 30 s for it to end. False
+    // when none runs.
+    extern bool QuitRunningCopy();
     // Starts this exe again as admin, waiting for this copy to end. False when
     // the prompt was declined.
     extern bool RestartAsAdmin();
