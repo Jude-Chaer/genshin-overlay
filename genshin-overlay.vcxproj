@@ -277,5 +277,8 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <None Include="tools\publish_map_index.bat" />
     <None Include="vcpkg.json" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\app.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
