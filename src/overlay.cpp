@@ -1543,6 +1543,9 @@ namespace Overlay {
                     else UpdateCheck::Stop();
                 }
 
+                // settings, the log and the player's own extensions
+                if (Controls::Button("Open the data folder")) OpenFolder(Helpers::dataDirectory());
+
                 Controls::ToggleOptions takenKeys;
                 takenKeys.lines = { { "Lets Record catch a key another program has taken. Some antivirus programs dislike this." } };
                 if (Controls::Toggle("Record taken keys", &Settings::recordTakenKeys, takenKeys)) {
