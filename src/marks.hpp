@@ -19,13 +19,14 @@
 namespace Marks {
     using Site = Accounts::Site;
 
-    enum class Action { Fetch, Change };
+    // Restore adds back what a backup of the logged in account had, it never unmarks
+    enum class Action { Fetch, Change, Restore };
 
     struct SiteResult {
         Site site = Site::HoyolabMap;
         bool ok = false;
         // "logged_out", "captcha", "account_changed", "no_items", "failed",
-        // "backup_failed", "cancelled"; empty when ok
+        // "backup_failed", "cancelled", "no_backup"; empty when ok
         std::string error;
         // what went wrong, for the log
         std::string why;
@@ -51,6 +52,8 @@ namespace Marks {
         std::vector<Site> sites;
         Action action = Action::Fetch;
         std::vector<int64_t> add, remove;
+        // Restore: the backup's name, from BackupsOf
+        std::string backup;
         // who asked, for the question and Forget; nullptr for the overlay
         const void* owner = nullptr;
     };
@@ -112,7 +115,10 @@ namespace Marks {
         std::string account;
     };
     std::filesystem::path BackupFolder();
-    // the file's name, "" when it couldn't be written
+    // backups kept per site and account, the oldest go
+    inline const size_t KeepBackups = 20;
+    // the file's name, "" when it couldn't be written; the account's backups
+    // past KeepBackups on that site are deleted
     std::string SaveBackup(const std::filesystem::path& folder, Site site, const std::string& account, const std::vector<int64_t>& marks);
     // newest first
     std::vector<Backup> Backups(const std::filesystem::path& folder);
@@ -120,6 +126,8 @@ namespace Marks {
     bool ReadBackup(const std::filesystem::path& folder, const std::string& name, Site site, const std::string& account,
         std::vector<int64_t>& out);
     std::string AccountHash(Site site, const std::string& account);
+    // the backups of the account logged in on the site now, newest first
+    std::vector<Backup> BackupsOf(Site site);
 
     // What a change does on one site, given what's marked there: the adds
     // and removes that change something, by HoYoLAB id

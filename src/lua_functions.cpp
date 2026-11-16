@@ -226,6 +226,7 @@ namespace LuaFunctions {
 		global("LogOut", None, LogOut);
 		global("Marks_Start", None, MarksStart);
 		global("Marks_Result", None, MarksResult);
+		global("Marks_Backups", None, MarksBackups);
 
 		// files, only in the extension's own folder (pathFor)
 		global("LoadTexture", InternalRead, LoadTextureFromFileLua);
@@ -2903,11 +2904,19 @@ namespace LuaFunctions {
 		}
 		if (action == "fetch") request.action = Marks::Action::Fetch;
 		else if (action == "change") request.action = Marks::Action::Change;
+		else if (action == "restore") request.action = Marks::Action::Restore;
 		else {
-			Extensions::logOnce("Marks_Start", "knows \"fetch\" and \"change\", not " + action);
+			Extensions::logOnce("Marks_Start", "knows \"fetch\", \"change\" and \"restore\", not " + action);
 			return sol::nil;
 		}
-		if (!pointIds(add, request.add) || !pointIds(remove, request.remove)) {
+		if (request.action == Marks::Action::Restore) {
+			if (request.sites.size() != 1 || !add.is<std::string>()) {
+				Extensions::logOnce("Marks_Start", "restores one site from a backup's name, like Marks_Start(\"appsample\", \"restore\", name)");
+				return sol::nil;
+			}
+			request.backup = add.as<std::string>();
+		}
+		else if (!pointIds(add, request.add) || !pointIds(remove, request.remove)) {
 			Extensions::logOnce("Marks_Start", "takes add and remove as lists of point ids");
 			return sol::nil;
 		}
@@ -2941,6 +2950,22 @@ namespace LuaFunctions {
 		std::optional<Marks::Result> result = Marks::Take(id, ext);
 		if (!result) return sol::nil;
 		return marksTable(*result, sol::state_view(state));
+	}
+
+	sol::table MarksBackups(const std::string& site, sol::this_state state)
+	{
+		sol::state_view lua(state);
+		sol::table list = lua.create_table();
+		std::optional<Accounts::Site> named = siteNamed("Marks_Backups", site);
+		if (!named || !Extensions::allowed("Marks_Backups", accountPermission(*named))) return list;
+		int i = 1;
+		for (const Marks::Backup& backup : Marks::BackupsOf(*named)) {
+			// "<site>-2026-11-16_14-02-09", maybe with _2: the date as the player reads it
+			std::string date = backup.name.substr(backup.name.find('-') + 1);
+			if (date.size() >= 16) date = date.substr(0, 10) + " " + date.substr(11, 2) + ":" + date.substr(14, 2);
+			list[i++] = lua.create_table_with("name", backup.name, "count", backup.count, "date", date);
+		}
+		return list;
 	}
 
 	void UpdateMarks()

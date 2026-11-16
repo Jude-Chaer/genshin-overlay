@@ -138,7 +138,10 @@ namespace LuaFunctions {
     // Marks_Start(sites, "fetch" or "change", add, remove, onDone) gives an id,
     // nil when refused (logged). sites is "hoyolab_map", "appsample" or a list
     // of them, each needing its account permission; add and remove are lists
-    // of HoYoLAB point ids, for "change". The jobs run one after another on
+    // of HoYoLAB point ids, for "change"; for "fetch", add's ids that can't
+    // be marked on the site come back in skipped. "restore" takes one site and a
+    // backup's name from Marks_Backups instead of add, and only adds back
+    // what that backup had. The jobs run one after another on
     // the overlay's own thread. The answer has a table per site name: { ok,
     // error, marks, added, removed, kept, skipped, backup }, see Marks::SiteResult.
     // onDone gets it once; without onDone Marks_Result(id) gives nil while it
@@ -146,6 +149,10 @@ namespace LuaFunctions {
     sol::object MarksStart(sol::object sites, const std::string& action, sol::object add, sol::object remove, sol::object onDone,
         sol::this_state state);
     sol::object MarksResult(int id, sol::this_state state);
+    // Marks_Backups(site): the backups of the account logged in there, newest
+    // first, { { name, count, date = "2026-11-16 14:02" }, ... }; the site's
+    // account permission is needed, an empty list without it
+    sol::table MarksBackups(const std::string& site, sol::this_state state);
     // gives the jobs that are done to their onDone, see UpdateAnswers
     void UpdateMarks();
     // drops the extension's jobs and answers, see Extensions::unload

@@ -460,6 +460,136 @@ TEST_CASE("a backup is read only for its own account") {
     CHECK(Marks::Backups(folder).size() == 2);
 }
 
+TEST_CASE("a restore adds back what the account's backup had and never unmarks") {
+    Running run;
+    // 17631 is appsample's 20503, 17628 its 20506, 33158 its 42251; 4242
+    // isn't in the item files and appsample's 99999 has no HoYoLAB pair
+    run.sites.hoyolab[2] = { 17631, 17630, 4242 };
+    run.sites.appsample = { 20503, 20506, 99999 };
+    // the backups these changes make; one unmark each, no question
+    auto result = waitFor(Marks::Start(change({ Site::HoyolabMap }, { 33158 }, { 17630 })));
+    REQUIRE(result);
+    std::string hoyolabBackup = result->sites[0].backup;
+    result = waitFor(Marks::Start(change({ Site::Appsample }, { 33158 }, { 17628 })));
+    REQUIRE(result);
+    std::string appsampleBackup = result->sites[0].backup;
+    REQUIRE_FALSE(hoyolabBackup.empty());
+    REQUIRE_FALSE(appsampleBackup.empty());
+    CHECK(run.sites.hoyolab[2] == std::set<int64_t>{ 17631, 4242 });
+    CHECK(run.sites.appsample == std::set<int64_t>{ 20503, 42251, 99999 });
+    // unmarked on the sites themselves since
+    run.sites.hoyolab[2].erase(4242);
+    run.sites.appsample.erase(99999);
+
+    Marks::Request restore;
+    restore.sites = { Site::HoyolabMap };
+    restore.action = Marks::Action::Restore;
+    restore.backup = hoyolabBackup;
+    result = waitFor(Marks::Start(restore));
+    REQUIRE(result);
+    CHECK(result->sites[0].ok);
+    CHECK(result->sites[0].added == 1);
+    CHECK(result->sites[0].removed == 0);
+    // HoYoLAB needs the item files for a point's map
+    CHECK(result->sites[0].skipped == std::vector<int64_t>{ 4242 });
+    // 33158 came after the backup and stays
+    CHECK(run.sites.hoyolab[2] == std::set<int64_t>{ 17631, 17630 });
+    CHECK(run.sites.hoyolab[9] == std::set<int64_t>{ 33158 });
+
+    restore.sites = { Site::Appsample };
+    restore.backup = appsampleBackup;
+    result = waitFor(Marks::Start(restore));
+    REQUIRE(result);
+    CHECK(result->sites[0].ok);
+    CHECK(result->sites[0].added == 2);
+    // appsample gets back what it had, paired or not
+    CHECK(run.sites.appsample == std::set<int64_t>{ 20503, 20506, 42251, 99999 });
+
+    // another site's backup, or another account's, isn't restored
+    restore.backup = hoyolabBackup;
+    result = waitFor(Marks::Start(restore));
+    REQUIRE(result);
+    CHECK_FALSE(result->sites[0].ok);
+    CHECK(result->sites[0].error == "no_backup");
+    {
+        std::lock_guard<std::mutex> lock(run.mutex);
+        run.accounts[Site::HoyolabMap] = "hoyo2";
+    }
+    restore.sites = { Site::HoyolabMap };
+    result = waitFor(Marks::Start(restore));
+    REQUIRE(result);
+    CHECK(result->sites[0].error == "no_backup");
+}
+
+TEST_CASE("a backup is read only by a name SaveBackup gives") {
+    Running run;
+    std::string name = Marks::SaveBackup(run.backups, Site::Appsample, "uid1", { 20503 });
+    std::vector<int64_t> marks;
+    CHECK(Marks::ReadBackup(run.backups, name, Site::Appsample, "uid1", marks));
+    CHECK(marks == std::vector<int64_t>{ 20503 });
+    for (const char* bad : { "CON", "NUL", "COM1", "../appsample-2026-11-16_14-02-00", "appsample-2026-11-16_14-02-00.json", "" })
+        CHECK_FALSE(Marks::ReadBackup(run.backups, bad, Site::Appsample, "uid1", marks));
+}
+
+TEST_CASE("only the newest backups of an account on a site are kept") {
+    Running run;
+    std::string first = Marks::SaveBackup(run.backups, Site::HoyolabMap, "hoyo1", { 1 });
+    std::string second = Marks::SaveBackup(run.backups, Site::HoyolabMap, "hoyo1", { 2 });
+    Marks::SaveBackup(run.backups, Site::HoyolabMap, "hoyo2", { 3 });
+    Marks::SaveBackup(run.backups, Site::Appsample, "uid1", { 4 });
+    std::string last;
+    for (size_t i = 2; i < Marks::KeepBackups + 1; i++) last = Marks::SaveBackup(run.backups, Site::HoyolabMap, "hoyo1", { 5 });
+    std::vector<Marks::Backup> all = Marks::Backups(run.backups);
+    // hoyo1 has KeepBackups + 1 made, the first one went; the others are untouched
+    CHECK(all.size() == Marks::KeepBackups + 2);
+    std::vector<int64_t> marks;
+    CHECK_FALSE(Marks::ReadBackup(run.backups, first, Site::HoyolabMap, "hoyo1", marks));
+    CHECK(Marks::ReadBackup(run.backups, second, Site::HoyolabMap, "hoyo1", marks));
+    // newest first, the ones made in the same second too
+    CHECK(Marks::BackupsOf(Site::HoyolabMap).front().name == last);
+}
+
+TEST_CASE("BackupsOf lists only the logged in account's backups on that site") {
+    Running run;
+    Marks::SaveBackup(run.backups, Site::HoyolabMap, "hoyo1", { 1, 2 });
+    Marks::SaveBackup(run.backups, Site::HoyolabMap, "hoyo2", { 3 });
+    Marks::SaveBackup(run.backups, Site::Appsample, "uid1", { 4 });
+    std::vector<Marks::Backup> hoyolab = Marks::BackupsOf(Site::HoyolabMap);
+    REQUIRE(hoyolab.size() == 1);
+    CHECK(hoyolab[0].count == 2);
+    CHECK(Marks::BackupsOf(Site::Appsample).size() == 1);
+    {
+        std::lock_guard<std::mutex> lock(run.mutex);
+        run.accounts[Site::Appsample] = "";
+    }
+    CHECK(Marks::BackupsOf(Site::Appsample).empty());
+
+    Extensions::Extension* ext = TestExtension::load("marks_backups", "function Init() end");
+    REQUIRE(ext);
+    Extensions::runInit(*ext);
+    sol::state& lua = *ext->luaState;
+    REQUIRE(TestExtension::run(ext, "_G.none = #Marks_Backups('hoyolab_map')"));
+    CHECK(lua["none"].get<int>() == 0);
+    Extensions::allow(*ext, Permission::HoyolabMapAccount);
+    REQUIRE(TestExtension::run(ext, R"(
+        local list = Marks_Backups("hoyolab_map")
+        _G.count, _G.saved, _G.name, _G.date = #list, list[1].count, list[1].name, list[1].date
+        _G.refused = Marks_Start("hoyolab_map", "restore", { 1 })
+        _G.both = Marks_Start({ "hoyolab_map", "appsample" }, "restore", list[1].name)
+    )"));
+    CHECK(lua["count"].get<int>() == 1);
+    CHECK(lua["saved"].get<int>() == 2);
+    CHECK(lua["name"].get<std::string>().rfind("hoyolab_map-", 0) == 0);
+    // "2026-11-16 14:02"
+    std::string date = lua["date"];
+    CHECK(date.size() == 16);
+    CHECK(date[10] == ' ');
+    CHECK(date[13] == ':');
+    CHECK(lua["refused"] == sol::lua_nil);
+    CHECK(lua["both"] == sol::lua_nil);
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("HoYoLAB Map's captcha and logged out answers go to the account") {
     std::wstring prefix = Credentials::prefix;
     Credentials::prefix = L"genshin-overlay-tests/";

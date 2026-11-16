@@ -13,6 +13,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <regex>
 #include <set>
 #include <thread>
 #include <unordered_map>
@@ -200,6 +201,11 @@ namespace Marks {
         file << data.dump(1);
         file.close();
         if (!file) return "";
+        size_t kept = 0;
+        for (const Backup& each : Backups(folder)) {
+            if (each.site != site || each.account != data["account"].get<std::string>() || ++kept <= KeepBackups) continue;
+            std::filesystem::remove(folder / (each.name + ".json"), error);
+        }
         return name;
     }
 
@@ -228,18 +234,26 @@ namespace Marks {
             Backup backup;
             if (entry.path().extension() == ".json" && readBackupFile(entry.path(), backup, nullptr)) found.push_back(backup);
         }
-        // the name ends in the date, so by date within each site
-        std::sort(found.begin(), found.end(), [](const Backup& a, const Backup& b) {
-            std::string aDate = a.name.substr(a.name.find('-') + 1), bDate = b.name.substr(b.name.find('-') + 1);
-            return aDate != bDate ? aDate > bDate : a.name > b.name;
+        // the name ends in the date and, for a second one in the same second,
+        // _2, _3 ...: by date, then that number
+        auto when = [](const Backup& b) {
+            std::string date = b.name.substr(b.name.find('-') + 1);
+            size_t cut = date.find('_', 11);
+            int n = cut == std::string::npos ? 1 : std::atoi(date.c_str() + cut + 1);
+            return std::make_pair(date.substr(0, cut), n);
+        };
+        std::sort(found.begin(), found.end(), [&](const Backup& a, const Backup& b) {
+            auto aWhen = when(a), bWhen = when(b);
+            return aWhen != bWhen ? aWhen > bWhen : a.name > b.name;
         });
         return found;
     }
 
     bool ReadBackup(const std::filesystem::path& folder, const std::string& name, Site site, const std::string& account,
         std::vector<int64_t>& out) {
-        // a name from the list, never a path
-        if (name.empty() || name.find_first_of("/\\.:") != std::string::npos) return false;
+        // only a name SaveBackup gives, never a path or a device like CON
+        static const std::regex given("(hoyolab_map|appsample)-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}(_[0-9]+)?");
+        if (!std::regex_match(name, given)) return false;
         Backup backup;
         std::vector<int64_t> marks;
         if (!readBackupFile(folder / (name + ".json"), backup, &marks)) return false;
@@ -520,6 +534,34 @@ namespace Marks {
         work.plan = PlanChange(work.marked, add, remove);
     }
 
+    // A backup's own ids back on its site, nothing unmarked: appsample's all
+    // of them, paired or not; HoYoLAB's only where the item files know the
+    // point's map, the rest are skipped.
+    static void planRestore(Work& work, const std::vector<int64_t>& saved, const ItemCatalog::Catalog& catalog) {
+        std::vector<int64_t> add;
+        for (int64_t id : saved) {
+            if (work.result.site == Site::HoyolabMap && !catalog.point(id)) work.result.skipped.push_back(id);
+            else add.push_back(id);
+        }
+        work.plan = PlanChange(work.marked, add, {});
+    }
+
+    // a site's own ids as HoYoLAB ids; appsample's without a HoYoLAB pair
+    // are left out, they're never touched
+    static std::vector<int64_t> hoyolabIds(Site site, const std::vector<int64_t>& own, const ItemCatalog::Catalog& catalog) {
+        if (site == Site::HoyolabMap) return own;
+        std::unordered_map<int64_t, int64_t> pairs;
+        for (const ItemCatalog::Point& point : catalog.allPoints()) {
+            if (point.appsample) pairs[point.appsample] = point.id;
+        }
+        std::vector<int64_t> out;
+        for (int64_t id : own) {
+            auto pair = pairs.find(id);
+            if (pair != pairs.end()) out.push_back(pair->second);
+        }
+        return out;
+    }
+
     static int64_t ourId(const Work& work, int64_t own) {
         if (work.result.site == Site::HoyolabMap) return own;
         auto it = work.ours.find(own);
@@ -678,21 +720,16 @@ namespace Marks {
                 failed(work.result, "account_changed", "logged out or in as another account since it was started");
                 continue;
             }
+            // a restore's backup is checked before the site is read
+            std::vector<int64_t> saved;
+            if (request.action == Action::Restore && !ReadBackup(backupFolder(), request.backup, work.result.site, work.login.account, saved)) {
+                failed(work.result, "no_backup", "the backup isn't there or is another account's");
+                continue;
+            }
             work.read = work.result.site == Site::HoyolabMap ? readHoyolab(work, *catalog) : readAppsample(work);
             if (!work.read) continue;
             if (request.action == Action::Fetch) {
-                if (work.result.site == Site::HoyolabMap) work.result.marks = work.marked;
-                else {
-                    // only the ones with a HoYoLAB pair, the rest are never touched
-                    std::unordered_map<int64_t, int64_t> pairs;
-                    for (const ItemCatalog::Point& point : catalog->allPoints()) {
-                        if (point.appsample) pairs[point.appsample] = point.id;
-                    }
-                    for (int64_t own : work.marked) {
-                        auto pair = pairs.find(own);
-                        if (pair != pairs.end()) work.result.marks.push_back(pair->second);
-                    }
-                }
+                work.result.marks = hoyolabIds(work.result.site, work.marked, *catalog);
                 std::sort(work.result.marks.begin(), work.result.marks.end());
                 // the asked ones that couldn't be marked there
                 for (int64_t id : request.add) {
@@ -700,10 +737,11 @@ namespace Marks {
                 }
                 work.result.ok = true;
             }
+            else if (request.action == Action::Restore) planRestore(work, saved, *catalog);
             else planSite(work, request, *catalog);
         }
 
-        if (request.action == Action::Change) {
+        if (request.action != Action::Fetch) {
             std::vector<Work*> ready;
             for (Work& work : works) {
                 if (work.read) ready.push_back(&work);
@@ -961,6 +999,24 @@ namespace Marks {
             }
         }
         if (shown) Asks::forget(*(const Extensions::Extension*)owner, Asks::Kind::Unmark);
+    }
+
+    std::vector<Backup> BackupsOf(Site site) {
+        std::string account;
+        if (loginFor) {
+            std::optional<Login> login = loginFor(site);
+            if (login) {
+                account = login->account;
+                wipe(*login);
+            }
+        }
+        else account = Accounts::AccountId(site);
+        if (account.empty()) return {};
+        std::string hash = AccountHash(site, account);
+        std::vector<Backup> found = Backups(backupFolder());
+        found.erase(std::remove_if(found.begin(), found.end(), [&](const Backup& each) { return each.site != site || each.account != hash; }),
+            found.end());
+        return found;
     }
 
     void SetForTests(LoginFor login, Sender send, const std::filesystem::path& folder) {
