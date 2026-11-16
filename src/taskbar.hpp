@@ -18,6 +18,8 @@ namespace Taskbar {
     // the taskbar button with its right-click list's tasks, and the tray icon
     extern void Start();
     extern void Stop();
+    // the taskbar button shown or taken off the taskbar, the tray icon stays
+    extern void ShowButton(bool shown);
 
     // the latest request since the last call, once
     extern Ask Take();

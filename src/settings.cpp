@@ -27,6 +27,8 @@ namespace Settings {
     bool readGameTraffic = false;
     bool usageInList = true;
     bool checkUpdates = true;
+    bool keepInTray = true;
+    bool keepInTrayAsked = false;
 
     std::filesystem::path file;
 
@@ -109,6 +111,8 @@ namespace Settings {
         readGameTraffic = settings.value("readGameTraffic", false);
         usageInList = settings.value("usageInList", true);
         checkUpdates = settings.value("checkUpdates", true);
+        keepInTray = settings.value("keepInTray", true);
+        keepInTrayAsked = settings.value("keepInTrayAsked", false);
     }
 
     // extension settings are in the same file, don't wipe them
@@ -133,6 +137,8 @@ namespace Settings {
         settings["readGameTraffic"] = readGameTraffic;
         settings["usageInList"] = usageInList;
         settings["checkUpdates"] = checkUpdates;
+        settings["keepInTray"] = keepInTray;
+        settings["keepInTrayAsked"] = keepInTrayAsked;
         write(settings);
     }
 

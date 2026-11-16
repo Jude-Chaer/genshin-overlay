@@ -47,6 +47,10 @@ namespace Settings {
     extern bool usageInList;
     // ask GitHub once a day whether a newer version is out (UpdateCheck)
     extern bool checkUpdates;
+    // the menu's X closes only the menu and the overlay keeps running in the
+    // system tray; false: the X quits. keepInTrayAsked: the player has answered
+    extern bool keepInTray;
+    extern bool keepInTrayAsked;
 
     // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
     extern std::string menuKey;

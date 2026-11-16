@@ -311,6 +311,7 @@ namespace Overlay {
     void SetMenuOpen(bool open) {
         if (open == menuOpen) return;
         menuOpen = open;
+        if (open) Taskbar::ShowButton(true);
         keepOnTop(true);
         // extension keybinds only hold their keys while the menu is open
         Keybindings::RefreshRegistrations();
@@ -856,6 +857,47 @@ namespace Overlay {
         if (Taskbar::RestartAsAdmin()) glfwSetWindowShouldClose(Overlay::Window, true);
     }
 
+    // The menu's X: the app leaves the taskbar and keeps running in the system
+    // tray, or quits
+    static void closeWindow() {
+        Taskbar::ShowButton(false);
+        if (Settings::keepInTray) SetMenuOpen(false);
+        else glfwSetWindowShouldClose(Overlay::Window, true);
+    }
+
+    // set by the menu's X while the player hasn't answered the question below
+    static bool askKeepInTray = false;
+
+    // The first press of the menu's X asks whether the overlay keeps running in
+    // the system tray. Yes closes the menu, No quits; the answer is kept.
+    static void DrawKeepInTrayQuestion() {
+        const char* id = "Keep running";
+        if (askKeepInTray) {
+            ImGui::OpenPopup(id);
+            askKeepInTray = false;
+        }
+        ImVec2 center(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x / 2, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y / 2);
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (!ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) return;
+        ImGui::TextUnformatted("Keep Pocket Esoptron running in the system tray?");
+        ImGui::TextDisabled("Yes: the X closes only the menu. No: the X quits.");
+        ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.4f));
+        Controls::ButtonOptions yes;
+        yes.look = Controls::ButtonOptions::Look::Main;
+        int answer = -1;
+        if (Controls::Button("Yes", yes)) answer = 1;
+        ImGui::SameLine();
+        if (Controls::Button("No")) answer = 0;
+        if (answer >= 0) {
+            Settings::keepInTray = answer == 1;
+            Settings::keepInTrayAsked = true;
+            Settings::Save();
+            ImGui::CloseCurrentPopup();
+            closeWindow();
+        }
+        ImGui::EndPopup();
+    }
+
     // nothing when already admin
     static void DrawRestartAsAdmin() {
         static bool elevated = Helpers::isElevated();
@@ -1182,6 +1224,7 @@ namespace Overlay {
         );
         ImGui::PopStyleVar();
         if (Controls::TitleMinimizeButton()) SetMenuOpen(false);
+        DrawKeepInTrayQuestion();
 
         Controls::Theme theme = Controls::GetTheme();
         // the player's width in font sizes once the splitter is dragged, below 0 to fit the names
@@ -1535,6 +1578,13 @@ namespace Overlay {
             if (Controls::BeginSection("Advanced")) {
                 DrawRestartAsAdmin();
 
+                Controls::ToggleOptions tray;
+                tray.lines = { { Settings::keepInTray ? "The menu's X closes only the menu." : "The menu's X quits Pocket Esoptron." } };
+                if (Controls::Toggle("Keep running in the system tray", &Settings::keepInTray, tray)) {
+                    Settings::keepInTrayAsked = true;
+                    Settings::Save();
+                }
+
                 Controls::ToggleOptions updates;
                 updates.lines = { { "Asks GitHub once a day whether a newer version is out." } };
                 if (Controls::Toggle("Check for updates", &Settings::checkUpdates, updates)) {
@@ -1645,7 +1695,8 @@ namespace Overlay {
         Notices::DrawInMenu(glfwGetTime(), menuPos, menuSize);
 
         if (!open) {
-            Overlay::SetMenuOpen(false);
+            if (!Settings::keepInTrayAsked) askKeepInTray = true;
+            else closeWindow();
         }
     }
 

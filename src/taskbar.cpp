@@ -215,6 +215,10 @@ namespace Taskbar {
         mutex = nullptr;
     }
 
+    void ShowButton(bool shown) {
+        if (window) ShowWindow(window, shown ? SW_SHOWMINNOACTIVE : SW_HIDE);
+    }
+
     Ask Take() {
         return asked.exchange(Ask::None);
     }
