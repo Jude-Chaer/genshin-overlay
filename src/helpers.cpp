@@ -160,6 +160,23 @@ namespace Helpers {
         return folder;
     }
 
+    std::vector<std::string> moveOldData(const std::filesystem::path& from, const std::filesystem::path& to) {
+        std::vector<std::string> moved;
+        for (std::string name : { "settings.json", "imgui.ini", "backups", "map_data", "items" }) {
+            std::error_code ec;
+            std::filesystem::path source = from / name, target = to / name;
+            if (!std::filesystem::exists(source, ec) || std::filesystem::exists(target, ec)) continue;
+            std::filesystem::rename(source, target, ec);
+            // on another drive the small ones are copied, map_data and items download again
+            if (ec && name != "map_data" && name != "items") {
+                ec.clear();
+                std::filesystem::copy(source, target, std::filesystem::copy_options::recursive, ec);
+            }
+            if (!ec) moved.push_back(name);
+        }
+        return moved;
+    }
+
     std::string appVersion() {
         return APP_VERSION;
     }

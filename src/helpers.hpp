@@ -29,6 +29,9 @@ namespace Helpers {
     // downloads. %LOCALAPPDATA%\PocketEsoptron, or the exe's folder when a file
     // named "portable" is next to the exe.
     extern std::filesystem::path dataDirectory();
+    // Moves settings.json, imgui.ini, backups, map_data and items from an older
+    // overlay's folder, each only when to has none yet. The names moved.
+    extern std::vector<std::string> moveOldData(const std::filesystem::path& from, const std::filesystem::path& to);
     // the release it was built for, like "v0.3.0", or "dev"
     extern std::string appVersion();
     // "a, b, c"

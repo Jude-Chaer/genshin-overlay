@@ -218,7 +218,10 @@ int main(int argc, char** argv) {
         // before the log, which the running copy has open
         if (Taskbar::AnotherCopyRuns(restart ? Taskbar::Ask::RestartAsAdmin : Taskbar::Ask::OpenMenu)) return 0;
         if (restart && !Helpers::isElevated() && Taskbar::RestartAsAdmin()) return 0;
+        std::vector<std::string> moved;
+        if (Helpers::dataDirectory() != Helpers::exeDirectory()) moved = Helpers::moveOldData(Helpers::exeDirectory(), Helpers::dataDirectory());
         LogFile::StartOverlay(Helpers::dataDirectory(), hasFlag(argc, argv, "--console"));
+        if (!moved.empty()) std::cout << "Moved " << Helpers::joined(moved) << " to " << Helpers::utf8(Helpers::dataDirectory()) << std::endl;
     }
 
     if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
