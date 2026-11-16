@@ -1933,8 +1933,11 @@ namespace Overlay {
             // map and menu closed: nothing to show, so don't draw at all
             bool showing = menuOpen || Motion::running() || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
                 Notices::OverGameShowing(glfwGetTime());
-            // an extension that follows the player has things to draw with the map closed too
-            bool forPlayer = !showing && MiniMap::Wanted();
+            // an extension that follows the player has things to draw with the map closed too;
+            // with nothing to show the extensions still run twice a second, so one can start
+            // asking for the player any time
+            static double ranAt = 0;
+            bool forPlayer = !showing && (MiniMap::Wanted() || glfwGetTime() - ranAt >= 0.5);
             if (!showing && !forPlayer) {
                 pickerBox = {};
                 updateClickThrough(false);
@@ -1953,6 +1956,7 @@ namespace Overlay {
                 continue;
             }
             drewLastFrame = true;
+            ranAt = glfwGetTime();
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
