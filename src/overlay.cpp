@@ -29,6 +29,7 @@
 #include "page_order.hpp"
 #include "npcap_download.hpp"
 #include "taskbar.hpp"
+#include "update_check.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -862,6 +863,16 @@ namespace Overlay {
         if (Controls::Button("Restart as admin")) restartAsAdmin();
     }
 
+    static void DrawNewerVersion() {
+        UpdateCheck::Release newer = UpdateCheck::Newer();
+        if (newer.version.empty()) return;
+        ImGui::TextWrapped("Version %s is out.", newer.version.c_str());
+        if (Controls::Button("Open its page")) {
+            std::wstring page(newer.page.begin(), newer.page.end());
+            ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    }
+
     static void DrawGameTraffic(const GameTrafficText::Line& line) {
         bool on = Settings::readGameTraffic;
         if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
@@ -1524,6 +1535,14 @@ namespace Overlay {
             if (Controls::BeginSection("Advanced")) {
                 DrawRestartAsAdmin();
 
+                Controls::ToggleOptions updates;
+                updates.lines = { { "Asks GitHub once a day whether a newer version is out." } };
+                if (Controls::Toggle("Check for updates", &Settings::checkUpdates, updates)) {
+                    Settings::Save();
+                    if (Settings::checkUpdates) UpdateCheck::Start();
+                    else UpdateCheck::Stop();
+                }
+
                 Controls::ToggleOptions takenKeys;
                 takenKeys.lines = { { "Lets Record catch a key another program has taken. Some antivirus programs dislike this." } };
                 if (Controls::Toggle("Record taken keys", &Settings::recordTakenKeys, takenKeys)) {
@@ -1591,6 +1610,7 @@ namespace Overlay {
             }
 
             ImGui::TextDisabled("Version %s", Helpers::appVersion().c_str());
+            DrawNewerVersion();
 
             break;
 

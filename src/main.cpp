@@ -29,6 +29,7 @@
 #include "web_images.hpp"
 #include "log_file.hpp"
 #include "taskbar.hpp"
+#include "update_check.hpp"
 
 // PocketEsoptron.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -258,6 +259,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     Taskbar::Start();
+    if (Settings::checkUpdates) UpdateCheck::Start();
 
     Marks::Init();
     MapTracking::Start(Helpers::dataDirectory() / "map_data");
@@ -283,6 +285,7 @@ int main(int argc, char** argv) {
     MapCheck::Stop();
     MapTiles::Shutdown();
     ScreenPictures::clear();
+    UpdateCheck::Stop();
     Taskbar::Stop();
     Overlay::Shutdown();
     Marks::Shutdown();

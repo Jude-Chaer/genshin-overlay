@@ -45,6 +45,8 @@ namespace Settings {
     extern bool readGameTraffic;
     // CPU and RAM on the Usage page's line in the page list
     extern bool usageInList;
+    // ask GitHub once a day whether a newer version is out (UpdateCheck)
+    extern bool checkUpdates;
 
     // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
     extern std::string menuKey;

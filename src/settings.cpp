@@ -26,6 +26,7 @@ namespace Settings {
     const std::vector<int> Sizes = { 80, 90, 100, 110, 125, 150 };
     bool readGameTraffic = false;
     bool usageInList = true;
+    bool checkUpdates = true;
 
     std::filesystem::path file;
 
@@ -107,6 +108,7 @@ namespace Settings {
         }
         readGameTraffic = settings.value("readGameTraffic", false);
         usageInList = settings.value("usageInList", true);
+        checkUpdates = settings.value("checkUpdates", true);
     }
 
     // extension settings are in the same file, don't wipe them
@@ -130,6 +132,7 @@ namespace Settings {
         settings["size"] = size;
         settings["readGameTraffic"] = readGameTraffic;
         settings["usageInList"] = usageInList;
+        settings["checkUpdates"] = checkUpdates;
         write(settings);
     }
 
