@@ -1153,6 +1153,7 @@ namespace Overlay {
             ImGuiWindowFlags_NoCollapse
         );
         ImGui::PopStyleVar();
+        if (Controls::TitleMinimizeButton()) SetMenuOpen(false);
 
         Controls::Theme theme = Controls::GetTheme();
         // the player's width in font sizes once the splitter is dragged, below 0 to fit the names

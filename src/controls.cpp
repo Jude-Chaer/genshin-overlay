@@ -1367,6 +1367,36 @@ namespace Controls {
         return pressed;
     }
 
+    bool TitleMinimizeButton() {
+        ImGuiContext& g = *GImGui;
+        ImGuiWindow* window = g.CurrentWindow;
+        if (window->SkipItems || (window->Flags & ImGuiWindowFlags_NoTitleBar)) return false;
+        const ImGuiStyle& style = g.Style;
+        float side = g.FontSize;
+        ImRect bar = window->TitleBarRect();
+        ImVec2 pos(bar.Max.x - style.FramePadding.x - side * 2 - style.ItemInnerSpacing.x, bar.Min.y + style.FramePadding.y);
+        ImRect box(pos, ImVec2(pos.x + side, pos.y + side));
+        ImGuiID id = window->GetID("#MINIMIZE");
+
+        ImGui::PushClipRect(bar.Min, bar.Max, false);
+        ImGuiNavLayer layer = window->DC.NavLayerCurrent;
+        window->DC.NavLayerCurrent = ImGuiNavLayer_Menu;
+        bool pressed = false;
+        if (ImGui::ItemAdd(box, id)) {
+            bool hovered, held;
+            pressed = ImGui::ButtonBehavior(box, id, &hovered, &held);
+            if (hovered) window->DrawList->AddRectFilled(box.Min, box.Max, ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered));
+            ImVec2 center = box.GetCenter();
+            float extent = side * 0.5f * 0.7071f - 1.0f;
+            float thick = std::max(1.0f, style._MainScale);
+            float y = std::floor(center.y) + 0.5f;
+            window->DrawList->AddLine(ImVec2(center.x - extent - 0.5f, y), ImVec2(center.x + extent - 0.5f, y), ImGui::GetColorU32(ImGuiCol_Text), thick);
+        }
+        window->DC.NavLayerCurrent = layer;
+        ImGui::PopClipRect();
+        return pressed;
+    }
+
     float DotRoom();
     static void keepTab(const std::vector<std::string>& names, int open);
     static int segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted, bool pill);
