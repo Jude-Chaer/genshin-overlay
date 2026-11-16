@@ -1714,7 +1714,8 @@ namespace Overlay {
             static double lookedForExtensions = glfwGetTime();
             if (glfwGetTime() - lookedForExtensions >= 2.0) {
                 lookedForExtensions = glfwGetTime();
-                Extensions::findNewExtensions(Helpers::exeDirectory() / "extensions", std::chrono::seconds(2));
+                for (const std::filesystem::path& root : Extensions::extensionRoots())
+                    Extensions::findNewExtensions(root, std::chrono::seconds(2));
             }
             Extensions::frameUpdateExtensions();
             if (Settings::showClickBoxes) drawClickBoxes();

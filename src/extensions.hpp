@@ -384,6 +384,11 @@ namespace Extensions {
 	extern void destroyExtensions();
 	extern void frameUpdateExtensions();
 	extern void drawExtensionMenus(int extensionIndex);
+	// extensions/ by the exe (the overlay's own), then the data folder's
+	// (the player's), one folder when they're the same
+	extern std::vector<std::filesystem::path> extensionRoots();
+	// Every extension in extensionRoots. A folder named like one already loaded
+	// is left out, so the overlay's own come first.
 	extern void findAndLoadExtensions();
 	// Folders in root with a main.lua that no loaded extension came from are
 	// loaded and started, once main.lua has gone unwritten for settled. How
