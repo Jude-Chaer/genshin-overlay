@@ -46,6 +46,35 @@ namespace Overlay {
     const GLFWvidmode* monitorVideoMode = nullptr;
 
     static bool menuOpen = false;
+
+    // The menu's animations. Going, it shrinks toward spot and fades, drawn
+    // from a copy of its last frame; coming back, it grows from spot.
+    namespace Motion {
+        static double started = -1;
+        static double length = 0;
+        static bool going = false;
+        static bool quitAfter = false;
+        // the menu's size at spot, 1 = its own
+        static float smallest = 1;
+        static ImVec2 spot;
+        static ImVec2 menuCenter;
+        // set when going starts, the copy is made after this frame's Render
+        static bool copyNext = false;
+        // the clock starts at the first frame drawn, which can come late after the overlay idled
+        static bool clockNext = false;
+        static std::vector<ImDrawList*> copy;
+        static void clear() {
+            for (ImDrawList* list : copy) IM_DELETE(list);
+            copy.clear();
+            copyNext = false;
+            clockNext = false;
+            going = false;
+            started = -1;
+        }
+        static bool running() {
+            return started >= 0;
+        }
+    }
     // the menu's page: 0 = Home, 1 = Usage, 2+ = extensions
     static int activeTab = 0;
     // Home, Usage and Accounts come before the extensions' pages
@@ -309,6 +338,9 @@ namespace Overlay {
     }
 
     void SetMenuOpen(bool open) {
+        // a quit fading out stays a quit
+        if (open && Motion::going && Motion::quitAfter) return;
+        if (open && Motion::going) Motion::clear();
         if (open == menuOpen) return;
         menuOpen = open;
         if (open) Taskbar::ShowButton(true);
@@ -857,12 +889,134 @@ namespace Overlay {
         if (Taskbar::RestartAsAdmin()) glfwSetWindowShouldClose(Overlay::Window, true);
     }
 
+    // the Animation effects switch in Windows' settings
+    static bool animationsOn() {
+        BOOL on = TRUE;
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &on, 0);
+        return on;
+    }
+
+    enum class Spot { Taskbar, Tray, Menu };
+
+    // in the overlay's pixels: the taskbar button or the tray icon, else the
+    // bottom middle or the bottom corner
+    static ImVec2 spotOf(Spot spot) {
+        ImVec2 size = ImGui::GetIO().DisplaySize;
+        if (spot == Spot::Menu) return Motion::menuCenter;
+        int x = 0, y = 0, windowX = 0, windowY = 0;
+        glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+        bool found = spot == Spot::Taskbar ? Taskbar::ButtonCenter(x, y) : Taskbar::TrayIconCenter(x, y);
+        if (found && x >= windowX && x <= windowX + size.x && y >= windowY && y <= windowY + size.y)
+            return ImVec2((float)(x - windowX), (float)(y - windowY));
+        return spot == Spot::Taskbar ? ImVec2(size.x / 2, size.y) : size;
+    }
+
+    // closes the menu toward the taskbar or the tray icon, or quits with it fading where it is
+    static void hideMenu(Spot to, bool quit) {
+        if (!animationsOn() || !menuOpen) {
+            if (quit) glfwSetWindowShouldClose(Overlay::Window, true);
+            else SetMenuOpen(false);
+            return;
+        }
+        Motion::clear();
+        Motion::going = true;
+        Motion::quitAfter = quit;
+        Motion::copyNext = true;
+        Motion::started = glfwGetTime();
+        Motion::length = quit ? 0.15 : to == Spot::Tray ? 0.25 : 0.2;
+        Motion::smallest = quit ? 0.95f : 0.1f;
+        Motion::spot = spotOf(quit ? Spot::Menu : to);
+        SetMenuOpen(false);
+    }
+
+    // opens the menu growing from the taskbar or the tray icon
+    static void showMenu(Spot from) {
+        if (menuOpen) return;
+        SetMenuOpen(true);
+        if (!animationsOn()) return;
+        Motion::started = glfwGetTime();
+        Motion::clockNext = true;
+        Motion::length = 0.2;
+        Motion::smallest = 0.1f;
+        Motion::spot = spotOf(from);
+    }
+
+    // the menu's draw lists in this frame, its child windows and popups too
+    static std::vector<ImDrawList*> menuLists(ImDrawData* data) {
+        std::vector<ImDrawList*> lists;
+        ImGuiWindow* menu = ImGui::FindWindowByName("Pocket Esoptron");
+        if (!menu) return lists;
+        for (ImDrawList* list : data->CmdLists) {
+            for (ImGuiWindow* window : GImGui->Windows) {
+                if (window->DrawList != list) continue;
+                ImGuiWindow* up = window;
+                while (up && up != menu) up = up->ParentWindow;
+                if (up) lists.push_back(list);
+                break;
+            }
+        }
+        return lists;
+    }
+
+    // moves a draw list's points from center to at, scaled, its colours faded to alpha
+    static void place(ImDrawList* list, ImVec2 center, ImVec2 at, float scale, float alpha) {
+        auto move = [&](float x, float y) { return ImVec2(at.x + (x - center.x) * scale, at.y + (y - center.y) * scale); };
+        for (ImDrawVert& vertex : list->VtxBuffer) {
+            vertex.pos = move(vertex.pos.x, vertex.pos.y);
+            ImU32 a = (ImU32)(((vertex.col >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
+            vertex.col = (vertex.col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+        }
+        for (ImDrawCmd& command : list->CmdBuffer) {
+            ImVec2 min = move(command.ClipRect.x, command.ClipRect.y), max = move(command.ClipRect.z, command.ClipRect.w);
+            command.ClipRect = ImVec4(min.x, min.y, max.x, max.y);
+        }
+    }
+
+    // After Render: copies the menu when it starts going, then draws the copy
+    // going or the menu coming. Returns the lists added, deleted after drawing.
+    static std::vector<ImDrawList*> moveMenu(ImDrawData* data) {
+        std::vector<ImDrawList*> added;
+        // the frame it's copied in draws the menu itself
+        if (Motion::copyNext) {
+            for (ImDrawList* list : menuLists(data)) Motion::copy.push_back(list->CloneOutput());
+            Motion::copyNext = false;
+            Motion::started = glfwGetTime();
+            return added;
+        }
+        if (!Motion::running()) return added;
+        if (Motion::clockNext) {
+            Motion::started = glfwGetTime();
+            Motion::clockNext = false;
+        }
+        double t = (glfwGetTime() - Motion::started) / Motion::length;
+        if (t >= 1) {
+            bool quit = Motion::going && Motion::quitAfter;
+            Motion::clear();
+            if (quit) glfwSetWindowShouldClose(Overlay::Window, true);
+            return added;
+        }
+        // how far it is from spot: 0 at spot, 1 where the menu is
+        float along = Motion::going ? 1 - (float)(t * t * (3 - 2 * t)) : 1 - (float)std::pow(1 - t, 3);
+        float scale = Motion::smallest + (1 - Motion::smallest) * along;
+        ImVec2 center = Motion::menuCenter;
+        ImVec2 at(Motion::spot.x + (center.x - Motion::spot.x) * along, Motion::spot.y + (center.y - Motion::spot.y) * along);
+        if (Motion::going) {
+            for (ImDrawList* copy : Motion::copy) {
+                ImDrawList* list = copy->CloneOutput();
+                place(list, center, at, scale, along);
+                data->AddDrawList(list);
+                added.push_back(list);
+            }
+        }
+        else for (ImDrawList* list : menuLists(data)) place(list, center, at, scale, along);
+        return added;
+    }
+
     // The menu's X: the app leaves the taskbar and keeps running in the system
     // tray, or quits
     static void closeWindow() {
         Taskbar::ShowButton(false);
-        if (Settings::keepInTray) SetMenuOpen(false);
-        else glfwSetWindowShouldClose(Overlay::Window, true);
+        hideMenu(Spot::Tray, !Settings::keepInTray);
     }
 
     // set by the menu's X while the player hasn't answered the question below
@@ -1223,7 +1377,7 @@ namespace Overlay {
             ImGuiWindowFlags_NoCollapse
         );
         ImGui::PopStyleVar();
-        if (Controls::TitleMinimizeButton()) SetMenuOpen(false);
+        if (Controls::TitleMinimizeButton()) hideMenu(Spot::Taskbar, false);
         DrawKeepInTrayQuestion();
 
         Controls::Theme theme = Controls::GetTheme();
@@ -1719,6 +1873,7 @@ namespace Overlay {
 
         ImVec2 menuPos = ImGui::GetWindowPos();
         ImVec2 menuSize = ImGui::GetWindowSize();
+        Motion::menuCenter = ImVec2(menuPos.x + menuSize.x / 2, menuPos.y + menuSize.y / 2);
         ImGui::End();
         Notices::DrawInMenu(glfwGetTime(), menuPos, menuSize);
 
@@ -1730,8 +1885,16 @@ namespace Overlay {
 
     static void takeTaskbarAsk() {
         switch (Taskbar::Take()) {
-        case Taskbar::Ask::ToggleMenu: SetMenuOpen(!menuOpen); break;
-        case Taskbar::Ask::OpenMenu: SetMenuOpen(true); break;
+        case Taskbar::Ask::ToggleMenu:
+            if (menuOpen) hideMenu(Spot::Taskbar, false);
+            else showMenu(Spot::Taskbar);
+            break;
+        case Taskbar::Ask::TrayToggleMenu:
+            if (menuOpen) hideMenu(Spot::Tray, false);
+            else showMenu(Spot::Tray);
+            break;
+        case Taskbar::Ask::OpenMenu: showMenu(Spot::Taskbar); break;
+        case Taskbar::Ask::TrayOpenMenu: showMenu(Spot::Tray); break;
         case Taskbar::Ask::RestartAsAdmin: restartAsAdmin(); break;
         case Taskbar::Ask::Quit: glfwSetWindowShouldClose(Overlay::Window, true); break;
         case Taskbar::Ask::None: break;
@@ -1760,7 +1923,7 @@ namespace Overlay {
             updateTrafficNote();
 
             // map and menu closed: nothing to show, so don't draw at all
-            bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
+            bool showing = menuOpen || Motion::running() || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
                 Notices::OverGameShowing(glfwGetTime());
             // an extension that follows the player has things to draw with the map closed too
             bool forPlayer = !showing && MiniMap::Wanted();
@@ -1806,7 +1969,8 @@ namespace Overlay {
             // without the game there's no map to follow, the menu stays as it is
             if (Capture::findRunningGame()) MenuFollowsMap(MapTracking::IsMapOpen());
 
-            if (menuOpen) {
+            // the frame a going starts in still draws the menu, for its copy
+            if (menuOpen || Motion::copyNext) {
                 DrawMenu();
             }
             else Notices::DrawOverGame(glfwGetTime());
@@ -1814,6 +1978,7 @@ namespace Overlay {
             updateTyping(true);
 
             ImGui::Render();
+            std::vector<ImDrawList*> added = moveMenu(ImGui::GetDrawData());
 
             int width = 0, height = 0;
             glfwGetFramebufferSize(Overlay::Window, &width, &height);
@@ -1823,6 +1988,7 @@ namespace Overlay {
             glClear(GL_COLOR_BUFFER_BIT);
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            for (ImDrawList* list : added) IM_DELETE(list);
             glfwSwapBuffers(Overlay::Window);
             // sleeps until Windows put the frame on screen, once per refresh,
             // or until the map's next answer is there

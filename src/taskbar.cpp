@@ -4,6 +4,7 @@
 #include <windowsx.h>
 #include <shellapi.h>
 #include <shobjidl.h>
+#include <UIAutomation.h>
 #include <atomic>
 #include <string>
 
@@ -68,7 +69,7 @@ namespace Taskbar {
         UINT picked = TrackPopupMenuEx(list, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_BOTTOMALIGN, x, y, window, nullptr);
         PostMessageW(window, WM_NULL, 0, 0);
         DestroyMenu(list);
-        if (picked == TRAY_OPEN_MENU) asked = Ask::OpenMenu;
+        if (picked == TRAY_OPEN_MENU) asked = Ask::TrayOpenMenu;
         else if (picked == TRAY_RESTART_AS_ADMIN) asked = Ask::RestartAsAdmin;
         else if (picked == TRAY_QUIT) asked = Ask::Quit;
     }
@@ -100,7 +101,7 @@ namespace Taskbar {
             switch (LOWORD(lParam)) {
             case NIN_SELECT:
             case NIN_KEYSELECT:
-                asked = Ask::ToggleMenu;
+                asked = Ask::TrayToggleMenu;
                 break;
             case WM_CONTEXTMENU:
                 showTrayList(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam));
@@ -217,6 +218,61 @@ namespace Taskbar {
 
     void ShowButton(bool shown) {
         if (window) ShowWindow(window, shown ? SW_SHOWMINNOACTIVE : SW_HIDE);
+    }
+
+    // found through UI Automation: the taskbar's button named after the app
+    bool ButtonCenter(int& x, int& y) {
+        HWND bar = FindWindowW(L"Shell_TrayWnd", nullptr);
+        if (!bar) return false;
+        HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        bool found = false;
+        IUIAutomation* automation = nullptr;
+        IUIAutomationElement* root = nullptr;
+        IUIAutomationCondition* isButton = nullptr;
+        IUIAutomationElementArray* buttons = nullptr;
+        VARIANT button;
+        button.vt = VT_I4;
+        button.lVal = UIA_ButtonControlTypeId;
+        if (SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation)))
+            && SUCCEEDED(automation->ElementFromHandle(bar, &root))
+            && SUCCEEDED(automation->CreatePropertyCondition(UIA_ControlTypePropertyId, button, &isButton))
+            && SUCCEEDED(root->FindAll(TreeScope_Descendants, isButton, &buttons))) {
+            int count = 0;
+            buttons->get_Length(&count);
+            for (int i = 0; i < count && !found; i++) {
+                IUIAutomationElement* element = nullptr;
+                if (FAILED(buttons->GetElement(i, &element))) continue;
+                BSTR name = nullptr;
+                RECT rect = {};
+                // e.g. "Pocket Esoptron - 1 running window"
+                if (SUCCEEDED(element->get_CurrentName(&name)) && name && wcsncmp(name, L"Pocket Esoptron", 15) == 0
+                    && SUCCEEDED(element->get_CurrentBoundingRectangle(&rect)) && rect.right > rect.left) {
+                    x = (rect.left + rect.right) / 2;
+                    y = (rect.top + rect.bottom) / 2;
+                    found = true;
+                }
+                SysFreeString(name);
+                element->Release();
+            }
+        }
+        if (buttons) buttons->Release();
+        if (isButton) isButton->Release();
+        if (root) root->Release();
+        if (automation) automation->Release();
+        if (SUCCEEDED(com)) CoUninitialize();
+        return found;
+    }
+
+    bool TrayIconCenter(int& x, int& y) {
+        if (!trayIcon.hWnd) return false;
+        NOTIFYICONIDENTIFIER id = { sizeof(id) };
+        id.hWnd = trayIcon.hWnd;
+        id.uID = trayIcon.uID;
+        RECT rect;
+        if (FAILED(Shell_NotifyIconGetRect(&id, &rect))) return false;
+        x = (rect.left + rect.right) / 2;
+        y = (rect.top + rect.bottom) / 2;
+        return true;
     }
 
     const char* WithWindowsFlag = "--with-windows";

@@ -5,7 +5,8 @@
 // either, picking it in Alt+Tab or starting the exe again reaches the running
 // copy as a request.
 namespace Taskbar {
-    enum class Ask { None, ToggleMenu, OpenMenu, RestartAsAdmin, Quit };
+    // the Tray ones came from the tray icon
+    enum class Ask { None, ToggleMenu, OpenMenu, TrayToggleMenu, TrayOpenMenu, RestartAsAdmin, Quit };
 
     // waits up to 30 s for the copy with this process id to end
     extern void WaitForCopy(unsigned long processId);
@@ -21,6 +22,10 @@ namespace Taskbar {
     extern void Stop();
     // the taskbar button shown or taken off the taskbar, the tray icon stays
     extern void ShowButton(bool shown);
+    // the taskbar button's middle on the screen, false when it can't be found
+    extern bool ButtonCenter(int& x, int& y);
+    // the tray icon's middle on the screen, false when it can't be found
+    extern bool TrayIconCenter(int& x, int& y);
 
     // the flag a start with Windows passes
     extern const char* WithWindowsFlag;
