@@ -51,6 +51,8 @@ namespace Settings {
     // system tray; false: the X quits. keepInTrayAsked: the player has answered
     extern bool keepInTray;
     extern bool keepInTrayAsked;
+    // the page the menu shows after a start: an extension's page key, empty for Home
+    extern std::string startPage;
 
     // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
     extern std::string menuKey;

@@ -29,6 +29,7 @@ namespace Settings {
     bool checkUpdates = true;
     bool keepInTray = true;
     bool keepInTrayAsked = false;
+    std::string startPage;
 
     std::filesystem::path file;
 
@@ -113,6 +114,7 @@ namespace Settings {
         checkUpdates = settings.value("checkUpdates", true);
         keepInTray = settings.value("keepInTray", true);
         keepInTrayAsked = settings.value("keepInTrayAsked", false);
+        startPage = settings.value("startPage", std::string());
     }
 
     // extension settings are in the same file, don't wipe them
@@ -139,6 +141,7 @@ namespace Settings {
         settings["checkUpdates"] = checkUpdates;
         settings["keepInTray"] = keepInTray;
         settings["keepInTrayAsked"] = keepInTrayAsked;
+        settings["startPage"] = startPage;
         write(settings);
     }
 

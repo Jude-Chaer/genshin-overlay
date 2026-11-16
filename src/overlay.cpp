@@ -1252,6 +1252,13 @@ namespace Overlay {
             present.push_back(key);
             byKey[key] = i;
         }
+        // the start page on the menu's first frame, Home when its extension is gone
+        static bool startPageShown = false;
+        if (!startPageShown) {
+            startPageShown = true;
+            auto found = byKey.find(Settings::startPage);
+            if (found != byKey.end()) activeTab = (int)found->second + OwnPages;
+        }
         if (pageStepAsked != PageStep::None) {
             bool undo = pageStepAsked == PageStep::Undo;
             pageStepAsked = PageStep::None;
@@ -1557,6 +1564,24 @@ namespace Overlay {
                     lookPicked = true;
                 }
                 Controls::EndSection();
+            }
+
+            {
+                // Home, then the extensions' pages by their page key
+                std::vector<std::string> startNames = { "Home" }, startKeys = { "" };
+                for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+                    startNames.push_back(Extensions::registeredExtensions[i]->name);
+                    startKeys.push_back(PageKey(*Extensions::registeredExtensions[i], i));
+                }
+                int startPage = (int)(std::find(startKeys.begin(), startKeys.end(), Settings::startPage) - startKeys.begin());
+                if (startPage >= (int)startKeys.size()) startPage = 0;
+                if (Controls::BeginSection("Starting up", false, false, { "Start page: " + startNames[startPage] })) {
+                    if (Controls::Choice("Start page", startPage, startNames)) {
+                        Settings::startPage = startKeys[startPage];
+                        Settings::Save();
+                    }
+                    Controls::EndSection();
+                }
             }
 
             if (Controls::BeginSection("Keys", false, false, { "Menu: " + KeyChoices::menuKeyName() })) {
