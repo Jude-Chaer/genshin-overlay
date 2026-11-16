@@ -1569,6 +1569,8 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
+            ImGui::TextDisabled("Version %s", Helpers::appVersion().c_str());
+
             break;
 
         case 1:

@@ -33,7 +33,8 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
+          msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /p:AppVersion=$version /m /v:minimal
 
       - name: Package
         id: package

@@ -25,6 +25,8 @@ namespace Helpers {
     extern std::filesystem::path exeDirectory();
     // where the overlay keeps what it writes: settings, the window layout, downloads
     extern std::filesystem::path dataDirectory();
+    // the release it was built for, like "v0.3.0", or "dev"
+    extern std::string appVersion();
     // "a, b, c"
     extern std::string joined(const std::vector<std::string>& list);
     extern bool isElevated();

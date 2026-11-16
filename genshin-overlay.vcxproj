@@ -57,6 +57,7 @@
       <PreprocessorDefinitions>GLEW_STATIC;GLFW_INCLUDE_NONE;SOL_ALL_SAFETIES_ON=1;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(IntDir);$(MSBuildProjectDirectory)\third_party\material-color-utilities;$(VcpkgInstalledDir)$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions Condition="'$(AppVersion)'!=''">APP_VERSION="$(AppVersion)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

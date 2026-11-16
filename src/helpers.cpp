@@ -15,6 +15,11 @@
 #include <vector>
 #include <array>
 
+// release builds get it from the workflow
+#ifndef APP_VERSION
+#define APP_VERSION "dev"
+#endif
+
 // in SOIL2's library, only the size from a picture's header
 extern "C" int stbi_info_from_memory(unsigned char const* buffer, int len, int* x, int* y, int* comp);
 
@@ -134,6 +139,10 @@ namespace Helpers {
 
     std::filesystem::path dataDirectory() {
         return exeDirectory();
+    }
+
+    std::string appVersion() {
+        return APP_VERSION;
     }
 
     bool isElevated() {
