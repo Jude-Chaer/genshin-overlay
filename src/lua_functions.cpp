@@ -291,11 +291,12 @@ namespace LuaFunctions {
 		return Extensions::inPhase(function, Extensions::Phase::Update);
 	}
 
-	// ImGUI_Text(text, options), options is optional: { look = "title" } for a part's name
+	// ImGUI_Text(text, options), options is optional: { look = "title" } for a part's name.
+	// It wraps at the page's edge.
 	void ImGUI_Text(const std::string& str, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Text")) return;
 		if (table && table->get_or<std::string>("look", "") == "title") Controls::PartTitle(str.c_str());
-		else ImGui::Text("%s", str.c_str());
+		else ImGui::TextWrapped("%s", str.c_str());
 	}
 
 	// while the extension's button or key function runs, lowered however it ends
