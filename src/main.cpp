@@ -198,12 +198,21 @@ static bool hasFlag(int argc, char** argv, const std::string& flag) {
     return false;
 }
 
+static const char* flagValue(int argc, char** argv, const std::string& flag) {
+    for (int i = 1; i + 1 < argc; i++) {
+        if (flag == argv[i]) return argv[i + 1];
+    }
+    return nullptr;
+}
+
 int main(int argc, char** argv) {
     std::vector<std::string> tools = { "--minimap-replay", "--locate", "--minimap", "--make-index", "--make-items" };
     if (argc >= 2 && std::find(tools.begin(), tools.end(), argv[1]) != tools.end()) {
         LogFile::StartTool();
     }
     else {
+        // a restart as admin waits for the copy that started it
+        if (const char* after = flagValue(argc, argv, "--after")) Taskbar::WaitForCopy(std::strtoul(after, nullptr, 10));
         // before the log, which the running copy has open
         if (Taskbar::AnotherCopyRuns()) return 0;
         LogFile::StartOverlay(Helpers::dataDirectory(), hasFlag(argc, argv, "--console"));

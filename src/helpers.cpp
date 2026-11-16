@@ -155,13 +155,14 @@ namespace Helpers {
         return elevated;
     }
 
-    bool relaunchAsAdmin() {
+    bool relaunchAsAdmin(const std::wstring& arguments) {
         wchar_t path[MAX_PATH];
         GetModuleFileNameW(nullptr, path, MAX_PATH);
         SHELLEXECUTEINFOW info = {};
         info.cbSize = sizeof(info);
         info.lpVerb = L"runas";
         info.lpFile = path;
+        if (!arguments.empty()) info.lpParameters = arguments.c_str();
         info.nShow = SW_SHOWNORMAL;
         return ShellExecuteExW(&info) != FALSE;
     }

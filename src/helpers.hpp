@@ -42,7 +42,7 @@ namespace Helpers {
     // the system's own font file for the menu, empty when it has none
     extern std::filesystem::path systemFont();
     // starts this exe again as admin (UAC prompt), false if that was declined
-    extern bool relaunchAsAdmin();
+    extern bool relaunchAsAdmin(const std::wstring& arguments = L"");
     extern std::string GenerateUUID();
     extern std::string hashFile(const std::filesystem::path& filePath);
     extern std::string hashString(const std::string& input);

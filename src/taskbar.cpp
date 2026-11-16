@@ -1,6 +1,8 @@
 #include "taskbar.hpp"
+#include "helpers.hpp"
 #include <windows.h>
 #include <atomic>
+#include <string>
 
 namespace Taskbar {
     static const wchar_t* WINDOW_CLASS = L"PocketEsoptron";
@@ -10,6 +12,13 @@ namespace Taskbar {
     static HANDLE mutex = nullptr;
     static HWND window = nullptr;
     static std::atomic<Ask> asked{ Ask::None };
+
+    void WaitForCopy(unsigned long processId) {
+        HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, processId);
+        if (!process) return;
+        WaitForSingleObject(process, 30000);
+        CloseHandle(process);
+    }
 
     bool AnotherCopyRuns() {
         mutex = CreateMutexW(nullptr, FALSE, MUTEX_NAME);
@@ -24,6 +33,10 @@ namespace Taskbar {
         }
         if (other) PostMessageW(other, OPEN_MENU, 0, 0);
         return true;
+    }
+
+    bool RestartAsAdmin() {
+        return Helpers::relaunchAsAdmin(L"--after " + std::to_wstring(GetCurrentProcessId()));
     }
 
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {

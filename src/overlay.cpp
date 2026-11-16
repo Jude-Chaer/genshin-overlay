@@ -851,11 +851,28 @@ namespace Overlay {
         return { MenuSummary::Join(MenuSummary::Join(Settings::look, Settings::lightDark), std::to_string(Settings::size) + "%") };
     }
 
+    static void restartAsAdmin() {
+        if (Taskbar::RestartAsAdmin()) glfwSetWindowShouldClose(Overlay::Window, true);
+    }
+
+    // nothing when already admin
+    static void DrawRestartAsAdmin() {
+        static bool elevated = Helpers::isElevated();
+        if (elevated) return;
+        if (Controls::Button("Restart as admin")) restartAsAdmin();
+    }
+
     static void DrawGameTraffic(const GameTrafficText::Line& line) {
         bool on = Settings::readGameTraffic;
         if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
         if (line.downloadNpcap) DrawNpcapButton();
-        if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
+        if (line.orAdmin) {
+            ImGui::TextWrapped("Or run the overlay as admin.");
+            // Advanced has the same button on this page
+            ImGui::PushID("traffic");
+            DrawRestartAsAdmin();
+            ImGui::PopID();
+        }
     }
 
     static void DrawGameTrafficSection() {
@@ -1505,6 +1522,8 @@ namespace Overlay {
             }
 
             if (Controls::BeginSection("Advanced")) {
+                DrawRestartAsAdmin();
+
                 Controls::ToggleOptions takenKeys;
                 takenKeys.lines = { { "Lets Record catch a key another program has taken. Some antivirus programs dislike this." } };
                 if (Controls::Toggle("Record taken keys", &Settings::recordTakenKeys, takenKeys)) {
