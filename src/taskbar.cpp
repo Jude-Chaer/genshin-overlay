@@ -84,12 +84,12 @@ namespace Taskbar {
                 asked = Ask::ToggleMenu;
                 return 0;
             case SC_CLOSE:
-                asked = Ask::Quit;
+                asked = Ask::Close;
                 return 0;
             }
             break;
         case WM_CLOSE:
-            asked = Ask::Quit;
+            asked = Ask::Close;
             return 0;
         case OPEN_MENU:
             asked = Ask::OpenMenu;

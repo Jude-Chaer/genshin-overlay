@@ -1896,6 +1896,14 @@ namespace Overlay {
         case Taskbar::Ask::OpenMenu: showMenu(Spot::Taskbar); break;
         case Taskbar::Ask::TrayOpenMenu: showMenu(Spot::Tray); break;
         case Taskbar::Ask::RestartAsAdmin: restartAsAdmin(); break;
+        case Taskbar::Ask::Close:
+            // as the menu's X, the question in the menu the first time
+            if (Settings::keepInTrayAsked) closeWindow();
+            else {
+                SetMenuOpen(true);
+                askKeepInTray = true;
+            }
+            break;
         case Taskbar::Ask::Quit: glfwSetWindowShouldClose(Overlay::Window, true); break;
         case Taskbar::Ask::None: break;
         }

@@ -5,8 +5,9 @@
 // either, picking it in Alt+Tab or starting the exe again reaches the running
 // copy as a request.
 namespace Taskbar {
-    // the Tray ones came from the tray icon
-    enum class Ask { None, ToggleMenu, OpenMenu, TrayToggleMenu, TrayOpenMenu, RestartAsAdmin, Quit };
+    // the Tray ones came from the tray icon; Close is the window's close (the
+    // X in Alt+Tab, Close window on the button), Quit the tray list's Quit
+    enum class Ask { None, ToggleMenu, OpenMenu, TrayToggleMenu, TrayOpenMenu, RestartAsAdmin, Close, Quit };
 
     // waits up to 30 s for the copy with this process id to end
     extern void WaitForCopy(unsigned long processId);
