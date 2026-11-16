@@ -466,7 +466,7 @@ namespace Extensions {
 	// asks for its keys that wait, the ones not refused at this start
 	extern void askWaitingKeys(Extension& ext);
 	extern void loadExtensionPermissions(Extension* ext);
-	// "Official" or "Genshin Overlay" in it, letter case, spaces and signs
+	// "Official", "Pocket Esoptron" or "Genshin Overlay" in it, letter case, spaces and signs
 	// aside: only the overlay's own extensions are named like that
 	extern bool reservedName(const std::string& name);
 	// its name, with the Official badge after it for the overlay's own

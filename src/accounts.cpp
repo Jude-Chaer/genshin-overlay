@@ -179,7 +179,7 @@ namespace Accounts {
     // a login from the window into the store and memory
     static bool found(Site site, Login& parsed, const std::string& account) {
         std::string secret = site == Site::HoyolabMap ? parsed.secret : appsampleSecret(parsed);
-        std::wstring comment = site == Site::HoyolabMap ? L"HoYoLAB Map login of Genshin Overlay" : L"appsample login of Genshin Overlay";
+        std::wstring comment = site == Site::HoyolabMap ? L"HoYoLAB Map login of Pocket Esoptron" : L"appsample login of Pocket Esoptron";
         bool kept = Credentials::Write(SiteName(site), { account, secret }, comment);
         Credentials::Wipe(secret);
         std::lock_guard<std::mutex> lock(mutex);
@@ -404,7 +404,7 @@ namespace Accounts {
             Credentials::Wipe(login.secret);
             login.secret = refresh.refreshToken;
             std::string secret = appsampleSecret(login);
-            if (!Credentials::Write(SiteName(Site::Appsample), { login.status.account, secret }, L"appsample login of Genshin Overlay"))
+            if (!Credentials::Write(SiteName(Site::Appsample), { login.status.account, secret }, L"appsample login of Pocket Esoptron"))
                 std::cerr << "[accounts] appsample's new refresh token couldn't be kept, the old one is still saved" << std::endl;
             Credentials::Wipe(secret);
         }

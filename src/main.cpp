@@ -28,7 +28,7 @@
 #include "marks.hpp"
 #include "web_images.hpp"
 
-// genshin-overlay.exe --locate <screenshot>
+// PocketEsoptron.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
 static int locateImage(const std::string& imagePath) {
     MapLocator::Index index;
@@ -62,7 +62,7 @@ static MiniMap::Locate locateWith(MapLocator::Index& index) {
     return [&index](const cv::Mat& grab) { return index.Match(grab, grab.cols / 2.0, grab.rows / 2.0, false, false); };
 }
 
-// genshin-overlay.exe --minimap <screenshot>
+// PocketEsoptron.exe --minimap <screenshot>
 // finds the player from the minimap on one image of the whole game, map closed
 static int locatePlayer(const std::string& imagePath) {
     cv::Mat image = cv::imread(imagePath, cv::IMREAD_COLOR);
@@ -103,7 +103,7 @@ static int locatePlayer(const std::string& imagePath) {
     return 0;
 }
 
-// genshin-overlay.exe --minimap-replay <folder> <out.tsv> [pictures per second] [timed]
+// PocketEsoptron.exe --minimap-replay <folder> <out.tsv> [pictures per second] [timed]
 // Follows the player through a folder of minimap pictures (the square
 // MiniMap::rect gives, in name order) like the live thread would, and writes
 // one line per look.
@@ -199,11 +199,11 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--minimap") {
         return locatePlayer(argv[2]);
     }
-    // genshin-overlay.exe --make-index <folder>, used by the map-index workflow
+    // PocketEsoptron.exe --make-index <folder>, used by the map-index workflow
     if (argc >= 3 && std::string(argv[1]) == "--make-index") {
         return saysWhy([&]() { return MapData::makeIndex(argv[2]); });
     }
-    // genshin-overlay.exe --make-items <folder> [--allow-drop], used by the map-index workflow too
+    // PocketEsoptron.exe --make-items <folder> [--allow-drop], used by the map-index workflow too
     if (argc >= 3 && std::string(argv[1]) == "--make-items") {
         bool allowDrop = argc >= 4 && std::string(argv[3]) == "--allow-drop";
         return saysWhy([&]() { return ItemFiles::make(argv[2], allowDrop); });

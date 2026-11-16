@@ -1105,7 +1105,8 @@ namespace Extensions {
 		for (unsigned char c : name) {
 			if (std::isalnum(c)) letters += (char)std::tolower(c);
 		}
-		return letters.find("official") != std::string::npos || letters.find("genshinoverlay") != std::string::npos;
+		return letters.find("official") != std::string::npos || letters.find("genshinoverlay") != std::string::npos
+			|| letters.find("pocketesoptron") != std::string::npos;
 	}
 
 	void drawName(const Extension& ext) {

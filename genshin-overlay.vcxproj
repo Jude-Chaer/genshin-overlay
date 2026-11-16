@@ -45,7 +45,7 @@
   <PropertyGroup>
     <OutDir>$(MSBuildProjectDirectory)\build\$(Configuration)\</OutDir>
     <IntDir>$(MSBuildProjectDirectory)\build\obj\$(Configuration)\</IntDir>
-    <TargetName>genshin-overlay</TargetName>
+    <TargetName>PocketEsoptron</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>

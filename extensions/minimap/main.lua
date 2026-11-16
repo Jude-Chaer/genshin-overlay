@@ -1,7 +1,7 @@
 metadata = {
     name = "Minimap",
     description = "Shows where you are on the map, read from the minimap.",
-    author = "genshin-overlay",
+    author = "Pocket Esoptron",
     version = "1.3.0",
 }
 

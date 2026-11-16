@@ -41,9 +41,9 @@ jobs:
         shell: pwsh
         run: |
           $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
-          $folder = "genshin-overlay"
+          $folder = "PocketEsoptron"
           New-Item -ItemType Directory $folder | Out-Null
-          Copy-Item build\Release\genshin-overlay.exe $folder
+          Copy-Item build\Release\PocketEsoptron.exe $folder
           # the example is for extension authors, it uses the internet at every start
           New-Item -ItemType Directory "$folder\extensions" | Out-Null
           Get-ChildItem extensions -Directory | Where-Object Name -ne "example" | Copy-Item -Recurse -Destination "$folder\extensions"
@@ -58,7 +58,7 @@ jobs:
           Copy-Item third_party\material-color-utilities\LICENSE "$folder\licenses\material-color-utilities"
           $beta = $version -like "*-*"
           if ($beta) { Copy-Item BETA.md $folder }
-          $zip = "genshin-overlay-$version.zip"
+          $zip = "PocketEsoptron-$version.zip"
           Compress-Archive -Path $folder -DestinationPath $zip
           "version=$version" >> $env:GITHUB_OUTPUT
           "zip=$zip" >> $env:GITHUB_OUTPUT
@@ -69,7 +69,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = "Unzip anywhere and run genshin-overlay.exe. Press Alt+`` ` `` in game for the menu. On the first start it downloads the map data (about 26 MB)."
+          $notes = "Unzip anywhere and run PocketEsoptron.exe. Press Alt+`` ` `` in game for the menu. On the first start it downloads the map data (about 26 MB)."
           if ("${{ steps.package.outputs.beta }}" -eq "True") {
             gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes-file BETA.md --prerelease --target "${{ github.sha }}"
           }

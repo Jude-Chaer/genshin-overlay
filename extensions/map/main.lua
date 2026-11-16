@@ -1,7 +1,7 @@
 metadata = {
     name = "Map",
     description = "Draws HoYoLAB's map over the in-game map, lined up with it.",
-    author = "genshin-overlay",
+    author = "Pocket Esoptron",
     version = "1.0.0",
 }
 

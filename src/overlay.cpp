@@ -208,7 +208,7 @@ namespace Overlay {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
         // 1px shorter than the monitor, otherwise Windows treats it as a fullscreen app
-        Overlay::Window = glfwCreateWindow(Overlay::monitorVideoMode->width, Overlay::monitorVideoMode->height - 1, "Genshin Overlay", NULL, NULL);
+        Overlay::Window = glfwCreateWindow(Overlay::monitorVideoMode->width, Overlay::monitorVideoMode->height - 1, "Pocket Esoptron", NULL, NULL);
         if (!Overlay::Window) {
             std::cerr << "Failed to create the overlay window" << std::endl;
             return false;
@@ -786,7 +786,7 @@ namespace Overlay {
         ImGui::SetNextWindowBgAlpha(0.8f * alpha);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
         ImGui::Begin("##startup", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
-        ImGui::Text("Genshin Overlay is running. Press %s for the menu.", KeyChoices::menuKeyName().c_str());
+        ImGui::Text("Pocket Esoptron is running. Press %s for the menu.", KeyChoices::menuKeyName().c_str());
         ImGui::End();
         ImGui::PopStyleVar();
     }
@@ -799,7 +799,7 @@ namespace Overlay {
         GameTraffic::Status now = GameTraffic::GetStatus();
         std::string relog = GameTrafficText::NeedsRelog(now) ? GameTraffic::ReasonCode(now) : "";
         if (!relog.empty() && relog != trafficLastRelog) {
-            Notices::Add("", "Genshin Overlay", Notices::Kind::Error, GameTrafficText::For(now).text, glfwGetTime());
+            Notices::Add("", "Pocket Esoptron", Notices::Kind::Error, GameTrafficText::For(now).text, glfwGetTime());
         }
         trafficLastRelog = relog;
     }
@@ -952,7 +952,7 @@ namespace Overlay {
     static void PageNotice(const std::string& text) {
         double now = glfwGetTime();
         if (Notices::Update(pageNotice, text, now)) return;
-        pageNotice = Notices::Add("", "Genshin Overlay", Notices::Kind::Plain, text, now);
+        pageNotice = Notices::Add("", "Pocket Esoptron", Notices::Kind::Plain, text, now);
         Notices::SetIcons(pageNotice, {
             { Controls::ButtonIcon::Undo, "Undo", [] { return pageHistory.CanUndo(); }, [] { pageStepAsked = PageStep::Undo; } },
             { Controls::ButtonIcon::Redo, "Redo", [] { return pageHistory.CanRedo(); }, [] { pageStepAsked = PageStep::Redo; } },
@@ -1147,7 +1147,7 @@ namespace Overlay {
         // the list and the page reach the window's edges
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin(
-            "Genshin Overlay",
+            "Pocket Esoptron",
             &open,
             ImGuiWindowFlags_NoCollapse
         );
