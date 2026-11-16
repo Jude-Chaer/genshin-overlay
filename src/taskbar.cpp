@@ -38,11 +38,11 @@ namespace Taskbar {
         if (!taken) return false;
         // the running copy makes its window once the overlay is up
         HWND other = FindWindowW(WINDOW_CLASS, nullptr);
-        for (int i = 0; i < 100 && !other; i++) {
+        for (int i = 0; i < 100 && !other && request != Ask::None; i++) {
             Sleep(100);
             other = FindWindowW(WINDOW_CLASS, nullptr);
         }
-        if (other) PostMessageW(other, request == Ask::RestartAsAdmin ? RESTART_AS_ADMIN : OPEN_MENU, 0, 0);
+        if (other && request != Ask::None) PostMessageW(other, request == Ask::RestartAsAdmin ? RESTART_AS_ADMIN : OPEN_MENU, 0, 0);
         return true;
     }
 
@@ -217,6 +217,37 @@ namespace Taskbar {
 
     void ShowButton(bool shown) {
         if (window) ShowWindow(window, shown ? SW_SHOWMINNOACTIVE : SW_HIDE);
+    }
+
+    const char* WithWindowsFlag = "--with-windows";
+    static const wchar_t* RUN_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    static const wchar_t* APPROVED_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+    static const wchar_t* RUN_NAME = L"PocketEsoptron";
+
+    bool StartsWithWindows() {
+        if (RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_NAME, RRF_RT_REG_SZ, nullptr, nullptr, nullptr) != ERROR_SUCCESS) return false;
+        // Task Manager's switch: the first byte is odd when it's off
+        BYTE approved[12] = {};
+        DWORD size = sizeof(approved);
+        if (RegGetValueW(HKEY_CURRENT_USER, APPROVED_KEY, RUN_NAME, RRF_RT_REG_BINARY, nullptr, approved, &size) != ERROR_SUCCESS) return true;
+        return size == 0 || (approved[0] & 1) == 0;
+    }
+
+    void StartWithWindows(bool on) {
+        HKEY key;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return;
+        if (on) {
+            wchar_t path[MAX_PATH];
+            DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+            if (length && length < MAX_PATH) {
+                std::string flag = WithWindowsFlag;
+                std::wstring command = L"\"" + std::wstring(path, length) + L"\" " + std::wstring(flag.begin(), flag.end());
+                RegSetValueExW(key, RUN_NAME, 0, REG_SZ, (const BYTE*)command.c_str(), (DWORD)((command.size() + 1) * sizeof(wchar_t)));
+            }
+        }
+        else RegDeleteValueW(key, RUN_NAME);
+        RegCloseKey(key);
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, APPROVED_KEY, RUN_NAME);
     }
 
     Ask Take() {

@@ -13,7 +13,8 @@ namespace Overlay {
     extern GLFWmonitor* mainMonitor;
     extern const GLFWvidmode* monitorVideoMode;
 
-    bool Init();
+    // withWindows: started by Windows, the menu opens only when Settings::startIn is menu
+    bool Init(bool withWindows);
     void Shutdown();
     void MainLoop();
     // the menu only opens and closes through SetMenuOpen, it also takes or

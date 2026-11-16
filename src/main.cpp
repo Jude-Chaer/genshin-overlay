@@ -207,6 +207,7 @@ static const char* flagValue(int argc, char** argv, const std::string& flag) {
 }
 
 int main(int argc, char** argv) {
+    bool withWindows = hasFlag(argc, argv, Taskbar::WithWindowsFlag);
     std::vector<std::string> tools = { "--minimap-replay", "--locate", "--minimap", "--make-index", "--make-items" };
     if (argc >= 2 && std::find(tools.begin(), tools.end(), argv[1]) != tools.end()) {
         LogFile::StartTool();
@@ -219,7 +220,8 @@ int main(int argc, char** argv) {
         if (const char* after = flagValue(argc, argv, "--after")) Taskbar::WaitForCopy(std::strtoul(after, nullptr, 10));
         bool restart = hasFlag(argc, argv, "--restart-as-admin");
         // before the log, which the running copy has open
-        if (Taskbar::AnotherCopyRuns(restart ? Taskbar::Ask::RestartAsAdmin : Taskbar::Ask::OpenMenu)) return 0;
+        Taskbar::Ask request = restart ? Taskbar::Ask::RestartAsAdmin : withWindows ? Taskbar::Ask::None : Taskbar::Ask::OpenMenu;
+        if (Taskbar::AnotherCopyRuns(request)) return 0;
         if (restart && !Helpers::isElevated() && Taskbar::RestartAsAdmin()) return 0;
         std::vector<std::string> moved;
         if (Helpers::dataDirectory() != Helpers::exeDirectory()) moved = Helpers::moveOldData(Helpers::exeDirectory(), Helpers::dataDirectory());
@@ -260,11 +262,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (!Overlay::Init()) {
+    if (!Overlay::Init(withWindows)) {
         glfwTerminate();
         return 1;
     }
     Taskbar::Start();
+    if (withWindows && Settings::startIn == "tray") Taskbar::ShowButton(false);
+    // the Run value follows the exe when it's moved
+    if (Taskbar::StartsWithWindows()) Taskbar::StartWithWindows(true);
     if (Settings::checkUpdates) UpdateCheck::Start();
 
     Marks::Init();

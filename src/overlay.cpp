@@ -191,7 +191,7 @@ namespace Overlay {
         return (ImTextureID)(intptr_t)texture;
     }
 
-    bool Init() {
+    bool Init(bool withWindows) {
         Asks::addSetting({ "Game traffic", "Read the game's traffic", "It only reads, nothing is ever sent to the game.",
             []() { return Settings::readGameTraffic; }, []() { setGameTraffic(true); } });
 
@@ -275,7 +275,7 @@ namespace Overlay {
 
         // the menu key only works with the game in front, so without the game the
         // menu opens by itself, the settings can be changed without it
-        if (!Capture::findRunningGame()) SetMenuOpen(true);
+        if (!Capture::findRunningGame() && (!withWindows || Settings::startIn == "menu")) SetMenuOpen(true);
 
         startTime = glfwGetTime();
         return true;
@@ -1575,11 +1575,25 @@ namespace Overlay {
                 }
                 int startPage = (int)(std::find(startKeys.begin(), startKeys.end(), Settings::startPage) - startKeys.begin());
                 if (startPage >= (int)startKeys.size()) startPage = 0;
-                if (Controls::BeginSection("Starting up", false, false, { "Start page: " + startNames[startPage] })) {
+                static bool withWindows = Taskbar::StartsWithWindows();
+                std::string startSummary = "Start page: " + startNames[startPage] + (withWindows ? ", starts with Windows" : "");
+                if (Controls::BeginSection("Starting up", false, false, { startSummary })) {
                     if (Controls::Choice("Start page", startPage, startNames)) {
                         Settings::startPage = startKeys[startPage];
                         Settings::Save();
                     }
+
+                    if (Controls::Toggle("Start with Windows", &withWindows)) Taskbar::StartWithWindows(withWindows);
+                    static const std::vector<std::string> startInKeys = { "menu", "taskbar", "tray" };
+                    static const std::vector<std::string> startInNames = { "The menu", "The taskbar", "The system tray" };
+                    int startIn = (int)(std::find(startInKeys.begin(), startInKeys.end(), Settings::startIn) - startInKeys.begin());
+                    if (startIn >= (int)startInKeys.size()) startIn = 0;
+                    ImGui::BeginDisabled(!withWindows);
+                    if (Controls::Choice("Starts in", startIn, startInNames)) {
+                        Settings::startIn = startInKeys[startIn];
+                        Settings::Save();
+                    }
+                    ImGui::EndDisabled();
                     Controls::EndSection();
                 }
             }
