@@ -27,6 +27,7 @@
 #include "accounts.hpp"
 #include "marks.hpp"
 #include "web_images.hpp"
+#include "log_file.hpp"
 
 // PocketEsoptron.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -189,7 +190,22 @@ static int saysWhy(const std::function<int()>& run) {
     return 1;
 }
 
+static bool hasFlag(int argc, char** argv, const std::string& flag) {
+    for (int i = 1; i < argc; i++) {
+        if (flag == argv[i]) return true;
+    }
+    return false;
+}
+
 int main(int argc, char** argv) {
+    std::vector<std::string> tools = { "--minimap-replay", "--locate", "--minimap", "--make-index", "--make-items" };
+    if (argc >= 2 && std::find(tools.begin(), tools.end(), argv[1]) != tools.end()) {
+        LogFile::StartTool();
+    }
+    else {
+        LogFile::StartOverlay(Helpers::dataDirectory(), hasFlag(argc, argv, "--console"));
+    }
+
     if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
         return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0, argc >= 6 && std::string(argv[5]) == "timed");
     }
@@ -210,7 +226,7 @@ int main(int argc, char** argv) {
     }
 
     // acts as if Npcap isn't installed, to see what the menu says then
-    if (argc >= 2 && std::string(argv[1]) == "--skip-npcap") {
+    if (hasFlag(argc, argv, "--skip-npcap")) {
         PacketCapture::skipNpcap = true;
     }
 
