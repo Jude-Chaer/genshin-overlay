@@ -683,14 +683,18 @@ namespace MapTracking {
         return out.right > out.left && out.bottom > out.top;
     }
 
+    // from the exe's resources, resources/app.rc
     void loadZoomTemplate()
     {
-        zoomTemplate = cv::imread(
-            "zoombar_template.png",
-            cv::IMREAD_GRAYSCALE
-        );
+        HRSRC found = FindResourceW(nullptr, L"ZOOMBAR_TEMPLATE", RT_RCDATA);
+        HGLOBAL loaded = found ? LoadResource(nullptr, found) : nullptr;
+        const void* bytes = loaded ? LockResource(loaded) : nullptr;
+        if (bytes) {
+            cv::Mat file(1, (int)SizeofResource(nullptr, found), CV_8U, (void*)bytes);
+            zoomTemplate = cv::imdecode(file, cv::IMREAD_GRAYSCALE);
+        }
         if (zoomTemplate.empty()) {
-            std::cerr << "Failed to load zoombar_template.png\n";
+            std::cerr << "Failed to load the zoom bar template from the exe\n";
         }
 	}
 

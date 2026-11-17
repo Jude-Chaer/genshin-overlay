@@ -53,8 +53,6 @@ jobs:
           # the game traffic's keys, the ones the overlay falls back on
           Copy-Item -Recurse packets $folder
           Copy-Item README.md, LICENSE $folder
-          # the zoom bar detector looks for it next to the exe
-          Copy-Item zoombar_template.png $folder
           # Roboto for the Material You look and Inter for Apple, with their licences, and the colour library's licence
           Copy-Item -Recurse fonts $folder
           New-Item -ItemType Directory "$folder\licenses\material-color-utilities" | Out-Null
