@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 
 // The app's taskbar button, its tray icon and the rule that only one copy
 // runs. Both belong to a window of its own that stays minimized; pressing
@@ -27,6 +28,12 @@ namespace Taskbar {
     extern void Stop();
     // the taskbar button shown or taken off the taskbar, the tray icon stays
     extern void ShowButton(bool shown);
+    extern bool ButtonShown();
+    // the menu's picture for the button's preview, Alt+Tab and hovering the
+    // preview: BGRA, alpha already applied, top row first, its top left
+    // corner at screenX, screenY. Until there's one the preview is empty.
+    extern void SetPicture(std::vector<unsigned char> bgra, int width, int height, int screenX, int screenY);
+    extern bool HasPicture();
     // the taskbar button's middle on the screen, false when it can't be found
     extern bool ButtonCenter(int& x, int& y);
     // the tray icon's middle on the screen, false when it can't be found

@@ -5,8 +5,11 @@
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <UIAutomation.h>
+#include <dwmapi.h>
+#include <algorithm>
 #include <atomic>
 #include <string>
+#include <vector>
 
 namespace Taskbar {
     static const wchar_t* WINDOW_CLASS = L"PocketEsoptron";
@@ -25,6 +28,10 @@ namespace Taskbar {
     static NOTIFYICONDATAW trayIcon = {};
     // sent to every window when Explorer starts again, the tray icon has to be added again
     static UINT taskbarCreated = 0;
+    // the menu's picture, BGRA with its alpha already applied, top row first
+    static std::vector<unsigned char> picture;
+    static int pictureWidth = 0;
+    static int pictureHeight = 0;
 
     void WaitForCopy(unsigned long processId) {
         HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, processId);
@@ -92,6 +99,43 @@ namespace Taskbar {
         else if (picked == TRAY_QUIT) asked = Ask::Quit;
     }
 
+    // the picture shrunk to fit in maxWidth by maxHeight, each pixel the
+    // average of the ones it covers
+    static HBITMAP pictureBitmap(int maxWidth, int maxHeight) {
+        double scale = std::min({ 1.0, (double)maxWidth / pictureWidth, (double)maxHeight / pictureHeight });
+        int width = std::max(1, (int)(pictureWidth * scale));
+        int height = std::max(1, (int)(pictureHeight * scale));
+        BITMAPINFO info = {};
+        info.bmiHeader.biSize = sizeof(info.bmiHeader);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!bitmap) return nullptr;
+        unsigned char* out = (unsigned char*)bits;
+        for (int y = 0; y < height; y++) {
+            int top = y * pictureHeight / height;
+            int bottom = std::max(top + 1, (y + 1) * pictureHeight / height);
+            for (int x = 0; x < width; x++) {
+                int left = x * pictureWidth / width;
+                int right = std::max(left + 1, (x + 1) * pictureWidth / width);
+                unsigned sum[4] = {};
+                for (int py = top; py < bottom; py++) {
+                    for (int px = left; px < right; px++) {
+                        const unsigned char* pixel = &picture[((size_t)py * pictureWidth + px) * 4];
+                        for (int c = 0; c < 4; c++) sum[c] += pixel[c];
+                    }
+                }
+                unsigned count = (unsigned)((bottom - top) * (right - left));
+                for (int c = 0; c < 4; c++) out[((size_t)y * width + x) * 4 + c] = (unsigned char)(sum[c] / count);
+            }
+        }
+        return bitmap;
+    }
+
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         switch (message) {
         case WM_SYSCOMMAND:
@@ -108,6 +152,26 @@ namespace Taskbar {
             break;
         case WM_CLOSE:
             asked = Ask::Close;
+            return 0;
+        // the button's preview and Alt+Tab, lParam holds the biggest size it takes
+        case WM_DWMSENDICONICTHUMBNAIL:
+            if (!picture.empty()) {
+                HBITMAP bitmap = pictureBitmap(HIWORD(lParam), LOWORD(lParam));
+                if (bitmap) {
+                    DwmSetIconicThumbnail(hwnd, bitmap, 0);
+                    DeleteObject(bitmap);
+                }
+            }
+            return 0;
+        // hovering the preview: the menu where it was on the screen
+        case WM_DWMSENDICONICLIVEPREVIEWBITMAP:
+            if (!picture.empty()) {
+                HBITMAP bitmap = pictureBitmap(pictureWidth, pictureHeight);
+                if (bitmap) {
+                    DwmSetIconicLivePreviewBitmap(hwnd, bitmap, nullptr, 0);
+                    DeleteObject(bitmap);
+                }
+            }
             return 0;
         case OPEN_MENU:
             asked = Ask::OpenMenu;
@@ -240,6 +304,42 @@ namespace Taskbar {
 
     void ShowButton(bool shown) {
         if (window) ShowWindow(window, shown ? SW_SHOWMINNOACTIVE : SW_HIDE);
+    }
+
+    bool ButtonShown() {
+        return window && IsWindowVisible(window);
+    }
+
+    bool HasPicture() {
+        return !picture.empty();
+    }
+
+    void SetPicture(std::vector<unsigned char> bgra, int width, int height, int screenX, int screenY) {
+        if (!window || width <= 0 || height <= 0 || bgra.size() != (size_t)width * height * 4) return;
+        bool first = picture.empty();
+        picture = std::move(bgra);
+        pictureWidth = width;
+        pictureHeight = height;
+
+        // the hover preview shows the picture where the window would be restored;
+        // that spot is in work area coordinates
+        WINDOWPLACEMENT placement = { sizeof(placement) };
+        MONITORINFO monitor = { sizeof(monitor) };
+        POINT corner = { screenX, screenY };
+        if (GetWindowPlacement(window, &placement) && GetMonitorInfoW(MonitorFromPoint(corner, MONITOR_DEFAULTTOPRIMARY), &monitor)) {
+            int x = screenX - (monitor.rcWork.left - monitor.rcMonitor.left);
+            int y = screenY - (monitor.rcWork.top - monitor.rcMonitor.top);
+            placement.rcNormalPosition = { x, y, x + width, y + height };
+            placement.showCmd = SW_SHOWMINNOACTIVE;
+            SetWindowPlacement(window, &placement);
+        }
+
+        if (first) {
+            BOOL on = TRUE;
+            DwmSetWindowAttribute(window, DWMWA_FORCE_ICONIC_REPRESENTATION, &on, sizeof(on));
+            DwmSetWindowAttribute(window, DWMWA_HAS_ICONIC_BITMAP, &on, sizeof(on));
+        }
+        else DwmInvalidateIconicBitmaps(window);
     }
 
     // found through UI Automation: the taskbar's button named after the app

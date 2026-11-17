@@ -77,6 +77,9 @@ namespace Overlay {
     }
     // the menu's page: 0 = Home, 1 = Usage, 2+ = extensions
     static int activeTab = 0;
+    // where the menu was last drawn
+    static ImVec2 menuPicturePos;
+    static ImVec2 menuPictureSize;
     // Home, Usage and Accounts come before the extensions' pages
     static const int OwnPages = 3;
     // the player's order and folders of the extensions' pages
@@ -1912,6 +1915,8 @@ namespace Overlay {
         ImVec2 menuPos = ImGui::GetWindowPos();
         ImVec2 menuSize = ImGui::GetWindowSize();
         Motion::menuCenter = ImVec2(menuPos.x + menuSize.x / 2, menuPos.y + menuSize.y / 2);
+        menuPicturePos = menuPos;
+        menuPictureSize = menuSize;
         ImGui::End();
         Notices::DrawInMenu(glfwGetTime(), menuPos, menuSize);
 
@@ -1919,6 +1924,56 @@ namespace Overlay {
             if (!Settings::keepInTrayAsked) askKeepInTray = true;
             else closeWindow();
         }
+    }
+
+    // The menu as drawn, for the taskbar button's preview: once a second while
+    // it's open, and in the frame it starts going
+    static void takeMenuPicture(int framebufferHeight, bool now) {
+        static double takenAt = -10;
+        if (!Taskbar::ButtonShown() || (!now && glfwGetTime() - takenAt < 1.0)) return;
+        takenAt = glfwGetTime();
+        ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+        int framebufferWidth = (int)(ImGui::GetIO().DisplaySize.x * scale.x);
+        int left = std::max(0, (int)(menuPicturePos.x * scale.x));
+        int top = std::max(0, (int)(menuPicturePos.y * scale.y));
+        int right = std::min(framebufferWidth, (int)((menuPicturePos.x + menuPictureSize.x) * scale.x));
+        int bottom = std::min(framebufferHeight, (int)((menuPicturePos.y + menuPictureSize.y) * scale.y));
+        int width = right - left, height = bottom - top;
+        if (width <= 0 || height <= 0) return;
+        std::vector<unsigned char> pixels((size_t)width * height * 4);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(left, framebufferHeight - bottom, width, height, GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+        // GL's rows go from the bottom up
+        size_t row = (size_t)width * 4;
+        for (int y = 0; y < height / 2; y++)
+            std::swap_ranges(pixels.begin() + y * row, pixels.begin() + (y + 1) * row, pixels.begin() + (height - 1 - y) * row);
+        int windowX = 0, windowY = 0;
+        glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+        Taskbar::SetPicture(std::move(pixels), width, height, windowX + (int)(left / scale.x), windowY + (int)(top / scale.y));
+    }
+
+    // takes the menu out of the frame, and on its third frame, once its child
+    // windows have their sizes, draws it alone for the picture; true once it's taken
+    static bool drawSketch(ImDrawData* data, int framebufferHeight) {
+        static int frames = 0;
+        std::vector<ImDrawList*> lists = menuLists(data);
+        bool done = ++frames >= 3;
+        if (done && !lists.empty()) {
+            ImDrawData menu = *data;
+            menu.CmdLists.clear();
+            for (ImDrawList* list : lists) menu.CmdLists.push_back(list);
+            menu.CmdListsCount = menu.CmdLists.Size;
+            ImGui_ImplOpenGL3_RenderDrawData(&menu);
+            takeMenuPicture(framebufferHeight, true);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+        for (ImDrawList* list : lists) {
+            data->CmdLists.find_erase(list);
+            data->TotalVtxCount -= list->VtxBuffer.Size;
+            data->TotalIdxCount -= list->IdxBuffer.Size;
+        }
+        data->CmdListsCount = data->CmdLists.Size;
+        return done;
     }
 
     static void takeTaskbarAsk() {
@@ -1968,8 +2023,12 @@ namespace Overlay {
             LuaFunctions::UpdateAnswers();
             updateTrafficNote();
 
+            // the taskbar button has no picture before the menu is first opened: the
+            // menu is drawn off screen for a few frames and its picture taken
+            static bool sketched = false;
+            bool sketch = !sketched && !menuOpen && !Motion::running() && !Motion::copyNext && Taskbar::ButtonShown() && !Taskbar::HasPicture();
             // map and menu closed: nothing to show, so don't draw at all
-            bool showing = menuOpen || Motion::running() || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
+            bool showing = menuOpen || Motion::running() || sketch || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
                 Notices::OverGameShowing(glfwGetTime());
             // an extension that follows the player has things to draw with the map closed too;
             // with nothing to show the extensions still run twice a second, so one can start
@@ -2020,13 +2079,13 @@ namespace Overlay {
             if (Capture::findRunningGame()) MenuFollowsMap(MapTracking::IsMapOpen());
 
             // the frame a going starts in still draws the menu, for its copy
-            if (menuOpen || Motion::copyNext) {
-                DrawMenu();
-            }
-            else Notices::DrawOverGame(glfwGetTime());
+            if (menuOpen || Motion::copyNext || sketch) DrawMenu();
+            if (!menuOpen && !Motion::copyNext) Notices::DrawOverGame(glfwGetTime());
             Asks::draw(MapTracking::IsMapOpen(), menuOpen);
             updateTyping(true);
 
+            // drawn where it stands, not moved by an animation
+            bool menuSteady = Motion::copyNext || (menuOpen && !Motion::running());
             ImGui::Render();
             std::vector<ImDrawList*> added = moveMenu(ImGui::GetDrawData());
 
@@ -2037,8 +2096,10 @@ namespace Overlay {
             glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
+            if (sketch) sketched = drawSketch(ImGui::GetDrawData(), height);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             for (ImDrawList* list : added) IM_DELETE(list);
+            if (menuSteady) takeMenuPicture(height, !menuOpen);
             glfwSwapBuffers(Overlay::Window);
             // sleeps until Windows put the frame on screen, once per refresh,
             // or until the map's next answer is there
