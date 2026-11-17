@@ -60,7 +60,7 @@ namespace Net {
 
     // Out on the internet: not this PC, not a private, link-local or Tailscale
     // range, not a network this PC's adapters are on. The address as text,
-    // IPv4 or IPv6.
+    // IPv4 or IPv6, in brackets or not.
     extern bool publicAddress(const std::wstring& address);
 
     // every request goes through this proxy (host:port) when it's set, the way

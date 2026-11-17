@@ -1,6 +1,7 @@
 #include "accounts.hpp"
 #include "controls.hpp"
 #include "credentials.hpp"
+#include "helpers.hpp"
 #include <windows.h>
 #include <dwmapi.h>
 #include <shlobj.h>
@@ -24,7 +25,7 @@ using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
 namespace Accounts {
-    static const wchar_t* WINDOW_CLASS = L"genshin-overlay-login";
+    static const wchar_t* WINDOW_CLASS = L"PocketEsoptron-login";
     static const wchar_t* HOYOLAB_MAP = L"https://act.hoyolab.com/ys/app/interactive-map/index.html?lang=en-us";
     static const wchar_t* HOYOLAB_COOKIES = L"https://act.hoyolab.com";
     static const wchar_t* APPSAMPLE_MAP = L"https://genshin-impact-map.appsample.com/";
@@ -120,13 +121,7 @@ namespace Accounts {
     }
 
     static std::filesystem::path profileFolder() {
-        PWSTR local = nullptr;
-        std::filesystem::path folder;
-        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) {
-            folder = std::filesystem::path(local) / "genshin-overlay" / "login-window";
-        }
-        CoTaskMemFree(local);
-        return folder;
+        return Helpers::dataDirectory() / "login-window";
     }
 
     // the host of an https url, lowercase, empty for anything else
@@ -522,7 +517,7 @@ namespace Accounts {
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         // a folder of its own, so nothing a window before left is ever read
         std::filesystem::path folder = profileFolder();
-        if (!folder.empty()) folder /= std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+        folder /= std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
 
         LPWSTR version = nullptr;
         if (folder.empty() || FAILED(GetAvailableCoreWebView2BrowserVersionString(nullptr, &version)) || !version) {
@@ -673,9 +668,13 @@ namespace Accounts {
 
     void DeleteWindowFolder() {
         if (windowOpen) return;
-        std::filesystem::path folder = profileFolder();
         std::error_code ignored;
-        if (!folder.empty()) std::filesystem::remove_all(folder, ignored);
+        std::filesystem::remove_all(profileFolder(), ignored);
+        // where earlier versions kept it, and their folder once it's empty
+        std::filesystem::path local = Helpers::localAppData();
+        if (local.empty()) return;
+        std::filesystem::remove_all(local / "genshin-overlay" / "login-window", ignored);
+        std::filesystem::remove(local / "genshin-overlay", ignored);
     }
 
     void LogIn(Site site) {

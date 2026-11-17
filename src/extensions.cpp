@@ -19,6 +19,7 @@
 #include <chrono>
 #include <ctime>
 #include <iostream>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -837,15 +838,36 @@ namespace Extensions {
 		loadLuaExtension(folder / "main.lua", folder);
 	}
 
-	void findAndLoadExtensions() {
-		std::filesystem::path extensionsRoot = Helpers::exeDirectory() / "extensions";
+	std::vector<fs::path> extensionRoots() {
+		std::vector<fs::path> roots = { Helpers::exeDirectory() / "extensions" };
+		fs::path own = Helpers::dataDirectory() / "extensions";
+		if (own != roots.front()) roots.push_back(own);
+		return roots;
+	}
 
-		std::error_code ec;
-		if (!std::filesystem::exists(extensionsRoot, ec)) {
-			std::filesystem::create_directory(extensionsRoot, ec);
-			return;
+	// a loaded extension came from a folder of the same name, letter case aside like Windows; told once per folder
+	static bool nameTaken(const fs::path& folder) {
+		std::string key = Helpers::utf8(folder.filename());
+		std::wstring name = folder.filename().wstring();
+		bool taken = std::any_of(registeredExtensions.begin(), registeredExtensions.end(),
+			[&](const auto& ext) { return _wcsicmp(Helpers::fromUtf8(ext->folderKey).c_str(), name.c_str()) == 0 && ext->folder != folder; });
+		static std::set<fs::path> told;
+		if (taken && told.insert(folder).second)
+			std::cerr << "Not loading " << Helpers::utf8(folder) << ": an extension in a folder named " << key << " is loaded already" << std::endl;
+		return taken;
+	}
+
+	void findAndLoadExtensions() {
+		for (const fs::path& root : extensionRoots()) {
+			std::error_code ec;
+			if (!std::filesystem::exists(root, ec)) {
+				std::filesystem::create_directories(root, ec);
+				continue;
+			}
+			for (const fs::path& folder : extensionFolders(root, false)) {
+				if (!nameTaken(folder)) loadFolder(folder);
+			}
 		}
-		for (const fs::path& folder : extensionFolders(extensionsRoot, false)) loadFolder(folder);
 	}
 
 	// each file's path, size and write time
@@ -873,7 +895,7 @@ namespace Extensions {
 		for (const fs::path& folder : extensionFolders(root, true)) {
 			bool known = std::any_of(registeredExtensions.begin(), registeredExtensions.end(),
 				[&](const auto& ext) { return ext->folder == folder; });
-			if (known) continue;
+			if (known || nameTaken(folder)) continue;
 			std::string contents = folderContents(folder);
 			auto seen = arriving.find(folder);
 			if (seen == arriving.end() || seen->second.contents != contents) {
@@ -1105,7 +1127,8 @@ namespace Extensions {
 		for (unsigned char c : name) {
 			if (std::isalnum(c)) letters += (char)std::tolower(c);
 		}
-		return letters.find("official") != std::string::npos || letters.find("genshinoverlay") != std::string::npos;
+		return letters.find("official") != std::string::npos || letters.find("genshinoverlay") != std::string::npos
+			|| letters.find("pocketesoptron") != std::string::npos;
 	}
 
 	void drawName(const Extension& ext) {

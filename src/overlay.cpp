@@ -28,6 +28,8 @@
 #include "menu_summary.hpp"
 #include "page_order.hpp"
 #include "npcap_download.hpp"
+#include "taskbar.hpp"
+#include "update_check.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -44,8 +46,40 @@ namespace Overlay {
     const GLFWvidmode* monitorVideoMode = nullptr;
 
     static bool menuOpen = false;
+
+    // The menu's animations. Going, it shrinks toward spot and fades, drawn
+    // from a copy of its last frame; coming back, it grows from spot.
+    namespace Motion {
+        static double started = -1;
+        static double length = 0;
+        static bool going = false;
+        static bool quitAfter = false;
+        // the menu's size at spot, 1 = its own
+        static float smallest = 1;
+        static ImVec2 spot;
+        static ImVec2 menuCenter;
+        // set when going starts, the copy is made after this frame's Render
+        static bool copyNext = false;
+        // the clock starts at the first frame drawn, which can come late after the overlay idled
+        static bool clockNext = false;
+        static std::vector<ImDrawList*> copy;
+        static void clear() {
+            for (ImDrawList* list : copy) IM_DELETE(list);
+            copy.clear();
+            copyNext = false;
+            clockNext = false;
+            going = false;
+            started = -1;
+        }
+        static bool running() {
+            return started >= 0;
+        }
+    }
     // the menu's page: 0 = Home, 1 = Usage, 2+ = extensions
     static int activeTab = 0;
+    // where the menu was last drawn
+    static ImVec2 menuPicturePos;
+    static ImVec2 menuPictureSize;
     // Home, Usage and Accounts come before the extensions' pages
     static const int OwnPages = 3;
     // the player's order and folders of the extensions' pages
@@ -189,7 +223,7 @@ namespace Overlay {
         return (ImTextureID)(intptr_t)texture;
     }
 
-    bool Init() {
+    bool Init(bool withWindows) {
         Asks::addSetting({ "Game traffic", "Read the game's traffic", "It only reads, nothing is ever sent to the game.",
             []() { return Settings::readGameTraffic; }, []() { setGameTraffic(true); } });
 
@@ -208,7 +242,7 @@ namespace Overlay {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
         // 1px shorter than the monitor, otherwise Windows treats it as a fullscreen app
-        Overlay::Window = glfwCreateWindow(Overlay::monitorVideoMode->width, Overlay::monitorVideoMode->height - 1, "Genshin Overlay", NULL, NULL);
+        Overlay::Window = glfwCreateWindow(Overlay::monitorVideoMode->width, Overlay::monitorVideoMode->height - 1, "Pocket Esoptron", NULL, NULL);
         if (!Overlay::Window) {
             std::cerr << "Failed to create the overlay window" << std::endl;
             return false;
@@ -241,8 +275,8 @@ namespace Overlay {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         Overlay::IO = &ImGui::GetIO();
-        // keep imgui.ini next to the exe, not wherever it was launched from
-        iniPath = (Helpers::exeDirectory() / "imgui.ini").string();
+        // keep imgui.ini in the data folder, not wherever it was launched from
+        iniPath = (Helpers::dataDirectory() / "imgui.ini").string();
         Overlay::IO->IniFilename = iniPath.c_str();
 
         // Segoe UI Variable at Windows' 14 px, ImGui's own font without it
@@ -273,7 +307,7 @@ namespace Overlay {
 
         // the menu key only works with the game in front, so without the game the
         // menu opens by itself, the settings can be changed without it
-        if (!Capture::findRunningGame()) SetMenuOpen(true);
+        if (!Capture::findRunningGame() && (!withWindows || Settings::startIn == "menu")) SetMenuOpen(true);
 
         startTime = glfwGetTime();
         return true;
@@ -307,8 +341,12 @@ namespace Overlay {
     }
 
     void SetMenuOpen(bool open) {
+        // a quit fading out stays a quit
+        if (open && Motion::going && Motion::quitAfter) return;
+        if (open && Motion::going) Motion::clear();
         if (open == menuOpen) return;
         menuOpen = open;
+        if (open) Taskbar::ShowButton(true);
         keepOnTop(true);
         // extension keybinds only hold their keys while the menu is open
         Keybindings::RefreshRegistrations();
@@ -786,7 +824,7 @@ namespace Overlay {
         ImGui::SetNextWindowBgAlpha(0.8f * alpha);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
         ImGui::Begin("##startup", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
-        ImGui::Text("Genshin Overlay is running. Press %s for the menu.", KeyChoices::menuKeyName().c_str());
+        ImGui::Text("Pocket Esoptron is running. Press %s for the menu.", KeyChoices::menuKeyName().c_str());
         ImGui::End();
         ImGui::PopStyleVar();
     }
@@ -799,7 +837,7 @@ namespace Overlay {
         GameTraffic::Status now = GameTraffic::GetStatus();
         std::string relog = GameTrafficText::NeedsRelog(now) ? GameTraffic::ReasonCode(now) : "";
         if (!relog.empty() && relog != trafficLastRelog) {
-            Notices::Add("", "Genshin Overlay", Notices::Kind::Error, GameTrafficText::For(now).text, glfwGetTime());
+            Notices::Add("", "Pocket Esoptron", Notices::Kind::Error, GameTrafficText::For(now).text, glfwGetTime());
         }
         trafficLastRelog = relog;
     }
@@ -850,11 +888,238 @@ namespace Overlay {
         return { MenuSummary::Join(MenuSummary::Join(Settings::look, Settings::lightDark), std::to_string(Settings::size) + "%") };
     }
 
+    static void restartAsAdmin() {
+        if (Taskbar::RestartAsAdmin()) glfwSetWindowShouldClose(Overlay::Window, true);
+    }
+
+    // the Animation effects switch in Windows' settings
+    static bool animationsOn() {
+        BOOL on = TRUE;
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &on, 0);
+        return on;
+    }
+
+    enum class Spot { Taskbar, Tray, Menu };
+
+    // in the overlay's pixels: the taskbar button or the tray icon, else the
+    // bottom middle or the bottom corner
+    static ImVec2 spotOf(Spot spot) {
+        ImVec2 size = ImGui::GetIO().DisplaySize;
+        if (spot == Spot::Menu) return Motion::menuCenter;
+        int x = 0, y = 0, windowX = 0, windowY = 0;
+        glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+        bool found = spot == Spot::Taskbar ? Taskbar::ButtonCenter(x, y) : Taskbar::TrayIconCenter(x, y);
+        if (found && x >= windowX && x <= windowX + size.x && y >= windowY && y <= windowY + size.y)
+            return ImVec2((float)(x - windowX), (float)(y - windowY));
+        return spot == Spot::Taskbar ? ImVec2(size.x / 2, size.y) : size;
+    }
+
+    // closes the menu toward the taskbar or the tray icon, or quits with it fading where it is
+    static void hideMenu(Spot to, bool quit) {
+        if (!animationsOn() || !menuOpen) {
+            if (quit) glfwSetWindowShouldClose(Overlay::Window, true);
+            else SetMenuOpen(false);
+            return;
+        }
+        Motion::clear();
+        Motion::going = true;
+        Motion::quitAfter = quit;
+        Motion::copyNext = true;
+        Motion::started = glfwGetTime();
+        Motion::length = quit ? 0.15 : to == Spot::Tray ? 0.25 : 0.2;
+        Motion::smallest = quit ? 0.95f : 0.1f;
+        Motion::spot = spotOf(quit ? Spot::Menu : to);
+        SetMenuOpen(false);
+    }
+
+    // opens the menu growing from the taskbar or the tray icon
+    static void showMenu(Spot from) {
+        if (menuOpen) return;
+        SetMenuOpen(true);
+        if (!animationsOn()) return;
+        Motion::started = glfwGetTime();
+        Motion::clockNext = true;
+        Motion::length = 0.2;
+        Motion::smallest = 0.1f;
+        Motion::spot = spotOf(from);
+    }
+
+    // the menu's draw lists in this frame, its child windows and popups too
+    static std::vector<ImDrawList*> menuLists(ImDrawData* data) {
+        std::vector<ImDrawList*> lists;
+        ImGuiWindow* menu = ImGui::FindWindowByName("Pocket Esoptron");
+        if (!menu) return lists;
+        for (ImDrawList* list : data->CmdLists) {
+            for (ImGuiWindow* window : GImGui->Windows) {
+                if (window->DrawList != list) continue;
+                ImGuiWindow* up = window;
+                while (up && up != menu) up = up->ParentWindow;
+                if (up) lists.push_back(list);
+                break;
+            }
+        }
+        return lists;
+    }
+
+    // moves a draw list's points from center to at, scaled, its colours faded to alpha
+    static void place(ImDrawList* list, ImVec2 center, ImVec2 at, float scale, float alpha) {
+        auto move = [&](float x, float y) { return ImVec2(at.x + (x - center.x) * scale, at.y + (y - center.y) * scale); };
+        for (ImDrawVert& vertex : list->VtxBuffer) {
+            vertex.pos = move(vertex.pos.x, vertex.pos.y);
+            ImU32 a = (ImU32)(((vertex.col >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
+            vertex.col = (vertex.col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+        }
+        for (ImDrawCmd& command : list->CmdBuffer) {
+            ImVec2 min = move(command.ClipRect.x, command.ClipRect.y), max = move(command.ClipRect.z, command.ClipRect.w);
+            command.ClipRect = ImVec4(min.x, min.y, max.x, max.y);
+        }
+    }
+
+    // After Render: copies the menu when it starts going, then draws the copy
+    // going or the menu coming. Returns the lists added, deleted after drawing.
+    static std::vector<ImDrawList*> moveMenu(ImDrawData* data) {
+        std::vector<ImDrawList*> added;
+        // the frame it's copied in draws the menu itself
+        if (Motion::copyNext) {
+            for (ImDrawList* list : menuLists(data)) Motion::copy.push_back(list->CloneOutput());
+            Motion::copyNext = false;
+            Motion::started = glfwGetTime();
+            return added;
+        }
+        if (!Motion::running()) return added;
+        if (Motion::clockNext) {
+            Motion::started = glfwGetTime();
+            Motion::clockNext = false;
+        }
+        double t = (glfwGetTime() - Motion::started) / Motion::length;
+        if (t >= 1) {
+            bool quit = Motion::going && Motion::quitAfter;
+            Motion::clear();
+            if (quit) glfwSetWindowShouldClose(Overlay::Window, true);
+            return added;
+        }
+        // how far it is from spot: 0 at spot, 1 where the menu is
+        float along = Motion::going ? 1 - (float)(t * t * (3 - 2 * t)) : 1 - (float)std::pow(1 - t, 3);
+        float scale = Motion::smallest + (1 - Motion::smallest) * along;
+        ImVec2 center = Motion::menuCenter;
+        ImVec2 at(Motion::spot.x + (center.x - Motion::spot.x) * along, Motion::spot.y + (center.y - Motion::spot.y) * along);
+        if (Motion::going) {
+            for (ImDrawList* copy : Motion::copy) {
+                ImDrawList* list = copy->CloneOutput();
+                place(list, center, at, scale, along);
+                data->AddDrawList(list);
+                added.push_back(list);
+            }
+        }
+        else for (ImDrawList* list : menuLists(data)) place(list, center, at, scale, along);
+        return added;
+    }
+
+    // The menu's X: the app leaves the taskbar and keeps running in the system
+    // tray, or quits
+    static void closeWindow() {
+        Taskbar::ShowButton(false);
+        hideMenu(Spot::Tray, !Settings::keepInTray);
+    }
+
+    // set by the menu's X while the player hasn't answered the question below
+    static bool askKeepInTray = false;
+
+    // The first press of the menu's X asks whether the overlay keeps running in
+    // the system tray. Yes closes the menu, No quits; the answer is kept.
+    static void DrawKeepInTrayQuestion() {
+        const char* id = "Keep running";
+        if (askKeepInTray) {
+            ImGui::OpenPopup(id);
+            askKeepInTray = false;
+        }
+        ImVec2 center(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x / 2, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y / 2);
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (!ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) return;
+        ImGui::TextUnformatted("Keep Pocket Esoptron running in the system tray?");
+        ImGui::TextDisabled("Yes: the X closes only the menu. No: the X quits.");
+        ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.4f));
+        Controls::ButtonOptions yes;
+        yes.look = Controls::ButtonOptions::Look::Main;
+        int answer = -1;
+        if (Controls::Button("Yes", yes)) answer = 1;
+        ImGui::SameLine();
+        if (Controls::Button("No")) answer = 0;
+        if (answer >= 0) {
+            Settings::keepInTray = answer == 1;
+            Settings::keepInTrayAsked = true;
+            Settings::Save();
+            ImGui::CloseCurrentPopup();
+            closeWindow();
+        }
+        ImGui::EndPopup();
+    }
+
+    // nothing when already admin
+    static void DrawRestartAsAdmin() {
+        static bool elevated = Helpers::isElevated();
+        if (elevated) return;
+        if (Controls::Button("Restart as admin")) restartAsAdmin();
+    }
+
+    static void DrawNewerVersion() {
+        UpdateCheck::Release newer = UpdateCheck::Newer();
+        if (newer.version.empty()) return;
+        ImGui::TextWrapped("Version %s is out.", newer.version.c_str());
+        switch (UpdateCheck::Downloaded()) {
+        case UpdateCheck::Download::Downloading:
+            ImGui::TextDisabled("Downloading it...");
+            break;
+        case UpdateCheck::Download::Ready:
+            if (Controls::Button("Restart to update") && UpdateCheck::Apply()) glfwSetWindowShouldClose(Overlay::Window, true);
+            break;
+        case UpdateCheck::Download::Failed:
+            ImGui::TextWrapped("Couldn't update here. Its page has the download.");
+            break;
+        case UpdateCheck::Download::None: break;
+        }
+        if (Controls::Button("Open its page")) {
+            std::wstring page(newer.page.begin(), newer.page.end());
+            ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    }
+
+    // the button and how the last check went
+    static void DrawCheckNow() {
+        if (Helpers::appVersion() == "dev") {
+            ImGui::TextDisabled("A local build has no version to compare.");
+            return;
+        }
+        UpdateCheck::Checked checked = UpdateCheck::LastCheck();
+        ImGui::BeginDisabled(checked == UpdateCheck::Checked::Checking);
+        if (Controls::Button("Check now")) UpdateCheck::CheckNow();
+        ImGui::EndDisabled();
+        switch (checked) {
+        case UpdateCheck::Checked::Checking: ImGui::TextDisabled("Checking..."); break;
+        case UpdateCheck::Checked::Failed: ImGui::TextDisabled("Couldn't reach GitHub."); break;
+        case UpdateCheck::Checked::Done:
+            if (UpdateCheck::Newer().version.empty()) ImGui::TextDisabled("Up to date.");
+            else {
+                ImGui::PushID("check");
+                DrawNewerVersion();
+                ImGui::PopID();
+            }
+            break;
+        case UpdateCheck::Checked::Never: break;
+        }
+    }
+
     static void DrawGameTraffic(const GameTrafficText::Line& line) {
         bool on = Settings::readGameTraffic;
         if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
         if (line.downloadNpcap) DrawNpcapButton();
-        if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
+        if (line.orAdmin) {
+            ImGui::TextWrapped("Or run the overlay as admin.");
+            // Advanced has the same button on this page
+            ImGui::PushID("traffic");
+            DrawRestartAsAdmin();
+            ImGui::PopID();
+        }
     }
 
     static void DrawGameTrafficSection() {
@@ -952,7 +1217,7 @@ namespace Overlay {
     static void PageNotice(const std::string& text) {
         double now = glfwGetTime();
         if (Notices::Update(pageNotice, text, now)) return;
-        pageNotice = Notices::Add("", "Genshin Overlay", Notices::Kind::Plain, text, now);
+        pageNotice = Notices::Add("", "Pocket Esoptron", Notices::Kind::Plain, text, now);
         Notices::SetIcons(pageNotice, {
             { Controls::ButtonIcon::Undo, "Undo", [] { return pageHistory.CanUndo(); }, [] { pageStepAsked = PageStep::Undo; } },
             { Controls::ButtonIcon::Redo, "Redo", [] { return pageHistory.CanRedo(); }, [] { pageStepAsked = PageStep::Redo; } },
@@ -1147,11 +1412,13 @@ namespace Overlay {
         // the list and the page reach the window's edges
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin(
-            "Genshin Overlay",
+            "Pocket Esoptron",
             &open,
             ImGuiWindowFlags_NoCollapse
         );
         ImGui::PopStyleVar();
+        if (Controls::TitleMinimizeButton()) hideMenu(Spot::Taskbar, false);
+        DrawKeepInTrayQuestion();
 
         Controls::Theme theme = Controls::GetTheme();
         // the player's width in font sizes once the splitter is dragged, below 0 to fit the names
@@ -1178,6 +1445,13 @@ namespace Overlay {
             std::string key = PageKey(*Extensions::registeredExtensions[i], i);
             present.push_back(key);
             byKey[key] = i;
+        }
+        // the start page on the menu's first frame, Home when its extension is gone
+        static bool startPageShown = false;
+        if (!startPageShown) {
+            startPageShown = true;
+            auto found = byKey.find(Settings::startPage);
+            if (found != byKey.end()) activeTab = (int)found->second + OwnPages;
         }
         if (pageStepAsked != PageStep::None) {
             bool undo = pageStepAsked == PageStep::Undo;
@@ -1452,19 +1726,8 @@ namespace Overlay {
         case 0:
 
             {
-                // Shutdown at the end of the title, or beside the title and the
-                // line under it when it's taller than the title
-                ImVec2 top = ImGui::GetCursorPos();
                 Controls::PageTitle("Home");
-                float titleHeight = ImGui::GetCursorPosY() - top.y;
                 ImGui::TextDisabled("Press %s to hide", KeyChoices::menuKeyName().c_str());
-                ImVec2 below = ImGui::GetCursorPos();
-                ImVec2 quit = Controls::ButtonSize("Shutdown");
-                float quitHeight = quit.y;
-                float block = quitHeight > titleHeight - ImGui::GetStyle().ItemSpacing.y ? below.y - top.y - ImGui::GetStyle().ItemSpacing.y : titleHeight - ImGui::GetStyle().ItemSpacing.y;
-                ImGui::SetCursorPos(ImVec2(std::max(top.x, ImGui::GetWindowContentRegionMax().x - quit.x), top.y + (block - quitHeight) / 2));
-                if (Controls::Button("Shutdown")) glfwSetWindowShouldClose(Overlay::Window, true);
-                ImGui::SetCursorPos(below);
             }
             ImGui::Dummy(ImVec2(0, font * 0.4f));
 
@@ -1497,12 +1760,65 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
+            {
+                // Home, then the extensions' pages by their page key
+                std::vector<std::string> startNames = { "Home" }, startKeys = { "" };
+                for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+                    startNames.push_back(Extensions::registeredExtensions[i]->name);
+                    startKeys.push_back(PageKey(*Extensions::registeredExtensions[i], i));
+                }
+                int startPage = (int)(std::find(startKeys.begin(), startKeys.end(), Settings::startPage) - startKeys.begin());
+                if (startPage >= (int)startKeys.size()) startPage = 0;
+                static bool withWindows = Taskbar::StartsWithWindows();
+                std::string startSummary = "Start page: " + startNames[startPage] + (withWindows ? ", starts with Windows" : "");
+                if (Controls::BeginSection("Starting up", false, false, { startSummary })) {
+                    if (Controls::Choice("Start page", startPage, startNames)) {
+                        Settings::startPage = startKeys[startPage];
+                        Settings::Save();
+                    }
+
+                    if (Controls::Toggle("Start with Windows", &withWindows)) Taskbar::StartWithWindows(withWindows);
+                    static const std::vector<std::string> startInKeys = { "menu", "taskbar", "tray" };
+                    static const std::vector<std::string> startInNames = { "The menu", "The taskbar", "The system tray" };
+                    int startIn = (int)(std::find(startInKeys.begin(), startInKeys.end(), Settings::startIn) - startInKeys.begin());
+                    if (startIn >= (int)startInKeys.size()) startIn = 0;
+                    ImGui::BeginDisabled(!withWindows);
+                    if (Controls::Choice("Starts in", startIn, startInNames)) {
+                        Settings::startIn = startInKeys[startIn];
+                        Settings::Save();
+                    }
+                    ImGui::EndDisabled();
+                    Controls::EndSection();
+                }
+            }
+
             if (Controls::BeginSection("Keys", false, false, { "Menu: " + KeyChoices::menuKeyName() })) {
                 KeyChoices::drawMenuKeyRow();
                 Controls::EndSection();
             }
 
             if (Controls::BeginSection("Advanced")) {
+                DrawRestartAsAdmin();
+
+                Controls::ToggleOptions tray;
+                tray.lines = { { Settings::keepInTray ? "The menu's X closes only the menu." : "The menu's X quits Pocket Esoptron." } };
+                if (Controls::Toggle("Keep running in the system tray", &Settings::keepInTray, tray)) {
+                    Settings::keepInTrayAsked = true;
+                    Settings::Save();
+                }
+
+                Controls::ToggleOptions updates;
+                updates.lines = { { "Asks GitHub once a day whether a newer version is out." } };
+                if (Controls::Toggle("Check for updates", &Settings::checkUpdates, updates)) {
+                    Settings::Save();
+                    if (Settings::checkUpdates) UpdateCheck::Start();
+                    else UpdateCheck::Stop();
+                }
+                DrawCheckNow();
+
+                // settings, the log and the player's own extensions
+                if (Controls::Button("Open the data folder")) OpenFolder(Helpers::dataDirectory());
+
                 Controls::ToggleOptions takenKeys;
                 takenKeys.lines = { { "Lets Record catch a key another program has taken. Some antivirus programs dislike this." } };
                 if (Controls::Toggle("Record taken keys", &Settings::recordTakenKeys, takenKeys)) {
@@ -1569,6 +1885,9 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
+            ImGui::TextDisabled("Version %s", Helpers::appVersion().c_str());
+            DrawNewerVersion();
+
             break;
 
         case 1:
@@ -1595,11 +1914,91 @@ namespace Overlay {
 
         ImVec2 menuPos = ImGui::GetWindowPos();
         ImVec2 menuSize = ImGui::GetWindowSize();
+        Motion::menuCenter = ImVec2(menuPos.x + menuSize.x / 2, menuPos.y + menuSize.y / 2);
+        menuPicturePos = menuPos;
+        menuPictureSize = menuSize;
         ImGui::End();
         Notices::DrawInMenu(glfwGetTime(), menuPos, menuSize);
 
         if (!open) {
-            Overlay::SetMenuOpen(false);
+            if (!Settings::keepInTrayAsked) askKeepInTray = true;
+            else closeWindow();
+        }
+    }
+
+    // The menu as drawn, for the taskbar button's preview: once a second while
+    // it's open, and in the frame it starts going
+    static void takeMenuPicture(int framebufferHeight, bool now) {
+        static double takenAt = -10;
+        if (!Taskbar::ButtonShown() || (!now && glfwGetTime() - takenAt < 1.0)) return;
+        takenAt = glfwGetTime();
+        ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+        int framebufferWidth = (int)(ImGui::GetIO().DisplaySize.x * scale.x);
+        int left = std::max(0, (int)(menuPicturePos.x * scale.x));
+        int top = std::max(0, (int)(menuPicturePos.y * scale.y));
+        int right = std::min(framebufferWidth, (int)((menuPicturePos.x + menuPictureSize.x) * scale.x));
+        int bottom = std::min(framebufferHeight, (int)((menuPicturePos.y + menuPictureSize.y) * scale.y));
+        int width = right - left, height = bottom - top;
+        if (width <= 0 || height <= 0) return;
+        std::vector<unsigned char> pixels((size_t)width * height * 4);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(left, framebufferHeight - bottom, width, height, GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+        // GL's rows go from the bottom up
+        size_t row = (size_t)width * 4;
+        for (int y = 0; y < height / 2; y++)
+            std::swap_ranges(pixels.begin() + y * row, pixels.begin() + (y + 1) * row, pixels.begin() + (height - 1 - y) * row);
+        int windowX = 0, windowY = 0;
+        glfwGetWindowPos(Overlay::Window, &windowX, &windowY);
+        Taskbar::SetPicture(std::move(pixels), width, height, windowX + (int)(left / scale.x), windowY + (int)(top / scale.y));
+    }
+
+    // takes the menu out of the frame, and on its third frame, once its child
+    // windows have their sizes, draws it alone for the picture; true once it's taken
+    static bool drawSketch(ImDrawData* data, int framebufferHeight) {
+        static int frames = 0;
+        std::vector<ImDrawList*> lists = menuLists(data);
+        bool done = ++frames >= 3;
+        if (done && !lists.empty()) {
+            ImDrawData menu = *data;
+            menu.CmdLists.clear();
+            for (ImDrawList* list : lists) menu.CmdLists.push_back(list);
+            menu.CmdListsCount = menu.CmdLists.Size;
+            ImGui_ImplOpenGL3_RenderDrawData(&menu);
+            takeMenuPicture(framebufferHeight, true);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+        for (ImDrawList* list : lists) {
+            data->CmdLists.find_erase(list);
+            data->TotalVtxCount -= list->VtxBuffer.Size;
+            data->TotalIdxCount -= list->IdxBuffer.Size;
+        }
+        data->CmdListsCount = data->CmdLists.Size;
+        return done;
+    }
+
+    static void takeTaskbarAsk() {
+        switch (Taskbar::Take()) {
+        case Taskbar::Ask::ToggleMenu:
+            if (menuOpen) hideMenu(Spot::Taskbar, false);
+            else showMenu(Spot::Taskbar);
+            break;
+        case Taskbar::Ask::TrayToggleMenu:
+            if (menuOpen) hideMenu(Spot::Tray, false);
+            else showMenu(Spot::Tray);
+            break;
+        case Taskbar::Ask::OpenMenu: showMenu(Spot::Taskbar); break;
+        case Taskbar::Ask::TrayOpenMenu: showMenu(Spot::Tray); break;
+        case Taskbar::Ask::RestartAsAdmin: restartAsAdmin(); break;
+        case Taskbar::Ask::Close:
+            // as the menu's X, the question in the menu the first time
+            if (Settings::keepInTrayAsked) closeWindow();
+            else {
+                SetMenuOpen(true);
+                askKeepInTray = true;
+            }
+            break;
+        case Taskbar::Ask::Quit: glfwSetWindowShouldClose(Overlay::Window, true); break;
+        case Taskbar::Ask::None: break;
         }
     }
 
@@ -1608,6 +2007,7 @@ namespace Overlay {
         while (!glfwWindowShouldClose(Overlay::Window)) {
             Extensions::countTurn();
             glfwPollEvents();
+            takeTaskbarAsk();
             Keybindings::ProcessKeybindings();
             keepOnTop(false);
             // sends the tracker a new screenshot when it's ready for one
@@ -1623,11 +2023,18 @@ namespace Overlay {
             LuaFunctions::UpdateAnswers();
             updateTrafficNote();
 
+            // the taskbar button has no picture before the menu is first opened: the
+            // menu is drawn off screen for a few frames and its picture taken
+            static bool sketched = false;
+            bool sketch = !sketched && !menuOpen && !Motion::running() && !Motion::copyNext && Taskbar::ButtonShown() && !Taskbar::HasPicture();
             // map and menu closed: nothing to show, so don't draw at all
-            bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
+            bool showing = menuOpen || Motion::running() || sketch || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||
                 Notices::OverGameShowing(glfwGetTime());
-            // an extension that follows the player has things to draw with the map closed too
-            bool forPlayer = !showing && MiniMap::Wanted();
+            // an extension that follows the player has things to draw with the map closed too;
+            // with nothing to show the extensions still run twice a second, so one can start
+            // asking for the player any time
+            static double ranAt = 0;
+            bool forPlayer = !showing && (MiniMap::Wanted() || glfwGetTime() - ranAt >= 0.5);
             if (!showing && !forPlayer) {
                 pickerBox = {};
                 updateClickThrough(false);
@@ -1646,6 +2053,7 @@ namespace Overlay {
                 continue;
             }
             drewLastFrame = true;
+            ranAt = glfwGetTime();
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
@@ -1660,7 +2068,8 @@ namespace Overlay {
             static double lookedForExtensions = glfwGetTime();
             if (glfwGetTime() - lookedForExtensions >= 2.0) {
                 lookedForExtensions = glfwGetTime();
-                Extensions::findNewExtensions(Helpers::exeDirectory() / "extensions", std::chrono::seconds(2));
+                for (const std::filesystem::path& root : Extensions::extensionRoots())
+                    Extensions::findNewExtensions(root, std::chrono::seconds(2));
             }
             Extensions::frameUpdateExtensions();
             if (Settings::showClickBoxes) drawClickBoxes();
@@ -1669,14 +2078,16 @@ namespace Overlay {
             // without the game there's no map to follow, the menu stays as it is
             if (Capture::findRunningGame()) MenuFollowsMap(MapTracking::IsMapOpen());
 
-            if (menuOpen) {
-                DrawMenu();
-            }
-            else Notices::DrawOverGame(glfwGetTime());
+            // the frame a going starts in still draws the menu, for its copy
+            if (menuOpen || Motion::copyNext || sketch) DrawMenu();
+            if (!menuOpen && !Motion::copyNext) Notices::DrawOverGame(glfwGetTime());
             Asks::draw(MapTracking::IsMapOpen(), menuOpen);
             updateTyping(true);
 
+            // drawn where it stands, not moved by an animation
+            bool menuSteady = Motion::copyNext || (menuOpen && !Motion::running());
             ImGui::Render();
+            std::vector<ImDrawList*> added = moveMenu(ImGui::GetDrawData());
 
             int width = 0, height = 0;
             glfwGetFramebufferSize(Overlay::Window, &width, &height);
@@ -1685,7 +2096,10 @@ namespace Overlay {
             glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
+            if (sketch) sketched = drawSketch(ImGui::GetDrawData(), height);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            for (ImDrawList* list : added) IM_DELETE(list);
+            if (menuSteady) takeMenuPicture(height, !menuOpen);
             glfwSwapBuffers(Overlay::Window);
             // sleeps until Windows put the frame on screen, once per refresh,
             // or until the map's next answer is there

@@ -4,3 +4,4 @@ vcpkg_installed/
 *.user
 *.aps
 imgui.ini
+installer/output/

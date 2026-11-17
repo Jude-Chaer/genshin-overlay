@@ -12,7 +12,7 @@
 // accounts, read and changed by the overlay on a worker, one job at a time.
 // Ids are always HoYoLAB point ids; appsample's go through each point's pair
 // in the item files. Before every write the site's marks are saved to a dated
-// backup next to the exe. A change that unmarks more than one point waits for
+// backup in the data folder. A change that unmarks more than one point waits for
 // the player's answer to the overlay's question, then reads the marks again;
 // other extensions' jobs go on meanwhile.
 

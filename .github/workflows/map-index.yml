@@ -101,7 +101,7 @@ jobs:
         id: exe
         uses: actions/cache/restore@v4
         with:
-          path: build/Release/genshin-overlay.exe
+          path: build/Release/PocketEsoptron.exe
           key: overlay-exe-${{ hashFiles('src/**', 'third_party/**', 'genshin-overlay.vcxproj', 'vcpkg.json') }}
 
       - uses: ./.github/actions/vcpkg
@@ -122,7 +122,7 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/cache/save@v4
         with:
-          path: build/Release/genshin-overlay.exe
+          path: build/Release/PocketEsoptron.exe
           key: overlay-exe-${{ hashFiles('src/**', 'third_party/**', 'genshin-overlay.vcxproj', 'vcpkg.json') }}
 
       - name: Make sure the release is there
@@ -141,9 +141,10 @@ jobs:
         if: needs.check.outputs.map == 'true'
         shell: pwsh
         run: |
-          & build\Release\genshin-overlay.exe --make-index map_index
-          if ($LASTEXITCODE -eq 3) { "changed=false" >> $env:GITHUB_OUTPUT; exit 0 }
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # a windowed exe: Start-Process -Wait waits for it and gives its exit code
+          $run = Start-Process build\Release\PocketEsoptron.exe -ArgumentList "--make-index", "map_index" -NoNewWindow -Wait -PassThru
+          if ($run.ExitCode -eq 3) { "changed=false" >> $env:GITHUB_OUTPUT; exit 0 }
+          if ($run.ExitCode -ne 0) { exit $run.ExitCode }
           "changed=true" >> $env:GITHUB_OUTPUT
 
       - name: Upload
@@ -168,10 +169,11 @@ jobs:
         if: ${{ !cancelled() && needs.check.outputs.items == 'true' && steps.release.outcome == 'success' }}
         shell: pwsh
         run: |
-          if ("${{ inputs.allow_drop }}" -eq "true") { & build\Release\genshin-overlay.exe --make-items item_files --allow-drop }
-          else { & build\Release\genshin-overlay.exe --make-items item_files }
-          if ($LASTEXITCODE -eq 3) { "changed=false" >> $env:GITHUB_OUTPUT; exit 0 }
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $arguments = @("--make-items", "item_files")
+          if ("${{ inputs.allow_drop }}" -eq "true") { $arguments += "--allow-drop" }
+          $run = Start-Process build\Release\PocketEsoptron.exe -ArgumentList $arguments -NoNewWindow -Wait -PassThru
+          if ($run.ExitCode -eq 3) { "changed=false" >> $env:GITHUB_OUTPUT; exit 0 }
+          if ($run.ExitCode -ne 0) { exit $run.ExitCode }
           "changed=true" >> $env:GITHUB_OUTPUT
 
       - name: Upload the item files

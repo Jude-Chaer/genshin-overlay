@@ -45,13 +45,13 @@ namespace {
     struct Folder {
         std::filesystem::path path;
         Folder() {
-            path = std::filesystem::temp_directory_path() / ("traffic-keys-test-" + std::to_string(GetCurrentProcessId()));
-            std::filesystem::remove_all(path);
-            std::filesystem::copy(SHIPPED, path);
+            // the data folder's packets/, made by the first save
+            path = std::filesystem::temp_directory_path() / ("traffic-keys-test-" + std::to_string(GetCurrentProcessId())) / "packets";
+            std::filesystem::remove_all(path.parent_path());
         }
         ~Folder() {
             std::error_code error;
-            std::filesystem::remove_all(path, error);
+            std::filesystem::remove_all(path.parent_path(), error);
         }
     };
 }
@@ -102,23 +102,24 @@ TEST_CASE("Merging keeps every key, the newer one wins for an id") {
     CHECK(into.rsaPem.size() == 2);
 }
 
-TEST_CASE("A new keys file is saved and used next to packets/, the same one isn't again") {
+TEST_CASE("A new keys file is saved in the data folder and used on top of packets/, the same one isn't again") {
     Folder folder;
     std::string body = released();
     SessionKey::Keys out;
-    CHECK(TrafficKeys::Take(folder.path, 200, body, out) == TrafficKeys::Got::New);
+    CHECK(TrafficKeys::Take(SHIPPED, folder.path, 200, body, out) == TrafficKeys::Got::New);
     CHECK(Files::readText(folder.path / TrafficKeys::FILE) == body);
+    CHECK_FALSE(std::filesystem::exists(SHIPPED / TrafficKeys::FILE));
     CHECK(out.dispatch == shipped().dispatch);
     CHECK(SessionKey::Rsa(out.rsaPem).AllLoaded());
-    CHECK(TrafficKeys::Take(folder.path, 200, body, out) == TrafficKeys::Got::Same);
+    CHECK(TrafficKeys::Take(SHIPPED, folder.path, 200, body, out) == TrafficKeys::Got::Same);
 
     // a newer file with a key packets/ doesn't have
     std::string newer = changed([](nlohmann::json& keys) { keys["dispatch"]["7"] = keys["dispatch"]["13980"]; });
     SessionKey::Keys got;
-    CHECK(TrafficKeys::Take(folder.path, 200, newer, got) == TrafficKeys::Got::New);
+    CHECK(TrafficKeys::Take(SHIPPED, folder.path, 200, newer, got) == TrafficKeys::Got::New);
     CHECK(got.dispatch.count(7) == 1);
     SessionKey::Keys loaded;
-    REQUIRE(TrafficKeys::Load(folder.path, loaded));
+    REQUIRE(TrafficKeys::Load(SHIPPED, folder.path, loaded));
     CHECK(loaded.dispatch == got.dispatch);
 }
 
@@ -126,11 +127,11 @@ TEST_CASE("No keys file or a broken one leaves the saved one alone") {
     Folder folder;
     std::string body = released();
     SessionKey::Keys out;
-    REQUIRE(TrafficKeys::Take(folder.path, 200, body, out) == TrafficKeys::Got::New);
-    CHECK(TrafficKeys::Take(folder.path, 404, "Not Found", out) == TrafficKeys::Got::Missing);
-    CHECK(TrafficKeys::Take(folder.path, 503, "", out) == TrafficKeys::Got::Unreached);
-    CHECK(TrafficKeys::Take(folder.path, 0, "", out) == TrafficKeys::Got::Unreached);
-    CHECK(TrafficKeys::Take(folder.path, 200, body.substr(0, body.size() / 2), out) == TrafficKeys::Got::Broken);
+    REQUIRE(TrafficKeys::Take(SHIPPED, folder.path, 200, body, out) == TrafficKeys::Got::New);
+    CHECK(TrafficKeys::Take(SHIPPED, folder.path, 404, "Not Found", out) == TrafficKeys::Got::Missing);
+    CHECK(TrafficKeys::Take(SHIPPED, folder.path, 503, "", out) == TrafficKeys::Got::Unreached);
+    CHECK(TrafficKeys::Take(SHIPPED, folder.path, 0, "", out) == TrafficKeys::Got::Unreached);
+    CHECK(TrafficKeys::Take(SHIPPED, folder.path, 200, body.substr(0, body.size() / 2), out) == TrafficKeys::Got::Broken);
     CHECK(Files::readText(folder.path / TrafficKeys::FILE) == body);
 }
 
@@ -138,14 +139,14 @@ TEST_CASE("A saved keys file that doesn't read is left out, packets/ still loads
     Folder folder;
     REQUIRE(Files::writeFile(folder.path / TrafficKeys::FILE, "{\"format\": 1}"));
     SessionKey::Keys loaded;
-    REQUIRE(TrafficKeys::Load(folder.path, loaded));
+    REQUIRE(TrafficKeys::Load(SHIPPED, folder.path, loaded));
     CHECK(loaded.dispatch == shipped().dispatch);
 }
 
 TEST_CASE("The release's keys file downloads", "[.][live]") {
     Folder folder;
     SessionKey::Keys out;
-    TrafficKeys::Got got = TrafficKeys::Download(folder.path, out);
+    TrafficKeys::Got got = TrafficKeys::Download(SHIPPED, folder.path, out);
     INFO(TrafficKeys::GotCode(got));
     CHECK(got == TrafficKeys::Got::New);
 }

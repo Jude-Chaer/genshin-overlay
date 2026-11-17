@@ -45,6 +45,16 @@ namespace Settings {
     extern bool readGameTraffic;
     // CPU and RAM on the Usage page's line in the page list
     extern bool usageInList;
+    // ask GitHub once a day whether a newer version is out (UpdateCheck)
+    extern bool checkUpdates;
+    // the menu's X closes only the menu and the overlay keeps running in the
+    // system tray; false: the X quits. keepInTrayAsked: the player has answered
+    extern bool keepInTray;
+    extern bool keepInTrayAsked;
+    // the page the menu shows after a start: an extension's page key, empty for Home
+    extern std::string startPage;
+    // what a start with Windows shows: menu, taskbar (the button only) or tray
+    extern std::string startIn;
 
     // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
     extern std::string menuKey;

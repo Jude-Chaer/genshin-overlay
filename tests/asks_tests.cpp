@@ -416,6 +416,24 @@ TEST_CASE("an extension folder added while the overlay runs starts, once its fil
     fs::remove_all(root);
 }
 
+TEST_CASE("a player's extension folder named like the overlay's own is left out") {
+    Fresh fresh;
+    fs::path shipped = TestExtension::folder("shipped") / "extensions";
+    fs::path own = TestExtension::folder("own") / "extensions";
+    for (const fs::path& root : { shipped, own }) {
+        fs::remove_all(root);
+        fs::create_directories(root / "map");
+        std::ofstream(root / "map" / "main.lua", std::ios::binary) << "function Init() end";
+    }
+    CHECK(Extensions::findNewExtensions(shipped, std::chrono::seconds(0)) == 1);
+    CHECK(Extensions::findNewExtensions(own, std::chrono::seconds(0)) == 0);
+    REQUIRE(Extensions::registeredExtensions.size() == 1);
+    CHECK(Extensions::registeredExtensions.back()->folder == shipped / "map");
+    TestExtension::unloadAll();
+    fs::remove_all(shipped);
+    fs::remove_all(own);
+}
+
 TEST_CASE("forgetting one kind of question keeps the others") {
     Fresh fresh;
     bool on = false;

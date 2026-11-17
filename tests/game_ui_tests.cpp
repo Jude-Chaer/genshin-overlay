@@ -367,7 +367,7 @@ TEST_CASE("score on every screenshot", "[.][score]") {
 // The part getZoomBarRect gives, cut from the game's frames
 static bool zoomBar(const std::string& name) {
     cv::Mat zoomTemplate, grey;
-    cv::cvtColor(readPicture(fs::path(__FILE__).parent_path().parent_path() / "zoombar_template.png"), zoomTemplate, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(readPicture(fs::path(__FILE__).parent_path().parent_path() / "resources" / "zoombar_template.png"), zoomTemplate, cv::COLOR_BGR2GRAY);
     cv::cvtColor(readPicture(MapScreen::DATA / "zoom_bar" / (name + ".png")), grey, cv::COLOR_BGR2GRAY);
     return MapTracking::zoomBarShows(grey, zoomTemplate);
 }
