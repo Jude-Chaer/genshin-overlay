@@ -41,6 +41,8 @@ namespace Settings {
 
     // the map items are downloaded from the release when there's a newer pack (the menu's "Download map items")
     extern bool downloadItems;
+    // Game traffic, off until the player turns it on in the menu
+    extern bool readGameTraffic;
 
     // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
     extern std::string menuKey;

@@ -21,8 +21,8 @@ namespace Files {
     extern bool gzip(const std::string& in, std::string& out);
     // as lowercase hex
     extern std::string sha256(const std::string& data);
-    // the time now as a meta file's "built", 2026-10-17T13:42:00Z
-    extern std::string utcNow();
+    // the time now (or secondsAgo before it) as a meta file's "built", 2026-10-17T13:42:00Z
+    extern std::string utcNow(long long secondsAgo = 0);
 
     // A meta file comes from the internet, so every value is checked before
     // it's used: the key's value, or otherwise when it's missing or another type.

@@ -28,16 +28,22 @@
 // area_id, not the box it sits in (a few Inazuma puzzles are outside Inazuma's).
 //
 // The pack is those files one after the other, gzipped, and items.json says
-// what's in it. The overlay keeps the one it uses as a single file,
-// items/items.pack: the release's items.json on the first line, then the
-// gzipped pack as it came. It's written only after the pack has loaded, and in
-// one go (temp file and rename), so it's never half old, half new.
+// what's in it: its file (items-<sha256 12>.pack.gz, also as items.pack.gz),
+// and the patches of the last days, each from one pack to the next
+// ({from, to, file, size, rawSize, built}, oldest first, item_patch.hpp).
+// The overlay keeps the one it uses as a single file, items/items.pack: the
+// release's items.json on the first line, then the gzipped pack (as it came,
+// or gzipped here when patches made it). It's written only after the pack has
+// loaded, and in one go (temp file and rename), so it's never half old, half new.
 
 namespace ItemFiles {
     inline constexpr int FORMAT = 2;
     inline const std::string PACK_FILE = "items.pack.gz";
     inline const std::string META_FILE = "items.json";
     inline const std::string INSTALLED_FILE = "items.pack";
+    // the release's names for a pack and a patch, by sha256
+    extern std::string packName(const std::string& sha256);
+    extern std::string patchName(const std::string& from, const std::string& to);
 
     // What the builder downloads, before it's written as the folder.
     struct Source {
@@ -105,7 +111,9 @@ namespace ItemFiles {
     extern Fetch fromRelease(Net::Stopper* stopper = nullptr);
 
     // One check: with download on, gets the release's pack when items.pack
-    // isn't that one; then publishes the catalog of the best pack there is.
+    // isn't that one, by its patches when they lead there from items.pack and
+    // come to less than half the pack; then publishes the catalog of the best
+    // pack there is.
     // Tells onChange about every change on the way and returns the last one.
     // stop makes it give up at the next piece of a download or a load.
     // inUse is the catalog published now: a check never replaces it with the
@@ -117,13 +125,22 @@ namespace ItemFiles {
 
     // how long it waits before checking again with no network (the menu line says "every minute")
     inline constexpr std::chrono::seconds RETRY{ 60 };
-    // true when update couldn't reach the release, the one case that checks again on its own
-    // after RETRY, with or without a list there; the rest waits for the player (the menu's
-    // buttons) or the next start
+    // and otherwise, the release's own pace
+    inline constexpr std::chrono::seconds HOURLY{ 3600 };
+    // true when update couldn't reach the release, the one case that checks again after RETRY,
+    // with or without a list there
     extern bool waitsForNetwork(const Status& status);
 
+    // when the next check runs on its own after one that left shown
+    extern std::chrono::seconds nextCheck(const Status& shown);
+    // A check nobody asked for, with a list in use, shows nothing while it
+    // runs. Its result is shown when it's Ready, or when shown is a problem
+    // already; a failure over a list with nothing wrong leaves shown.
+    extern Status afterQuietCheck(const Status& shown, const Status& result);
+
     // update on a thread of its own: at start, again every minute while the
-    // release can't be reached, and whenever CheckNow or SetDownload asks.
+    // status says the release can't be reached, every hour otherwise, and
+    // whenever CheckNow or SetDownload asks.
     // Started and stopped in main; AskToStop lets every module start closing
     // before main waits for each.
     extern void Start(const std::filesystem::path& folder, bool download);
@@ -144,12 +161,12 @@ namespace ItemFiles {
     extern std::map<int, MapCount> countMaps(const ItemCatalog::Catalog& catalog);
 
     // The builder's check of a raw pack before it's published: what would keep
-    // it from loading in the overlay, a map of maps with no points, and a map
-    // whose points, types or pairs fell sharply against the published
-    // items.json (unless allowDrop). Empty when it can go out; counts is filled
-    // when it loads.
-    extern std::vector<std::string> checkBuilt(const std::string& raw, const std::vector<int>& maps,
-        const nlohmann::json& published, bool allowDrop, std::map<int, MapCount>& counts);
+    // it from loading in the overlay, and a published map whose points, types
+    // or pairs fell sharply or are gone (unless allowDrop). A map with no
+    // points that was never published goes out. Empty when it can go out;
+    // counts is filled when it loads.
+    extern std::vector<std::string> checkBuilt(const std::string& raw, const nlohmann::json& published, bool allowDrop,
+        std::map<int, MapCount>& counts);
 
     // --make-items <folder> [--allow-drop]: downloads everything into
     // folder/items, checks it, then writes the pack and items.json to

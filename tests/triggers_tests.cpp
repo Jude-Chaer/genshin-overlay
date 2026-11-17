@@ -211,6 +211,36 @@ TEST_CASE("Items runs on a new list and while the list loads", "[triggers]") {
     TestExtension::unloadAll();
 }
 
+TEST_CASE("GameTraffic runs when it's turned on and when its state changes", "[triggers]") {
+    Extensions::Extension* ext = counting("triggers_traffic", "GameTraffic GameTraffic:state");
+    REQUIRE(ext != nullptr);
+
+    Triggers::State state;
+    Triggers::check(state);
+    // turned on: the worker starts listening in the same turn, on comes first
+    state.trafficOn = true;
+    state.traffic.state = GameTraffic::State::Listening;
+    Triggers::check(state);
+    CHECK(runs(ext, "GameTraffic") == 1);
+    CHECK(changed(ext, "GameTraffic") == "on");
+    CHECK(given(ext, "GameTraffic").as<sol::table>()["on"].get<bool>());
+    CHECK(runs(ext, "GameTraffic:state") == 1);
+
+    // a new reason is a new state
+    state.traffic.read = Packets::State::NoKey;
+    state.traffic.reason = Packets::Reason::NotFound;
+    Triggers::check(state);
+    CHECK(runs(ext, "GameTraffic") == 2);
+    CHECK(changed(ext, "GameTraffic") == "state");
+    CHECK(given(ext, "GameTraffic").as<sol::table>()["reason"].get<std::string>() == GameTraffic::ReasonCode(state.traffic));
+
+    // the time left isn't a change
+    state.traffic.secondsLeft = 30;
+    Triggers::check(state);
+    CHECK(runs(ext, "GameTraffic") == 2);
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("only still runs when a bigger change comes in the same turn", "[triggers]") {
     Extensions::Extension* ext = counting("triggers_only", "MapView:view Items:loading Player:moved");
     REQUIRE(ext != nullptr);

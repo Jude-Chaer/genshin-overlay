@@ -22,6 +22,8 @@
 #include "key_choices.hpp"
 #include "typing.hpp"
 #include <imgui_internal.h>
+#include "game_traffic_text.hpp"
+#include "npcap_download.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -136,7 +138,18 @@ namespace Overlay {
         return it == names.end() ? 0 : (int)(it - names.begin());
     }
 
+    // the menu's switch and an extension's ask both go through here
+    static void setGameTraffic(bool on) {
+        Settings::readGameTraffic = on;
+        Settings::Save();
+        if (on) GameTraffic::Start();
+        else GameTraffic::Stop(false);
+    }
+
     bool Init() {
+        Asks::addSetting({ "Game traffic", "Read the game's traffic", "It only reads, nothing is ever sent to the game.",
+            []() { return Settings::readGameTraffic; }, []() { setGameTraffic(true); } });
+
         Overlay::mainMonitor = glfwGetPrimaryMonitor();
         Overlay::monitorVideoMode = glfwGetVideoMode(Overlay::mainMonitor);
 
@@ -765,6 +778,54 @@ namespace Overlay {
         ImGui::PopStyleVar();
     }
 
+    // An error notice, shown over the game with the map closed too, once
+    // each time the status turns to a relog.
+    static std::string trafficLastRelog;
+
+    static void updateTrafficNote() {
+        GameTraffic::Status now = GameTraffic::GetStatus();
+        std::string relog = GameTrafficText::NeedsRelog(now) ? GameTraffic::ReasonCode(now) : "";
+        if (!relog.empty() && relog != trafficLastRelog) {
+            Notices::Add("", "Genshin Overlay", Notices::Kind::Error, GameTrafficText::For(now).text, glfwGetTime());
+        }
+        trafficLastRelog = relog;
+    }
+
+    static void DrawNpcapButton() {
+        switch (NpcapDownload::GetState()) {
+        case NpcapDownload::State::Downloading: {
+            Controls::ButtonOptions busy;
+            busy.busy = true;
+            busy.busyLabel = "Downloading Npcap...";
+            Controls::Button("Download Npcap", busy);
+            return;
+        }
+        case NpcapDownload::State::Opened:
+            ImGui::TextWrapped("Npcap's installer is open. Game traffic starts by itself once it's installed.");
+            // for when the installer got closed
+            if (Controls::Button("Open the installer again"))
+                NpcapDownload::Start();
+            return;
+        case NpcapDownload::State::Failed:
+            ImGui::TextWrapped("Couldn't get Npcap. Check your internet connection, or get it from npcap.com.");
+            break;
+        case NpcapDownload::State::Idle:
+            break;
+        }
+        if (Controls::Button("Download Npcap"))
+            NpcapDownload::Start();
+    }
+
+    static void DrawGameTraffic() {
+        bool on = Settings::readGameTraffic;
+        if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
+        GameTrafficText::Line line = GameTrafficText::For(GameTraffic::GetStatus());
+        if (line.quiet) ImGui::TextDisabled("%s", line.text.c_str());
+        else ImGui::TextWrapped("%s", line.text.c_str());
+        if (line.downloadNpcap) DrawNpcapButton();
+        if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
+    }
+
     static void DrawMenu() {
         float font = ImGui::GetFontSize();
         ImGui::SetNextWindowPos(ImVec2(font * 4, font * 4), ImGuiCond_FirstUseEver);
@@ -919,6 +980,11 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
+            if (Controls::BeginSection("Game traffic")) {
+                DrawGameTraffic();
+                Controls::EndSection();
+            }
+
             if (Controls::BeginSection("Appearance")) {
                 int look = indexOf(lookNames, Settings::look);
                 if (Controls::Choice("Theme", look, lookNames)) {
@@ -1062,6 +1128,7 @@ namespace Overlay {
             ScreenPictures::nextTurn();
             Triggers::checkNow();
             LuaFunctions::UpdateAnswers();
+            updateTrafficNote();
 
             // map and menu closed: nothing to show, so don't draw at all
             bool showing = menuOpen || MapTracking::GetView().visible || glfwGetTime() - startTime < 6.0 ||

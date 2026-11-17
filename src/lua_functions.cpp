@@ -21,6 +21,7 @@
 #include "settings.hpp"
 #include "notices.hpp"
 #include "screen_pictures.hpp"
+#include "packets/game_traffic.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -200,6 +201,7 @@ namespace LuaFunctions {
 		global("GetItemPositions", MapInfo, GetItemPositions);
 		global("GetItemRegions", MapInfo, GetItemRegions);
 		global("GetItemIcon", MapInfo, GetItemIcon);
+		global("GetGameTraffic", None, GetGameTraffic);
 
 		// files, only in the extension's own folder (pathFor)
 		global("LoadTexture", InternalRead, LoadTextureFromFileLua);
@@ -2409,5 +2411,24 @@ namespace LuaFunctions {
 		GLuint texture = ItemIcons::get(Items::frameCatalog.get(), type);
 		if (texture == 0) return sol::lua_nil;
 		return sol::make_object(state, texture);
+	}
+
+	// Reading the game's traffic, for what needs it. on is the player's switch
+	// in the menu. state is off, cant_listen, waiting_for_login, searching,
+	// reading, needs_relog or no_key, and reason says why for cant_listen,
+	// needs_relog and no_key (npcap_missing, started_late, unknown_key_id and so
+	// on), "" otherwise. Codes, not sentences: the menu says what they mean.
+	// Needs no permission, it's only a status. An extension can't turn it on.
+	sol::table gameTrafficTable(bool on, const GameTraffic::Status& status, sol::state_view lua)
+	{
+		return lua.create_table_with(
+			"on", on,
+			"state", std::string(GameTraffic::StateCode(status)),
+			"reason", std::string(GameTraffic::ReasonCode(status)));
+	}
+
+	sol::table GetGameTraffic(sol::this_state state)
+	{
+		return gameTrafficTable(Settings::readGameTraffic, GameTraffic::GetStatus(), state);
 	}
 }

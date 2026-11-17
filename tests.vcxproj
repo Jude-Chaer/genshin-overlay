@@ -59,7 +59,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;crypt32.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildProjectDirectory)\tools\official_extensions.ps1" "$(MSBuildProjectDirectory)\extensions" "$(IntDir)official_extensions.inc"</Command>
@@ -151,6 +151,7 @@
     <ClCompile Include="src\item_catalog.cpp" />
     <ClCompile Include="src\item_icons.cpp" />
     <ClCompile Include="src\item_files.cpp" />
+    <ClCompile Include="src\item_patch.cpp" />
     <ClCompile Include="src\key_choices.cpp" />
     <ClCompile Include="src\keybindings.cpp" />
     <ClCompile Include="src\layer_choice.cpp" />
@@ -165,7 +166,17 @@
     <ClCompile Include="src\map_tracking.cpp" />
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
+    <ClCompile Include="src\npcap_download.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\packets\frames.cpp" />
+    <ClCompile Include="src\game_traffic_text.cpp" />
+    <ClCompile Include="src\packets\game_traffic.cpp" />
+    <ClCompile Include="src\packets\kcp.cpp" />
+    <ClCompile Include="src\packets\messages.cpp" />
+    <ClCompile Include="src\packets\packet_capture.cpp" />
+    <ClCompile Include="src\packets\reader.cpp" />
+    <ClCompile Include="src\packets\session_key.cpp" />
+    <ClCompile Include="src\packets\traffic_keys.cpp" />
     <ClCompile Include="src\screen_pictures.cpp" />
     <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -178,10 +189,12 @@
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
     <ClCompile Include="tests\file_dialog_tests.cpp" />
+    <ClCompile Include="tests\game_traffic_text_tests.cpp" />
     <ClCompile Include="tests\game_ui_tests.cpp" />
     <ClCompile Include="tests\helpers_tests.cpp" />
     <ClCompile Include="tests\item_catalog_tests.cpp" />
     <ClCompile Include="tests\item_files_tests.cpp" />
+    <ClCompile Include="tests\item_patch_tests.cpp" />
     <ClCompile Include="tests\item_lua_tests.cpp" />
     <ClCompile Include="tests\net_tests.cpp" />
     <ClCompile Include="tests\key_choices_tests.cpp" />
@@ -196,6 +209,8 @@
     <ClCompile Include="tests\map_follow_tests.cpp" />
     <ClCompile Include="tests\minimap_tests.cpp" />
     <ClCompile Include="tests\overlay_tests.cpp" />
+    <ClCompile Include="tests\packets_tests.cpp" />
+    <ClCompile Include="tests\traffic_keys_tests.cpp" />
     <ClCompile Include="tests\triggers_tests.cpp" />
     <ClCompile Include="tests\typing_tests.cpp" />
     <ClCompile Include="tests\screen_pictures_tests.cpp" />
@@ -217,6 +232,7 @@
     <ClInclude Include="src\item_catalog.hpp" />
     <ClInclude Include="src\item_icons.hpp" />
     <ClInclude Include="src\item_files.hpp" />
+    <ClInclude Include="src\item_patch.hpp" />
     <ClInclude Include="src\key_choices.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
@@ -235,6 +251,16 @@
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\packets\frames.hpp" />
+    <ClInclude Include="src\game_traffic_text.hpp" />
+    <ClInclude Include="src\npcap_download.hpp" />
+    <ClInclude Include="src\packets\game_traffic.hpp" />
+    <ClInclude Include="src\packets\kcp.hpp" />
+    <ClInclude Include="src\packets\messages.hpp" />
+    <ClInclude Include="src\packets\packet_capture.hpp" />
+    <ClInclude Include="src\packets\reader.hpp" />
+    <ClInclude Include="src\packets\session_key.hpp" />
+    <ClInclude Include="src\packets\traffic_keys.hpp" />
     <ClInclude Include="src\screen_pictures.hpp" />
     <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />

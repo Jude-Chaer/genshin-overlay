@@ -2,6 +2,7 @@
 #include "files.hpp"
 #include "appsample.hpp"
 #include "item_catalog.hpp"
+#include "item_patch.hpp"
 #include "map_data.hpp"
 #include "net.hpp"
 #include <algorithm>
@@ -35,6 +36,8 @@ namespace ItemFiles {
 	// appsample's side than a real one, so the builder stops and keeps last
 	// week's (the smallest map has 48 types, so this is about 10 of them).
 	static constexpr int MAX_DROP_PERCENT = 20;
+	// how long a patch stays on the release, so an overlay off for longer takes the whole pack
+	static constexpr int PATCH_DAYS = 7;
 
 	static std::string dump(const ordered& data) {
 		return data.dump(-1, ' ', false, ordered::error_handler_t::replace);
@@ -101,13 +104,43 @@ namespace ItemFiles {
 		// a point id once, under the first type that has it (never seen, HoYoLAB's ids are unique)
 		std::set<int64_t> pointsSeen;
 		for (const auto& [type, points] : source.points) {
-			ordered list = ordered::array();
+			// one point per line, so a patch carries only the points that changed
+			std::string list;
 			for (const json& point : points) {
-				if (hasId(point) && pointsSeen.insert(point["id"].get<int64_t>()).second) list.push_back(trimPoint(point, source.pairs));
+				if (!hasId(point) || !pointsSeen.insert(point["id"].get<int64_t>()).second) continue;
+				list += (list.empty() ? "[\n" : ",\n") + dump(trimPoint(point, source.pairs));
 			}
-			if (!Files::writeFile(folder / "positions" / (std::to_string(type) + ".json"), dump(list))) return false;
+			list = list.empty() ? "[]" : list + "\n]";
+			if (!Files::writeFile(folder / "positions" / (std::to_string(type) + ".json"), list)) return false;
 		}
 		return true;
+	}
+
+	std::string packName(const std::string& sha256) {
+		return "items-" + sha256.substr(0, 12) + ".pack.gz";
+	}
+
+	std::string patchName(const std::string& from, const std::string& to) {
+		return "items-" + from.substr(0, 12) + "-" + to.substr(0, 12) + ".patch.gz";
+	}
+
+	// a release file named in items.json: one the builder makes, nothing else
+	static bool releaseName(const std::string& name) {
+		if (name == PACK_FILE) return true;
+		auto hex = [&](size_t at) {
+			for (size_t i = at; i < at + 12; i++) {
+				if (!std::isxdigit((unsigned char)name[i]) || std::isupper((unsigned char)name[i])) return false;
+			}
+			return true;
+		};
+		if (name.size() == 26 && name.compare(0, 6, "items-") == 0 && name.compare(18, 8, ".pack.gz") == 0) return hex(6);
+		return name.size() == 40 && name.compare(0, 6, "items-") == 0 && name[18] == '-' && name.compare(31, 9, ".patch.gz") == 0 && hex(6) && hex(19);
+	}
+
+	// the pack an items.json names, PACK_FILE when it names none or one that isn't a release name
+	static std::string packFile(const json& meta) {
+		std::string file = Files::stringField(meta, "file", PACK_FILE);
+		return releaseName(file) ? file : PACK_FILE;
 	}
 
 	bool pack(const fs::path& folder, std::string& raw) {
@@ -245,16 +278,12 @@ namespace ItemFiles {
 		return count >= 0 && count <= std::numeric_limits<int>::max() ? (int)count : -1;
 	}
 
-	std::vector<std::string> checkBuilt(const std::string& raw, const std::vector<int>& maps, const json& published, bool allowDrop,
-		std::map<int, MapCount>& counts) {
+	std::vector<std::string> checkBuilt(const std::string& raw, const json& published, bool allowDrop, std::map<int, MapCount>& counts) {
 		std::vector<std::string> problems;
 		std::string problem;
 		std::shared_ptr<ItemCatalog::Catalog> catalog = loadAll(raw, nullptr, problem);
 		if (!catalog) return { "the overlay would refuse it: " + problem };
 		counts = countMaps(*catalog);
-		for (int map : maps) {
-			if (!counts.count(map)) problems.push_back("map " + std::to_string(map) + " has no points");
-		}
 		if (allowDrop || !published.is_object() || !published.contains("maps") || !published["maps"].is_object()) return problems;
 		for (const auto& [id, was] : published["maps"].items()) {
 			int map = std::atoi(id.c_str());
@@ -330,6 +359,66 @@ namespace ItemFiles {
 		};
 	}
 
+	// The patches that lead from the pack with sha256 from to the release's, oldest
+	// first. Empty when items.json has none from it, or one doesn't lead on.
+	static std::vector<json> patchChain(const json& published, const std::string& from) {
+		std::string released = Files::stringField(published, "sha256");
+		if (from.empty() || !published.contains("patches") || !published["patches"].is_array()) return {};
+		const json& patches = published["patches"];
+		size_t i = 0;
+		while (i < patches.size() && Files::stringField(patches[i], "from") != from) i++;
+		std::vector<json> chain;
+		std::string at = from;
+		for (; i < patches.size() && at != released; i++) {
+			const json& step = patches[i];
+			std::string to = Files::stringField(step, "to");
+			if (Files::stringField(step, "from") != at || to.empty() || !releaseName(Files::stringField(step, "file"))
+				|| Files::sizeField(step, "size") == 0 || Files::sizeField(step, "rawSize") == 0) return {};
+			chain.push_back(step);
+			at = to;
+		}
+		if (at != released) return {};
+		return chain;
+	}
+
+	static size_t chainSize(const std::vector<json>& chain) {
+		size_t size = 0;
+		for (const json& step : chain) size += Files::sizeField(step, "size");
+		return size;
+	}
+
+	// the installed pack with every patch of the chain applied, checked at each one
+	static bool patched(const fs::path& folder, const json& installedMeta, const std::vector<json>& chain, const Fetch& fetch,
+		const Net::Progress& progress, std::string& raw, std::string& problem) {
+		if (!unzip(readInstalledPack(folder), installedMeta, raw, problem)) return false;
+		size_t before = 0;
+		for (const json& step : chain) {
+			std::string file = Files::stringField(step, "file"), packed, steps, next;
+			size_t size = Files::sizeField(step, "size");
+			bool tooBig = false;
+			bool got = fetch(file, packed, [&](size_t bytes) {
+				tooBig = tooBig || bytes > size;
+				return !tooBig && progress(before + bytes);
+			});
+			if (!got || tooBig) {
+				problem = file + " didn't come";
+				return false;
+			}
+			before += size;
+			size_t rawSize = Files::sizeField(step, "rawSize");
+			if (rawSize > 2 * MAX_RAW_SIZE || !Files::gunzip(packed, steps, rawSize)) {
+				problem = file + " doesn't unzip to its size";
+				return false;
+			}
+			if (!ItemPatch::apply(raw, steps, MAX_RAW_SIZE, next) || Files::sha256(next) != Files::stringField(step, "to")) {
+				problem = file + " doesn't make the pack it's for";
+				return false;
+			}
+			raw = std::move(next);
+		}
+		return true;
+	}
+
 	static const char* why(Reason reason) {
 		switch (reason) {
 		case Reason::NoNetwork: return "the release couldn't be reached";
@@ -382,6 +471,14 @@ namespace ItemFiles {
 			return status;
 		};
 
+		// written to disk and in use, or in use until the overlay closes when it can't be written
+		auto installAndFinish = [&](const std::string& packed, const json& meta, std::shared_ptr<ItemCatalog::Catalog> fresh,
+			std::chrono::steady_clock::time_point start) {
+			bool saved = install(packed, meta, folder);
+			if (!saved) std::cerr << "[items] couldn't write " << INSTALLED_FILE << (fresh ? ", the pack is used until the overlay closes" : " again") << std::endl;
+			return finish(State::Ready, saved ? Reason::None : Reason::CantSave, std::move(fresh), meta, start);
+		};
+
 		Reason reason = Reason::DownloadOff;
 		json published;
 		if (download) {
@@ -396,6 +493,13 @@ namespace ItemFiles {
 		if (stop.stopped()) return Status();
 
 		auto start = std::chrono::steady_clock::now();
+		// what's in use stays; the one on disk is only loaded when nothing is
+		auto kept = [&](Reason reason) {
+			if (inUse) return finish(State::Old, reason, nullptr, json{ { "built", inUse->built } }, start);
+			if (loadInstalled()) return finish(State::Old, reason, installed, installedMeta, start);
+			if (stop.stopped()) return Status();
+			return finish(State::None, reason, nullptr, json(), start);
+		};
 		std::string releasedHash = Files::stringField(published, "sha256");
 		if (!published.is_null() && !installedHash.empty() && releasedHash == installedHash) {
 			if (inUseHash == installedHash) return finish(State::Ready, Reason::None, nullptr, installedMeta, start);
@@ -407,17 +511,50 @@ namespace ItemFiles {
 			Status progress;
 			progress.state = State::Downloading;
 			onChange(progress);
-			std::string packed;
-			bool tooBig = false;
-			// a pack with no size, or more than items.json says, isn't ours
-			bool got = size > 0 && size <= MAX_RAW_SIZE && fetch(PACK_FILE, packed, [&](size_t bytes) {
-				int percent = (int)std::min<size_t>(100, bytes * 100 / size);
+			auto shown = [&](size_t bytes, size_t of) {
+				int percent = (int)std::min<size_t>(100, bytes * 100 / of);
 				if (percent != progress.percent) {
 					progress.percent = percent;
 					onChange(progress);
 				}
+				return !stop.stopped() && download;
+			};
+
+			// the patches from the installed pack, when they come to less than half the pack
+			std::vector<json> chain = haveInstalled ? patchChain(published, installedHash) : std::vector<json>();
+			size_t patchBytes = chainSize(chain);
+			if (!chain.empty() && size > 0 && patchBytes * 2 <= size) {
+				std::string raw, problem, packed;
+				bool ok = patched(folder, installedMeta, chain, fetch, [&](size_t bytes) { return shown(bytes, patchBytes); }, raw, problem);
+				if (stop.stopped()) return Status();
+				start = std::chrono::steady_clock::now();
+				std::shared_ptr<ItemCatalog::Catalog> fresh;
+				if (ok && releasedHash != inUseHash) {
+					fresh = loadAll(raw, &stop, problem);
+					if (stop.stopped()) return Status();
+					// it's the release's pack byte for byte, the whole one wouldn't load either
+					if (!fresh) {
+						std::cerr << "[items] the patched pack is refused: " << problem << std::endl;
+						return kept(Reason::BrokenPack);
+					}
+				}
+				if (ok && Files::gzip(raw, packed)) {
+					std::cout << "[items] " << chain.size() << " patches, " << patchBytes << " bytes" << std::endl;
+					if (fresh) markSource(*fresh, published);
+					return installAndFinish(packed, published, fresh, start);
+				}
+				// the whole pack instead
+				std::cerr << "[items] the patches didn't work: " << (problem.empty() ? "gzip failed" : problem) << std::endl;
+				progress.percent = 0;
+				onChange(progress);
+			}
+
+			std::string packed;
+			bool tooBig = false;
+			// a pack with no size, or more than items.json says, isn't ours
+			bool got = size > 0 && size <= MAX_RAW_SIZE && fetch(packFile(published), packed, [&](size_t bytes) {
 				tooBig = tooBig || bytes > size;
-				return !stop.stopped() && !tooBig && download;
+				return shown(bytes, size) && !tooBig;
 			});
 			if (stop.stopped()) return Status();
 			start = std::chrono::steady_clock::now();
@@ -429,11 +566,7 @@ namespace ItemFiles {
 			else if (!inUseHash.empty() && releasedHash == inUseHash) {
 				// in use but not saved (it couldn't write before): checked, then only written
 				std::string problem, raw;
-				if (unzip(packed, published, raw, problem)) {
-					bool saved = install(packed, published, folder);
-					if (!saved) std::cerr << "[items] couldn't write " << INSTALLED_FILE << " again" << std::endl;
-					return finish(State::Ready, saved ? Reason::None : Reason::CantSave, nullptr, published, start);
-				}
+				if (unzip(packed, published, raw, problem)) return installAndFinish(packed, published, nullptr, start);
 				std::cerr << "[items] the downloaded pack is refused: " << problem << std::endl;
 				reason = Reason::BrokenPack;
 			}
@@ -441,25 +574,30 @@ namespace ItemFiles {
 				std::string problem;
 				std::shared_ptr<ItemCatalog::Catalog> fresh = open(packed, published, &stop, problem);
 				if (stop.stopped()) return Status();
-				if (fresh) {
-					bool saved = install(packed, published, folder);
-					if (!saved) std::cerr << "[items] couldn't write " << INSTALLED_FILE << ", the pack is used until the overlay closes" << std::endl;
-					return finish(State::Ready, saved ? Reason::None : Reason::CantSave, fresh, published, start);
-				}
+				if (fresh) return installAndFinish(packed, published, fresh, start);
 				std::cerr << "[items] the downloaded pack is refused: " << problem << std::endl;
 				reason = Reason::BrokenPack;
 			}
 		}
 
-		// what's in use stays; the one on disk is only loaded when nothing is
-		if (inUse) return finish(State::Old, reason, nullptr, json{ { "built", inUse->built } }, start);
-		if (loadInstalled()) return finish(State::Old, reason, installed, installedMeta, start);
-		if (stop.stopped()) return Status();
-		return finish(State::None, reason, nullptr, json(), start);
+		return kept(reason);
 	}
 
 	bool waitsForNetwork(const Status& status) {
 		return status.reason == Reason::NoNetwork;
+	}
+
+	std::chrono::seconds nextCheck(const Status& shown) {
+		return waitsForNetwork(shown) ? RETRY : HOURLY;
+	}
+
+	Status afterQuietCheck(const Status& shown, const Status& result) {
+		bool nothingWrong = shown.state == State::Ready && shown.reason == Reason::None;
+		if (result.state != State::Ready && nothingWrong) return shown;
+		Status now = result;
+		now.started = true;
+		now.checking = shown.checking;
+		return now;
 	}
 
 	static std::thread worker;
@@ -499,23 +637,34 @@ namespace ItemFiles {
 			Fetch fetch = [release = fromRelease(stopper.get())](const std::string& name, std::string& body, const Net::Progress& progress) {
 				return release(name, body, [&progress](size_t got) { return downloadOn && (!progress || progress(got)); });
 			};
-			auto onChange = [](const Status& now) {
+			bool quiet = false;
+			// a quiet check shows nothing until the player presses Check now
+			auto onChange = [&quiet](const Status& now) {
 				std::lock_guard<std::mutex> lock(mutex);
+				if (quiet && !checkAgain) return;
 				bool checking = status.checking;
 				status = now;
 				status.started = true;
 				status.checking = checking;
 			};
 			for (;;) {
-				Status result = updateCaught(folder, fetch, onChange);
+				if (!quiet) updateCaught(folder, fetch, onChange);
+				else {
+					Status result = updateCaught(folder, fetch, onChange);
+					std::lock_guard<std::mutex> lock(mutex);
+					status = afterQuietCheck(status, result);
+				}
 				std::unique_lock<std::mutex> lock(mutex);
 				status.checking = false;
 				auto asked = []() { return stopper->stopped() || checkAgain; };
-				if (waitsForNetwork(result)) wake.wait_for(lock, RETRY, asked);
-				else wake.wait(lock, asked);
+				// with the download off, only the player starts a check
+				do wake.wait_for(lock, nextCheck(status), asked);
+				while (!asked() && !downloadOn);
 				if (stopper->stopped()) return;
+				// on its own with a list in use, nothing shows until there's a new one
+				quiet = !checkAgain && ItemCatalog::current() != nullptr;
 				checkAgain = false;
-				status.checking = true;
+				if (!quiet) status.checking = true;
 			}
 		});
 	}
@@ -639,16 +788,36 @@ namespace ItemFiles {
 		}
 	}
 
+	// the published raw pack, empty when there's none or it can't be read
+	static std::string fetchPublishedPack(const json& published) {
+		if (published.is_null()) return std::string();
+		std::string raw, problem;
+		if (!Files::getChecked(packFile(published), published, MAX_RAW_SIZE, raw, problem)) {
+			std::cerr << "[items] couldn't read the published pack: " << problem << std::endl;
+			return std::string();
+		}
+		return raw;
+	}
+
 	// An icon that didn't come is taken from the published pack, so a bad
 	// week neither loses icons nor makes everyone download a new pack.
-	static void keepPublishedIcons(const json& published, const std::vector<int>& failed, const fs::path& folder) {
-		if (failed.empty() || published.is_null()) return;
-		std::string raw, problem;
-		if (!Files::getChecked(PACK_FILE, published, MAX_RAW_SIZE, raw, problem)) {
-			std::cerr << "[items] couldn't read the published pack for the missing icons: " << problem << std::endl;
-			return;
+	static void keepPublishedIcons(const std::string& publishedRaw, const std::vector<int>& failed, const fs::path& folder) {
+		if (failed.empty() || publishedRaw.empty()) return;
+		std::cout << "[items] " << keepIcons(publishedRaw, failed, folder) << " of " << failed.size() << " missing icons kept from the published pack" << std::endl;
+	}
+
+	// the release files an items.json points to
+	static std::set<std::string> filesOf(const json& meta) {
+		std::set<std::string> names;
+		std::string file = Files::stringField(meta, "file");
+		if (releaseName(file)) names.insert(file);
+		if (meta.is_object() && meta.contains("patches") && meta["patches"].is_array()) {
+			for (const json& step : meta["patches"]) {
+				std::string name = Files::stringField(step, "file");
+				if (releaseName(name)) names.insert(name);
+			}
 		}
-		std::cout << "[items] " << keepIcons(raw, failed, folder) << " of " << failed.size() << " missing icons kept from the published pack" << std::endl;
+		return names;
 	}
 
 	static bool downloadMap(int map, Source& source) {
@@ -744,7 +913,12 @@ namespace ItemFiles {
 		std::cout << "Reading HoYoLAB's map items..." << std::endl;
 		Source source;
 		std::map<int, std::string> icons;
-		for (int map : MapData::MAP_IDS) {
+		std::vector<int> maps;
+		if (!MapData::mapIds(maps)) {
+			std::cerr << "HoYoLAB's map list didn't answer" << std::endl;
+			return 1;
+		}
+		for (int map : maps) {
 			if (!downloadMap(map, source)) return 1;
 			findIcons(source.trees[map], icons);
 		}
@@ -759,7 +933,8 @@ namespace ItemFiles {
 			std::cerr << "The item files aren't made: the published ones can't be compared with" << std::endl;
 			return 1;
 		}
-		keepPublishedIcons(published, downloadIcons(icons, items / "icons"), items);
+		std::string publishedRaw = fetchPublishedPack(published);
+		keepPublishedIcons(publishedRaw, downloadIcons(icons, items / "icons"), items);
 		// without appsample the pack would lose every pair for a week, so the published one stays
 		if (!pairWithAppsample(source) || !write(source, items)) return 1;
 
@@ -769,8 +944,7 @@ namespace ItemFiles {
 
 		// what's published is what the overlay will load, so it's loaded here first the same way
 		std::map<int, MapCount> counts;
-		std::vector<int> maps(std::begin(MapData::MAP_IDS), std::end(MapData::MAP_IDS));
-		std::vector<std::string> problems = checkBuilt(raw, maps, published, allowDrop, counts);
+		std::vector<std::string> problems = checkBuilt(raw, published, allowDrop, counts);
 		for (const auto& [map, count] : counts) {
 			std::cout << "[items] map " << map << ": " << count.points << " points, " << count.types << " types, " << count.pairs << " pairs" << std::endl;
 		}
@@ -778,7 +952,7 @@ namespace ItemFiles {
 			for (const std::string& problem : problems) std::cerr << "[items] " << problem << std::endl;
 			// the hint only when dropping is all that's wrong
 			std::map<int, MapCount> ignored;
-			bool onlyDrops = !allowDrop && checkBuilt(raw, maps, published, true, ignored).empty();
+			bool onlyDrops = !allowDrop && checkBuilt(raw, published, true, ignored).empty();
 			std::cerr << "The item files aren't published" << (onlyDrops ? " (--allow-drop publishes a drop that's meant)" : "") << std::endl;
 			return 1;
 		}
@@ -792,9 +966,11 @@ namespace ItemFiles {
 
 		std::string packed;
 		if (!Files::gzip(raw, packed)) return 1;
+		std::string built = Files::utcNow();
 		ordered meta;
 		meta["format"] = FORMAT;
-		meta["built"] = Files::utcNow();
+		meta["built"] = built;
+		meta["file"] = packName(hash);
 		meta["size"] = packed.size();
 		meta["rawSize"] = raw.size();
 		meta["sha256"] = hash;
@@ -802,9 +978,37 @@ namespace ItemFiles {
 		for (const auto& [map, count] : counts) {
 			meta["maps"][std::to_string(map)] = { { "points", count.points }, { "types", count.types }, { "pairs", count.pairs } };
 		}
+
+		// the published patches of the last PATCH_DAYS, and one from the published pack to this one
 		fs::path out = folder / "out";
-		if (!Files::writeFile(out / PACK_FILE, packed) || !Files::writeFile(out / META_FILE, meta.dump(1))) return 1;
-		std::cout << "Wrote " << PACK_FILE << " (" << packed.size() / 1000000.0 << " MB) and " << META_FILE << std::endl;
+		meta["patches"] = ordered::array();
+		std::string from = Files::stringField(published, "sha256");
+		bool madePatch = !publishedRaw.empty() && !from.empty();
+		if (madePatch) {
+			std::string cutoff = Files::utcNow(PATCH_DAYS * 24 * 3600);
+			if (published.contains("patches") && published["patches"].is_array()) {
+				for (const json& step : published["patches"]) {
+					if (step.is_object() && Files::stringField(step, "built") >= cutoff) meta["patches"].push_back(ordered(step));
+				}
+			}
+			std::string steps = ItemPatch::make(publishedRaw, raw), patch;
+			if (!Files::gzip(steps, patch) || !Files::writeFile(out / patchName(from, hash), patch)) return 1;
+			meta["patches"].push_back({ { "from", from }, { "to", hash }, { "file", patchName(from, hash) }, { "size", patch.size() },
+				{ "rawSize", steps.size() }, { "built", built } });
+			std::cout << "Wrote " << patchName(from, hash) << " (" << patch.size() / 1000.0 << " KB)" << std::endl;
+		}
+
+		// what the workflow keeps on the release: this items.json's files and the published one's,
+		// so a download that started before this goes up still finishes
+		std::set<std::string> keep = filesOf(published);
+		keep.insert(packName(hash));
+		if (madePatch) keep.insert(patchName(from, hash));
+		std::string keepList;
+		for (const std::string& name : keep) keepList += name + "\n";
+
+		if (!Files::writeFile(out / PACK_FILE, packed) || !Files::writeFile(out / packName(hash), packed)
+			|| !Files::writeFile(out / "keep.txt", keepList) || !Files::writeFile(out / META_FILE, meta.dump(1))) return 1;
+		std::cout << "Wrote " << packName(hash) << " (" << packed.size() / 1000000.0 << " MB) and " << META_FILE << std::endl;
 		return 0;
 	}
 }

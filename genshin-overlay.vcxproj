@@ -65,7 +65,8 @@
     <PostBuildEvent>
       <Command>xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\extensions" "$(OutDir)extensions" &gt;nul
 xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\fonts" "$(OutDir)fonts" &gt;nul
-xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\LICENSE" "$(OutDir)licenses\material-color-utilities\" &gt;nul</Command>
+xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\LICENSE" "$(OutDir)licenses\material-color-utilities\" &gt;nul
+xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nul</Command>
     </PostBuildEvent>
     <PreBuildEvent>
       <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildProjectDirectory)\tools\official_extensions.ps1" "$(MSBuildProjectDirectory)\extensions" "$(IntDir)official_extensions.inc"</Command>
@@ -157,6 +158,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClCompile Include="src\item_catalog.cpp" />
     <ClCompile Include="src\item_icons.cpp" />
     <ClCompile Include="src\item_files.cpp" />
+    <ClCompile Include="src\item_patch.cpp" />
     <ClCompile Include="src\key_choices.cpp" />
     <ClCompile Include="src\keybindings.cpp" />
     <ClCompile Include="src\layer_choice.cpp" />
@@ -172,7 +174,17 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClCompile Include="src\map_tracking.cpp" />
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
+    <ClCompile Include="src\npcap_download.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\packets\frames.cpp" />
+    <ClCompile Include="src\game_traffic_text.cpp" />
+    <ClCompile Include="src\packets\game_traffic.cpp" />
+    <ClCompile Include="src\packets\kcp.cpp" />
+    <ClCompile Include="src\packets\messages.cpp" />
+    <ClCompile Include="src\packets\packet_capture.cpp" />
+    <ClCompile Include="src\packets\reader.cpp" />
+    <ClCompile Include="src\packets\session_key.cpp" />
+    <ClCompile Include="src\packets\traffic_keys.cpp" />
     <ClCompile Include="src\screen_pictures.cpp" />
     <ClCompile Include="src\screens.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -194,6 +206,7 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClInclude Include="src\item_catalog.hpp" />
     <ClInclude Include="src\item_icons.hpp" />
     <ClInclude Include="src\item_files.hpp" />
+    <ClInclude Include="src\item_patch.hpp" />
     <ClInclude Include="src\key_choices.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
@@ -212,6 +225,16 @@ xcopy /I /Y /Q "$(MSBuildProjectDirectory)\third_party\material-color-utilities\
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\packets\frames.hpp" />
+    <ClInclude Include="src\game_traffic_text.hpp" />
+    <ClInclude Include="src\npcap_download.hpp" />
+    <ClInclude Include="src\packets\game_traffic.hpp" />
+    <ClInclude Include="src\packets\kcp.hpp" />
+    <ClInclude Include="src\packets\messages.hpp" />
+    <ClInclude Include="src\packets\packet_capture.hpp" />
+    <ClInclude Include="src\packets\reader.hpp" />
+    <ClInclude Include="src\packets\session_key.hpp" />
+    <ClInclude Include="src\packets\traffic_keys.hpp" />
     <ClInclude Include="src\screen_pictures.hpp" />
     <ClInclude Include="src\screens.hpp" />
     <ClInclude Include="src\settings.hpp" />
