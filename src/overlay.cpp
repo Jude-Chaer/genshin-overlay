@@ -1521,6 +1521,16 @@ namespace Overlay {
         DrawPage("Usage", 1, 0, false, 0xFF9F0AFF, pages[1].second, Controls::PageIcon::Usage);
         DrawPage("Accounts", 2, 0, false, 0x0A84FFFF, pages[2].second, Controls::PageIcon::Accounts);
 
+        ImGui::Separator();
+
+        ImGui::PushID("Quit");
+        if (Controls::PageButton("Quit", false, 0, false, 0xD94A4AFF, {}, Controls::PageIcon::Shutdown)) {
+            // There might already be a function to close the window, but I can't remember it. T.T
+            glfwSetWindowShouldClose(Overlay::Window, GLFW_TRUE);
+        }
+        ImGui::PopID();
+
+
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();
         }

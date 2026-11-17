@@ -284,7 +284,7 @@ namespace Controls {
     void SetDiscTexture(ImTextureID disc);
     // The overlay's own icons for its pages and its official extensions, drawn
     // as lines in one colour.
-    enum class PageIcon { None, Home, Usage, Accounts, Map, Minimap, Markers, Sets, Collected };
+    enum class PageIcon { None, Home, Usage, Accounts, Map, Minimap, Markers, Sets, Collected, Shutdown };
     // One of them in a size by size square at at.
     void DrawPageIcon(ImDrawList* draw, PageIcon icon, ImVec2 at, float size, ImU32 color);
     // A page in the menu's list: its icon (an extension's picture, else glyph,
