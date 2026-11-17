@@ -153,7 +153,10 @@ namespace Net {
 		return publicV4(a) && !onThisNetwork(AF_INET, a);
 	}
 
-	bool publicAddress(const std::wstring& text) {
+	bool publicAddress(const std::wstring& address) {
+		// WinHTTP writes IPv6 in brackets, [2606:4700::1111]
+		std::wstring text = address;
+		if (text.size() > 2 && text.front() == L'[' && text.back() == L']') text = text.substr(1, text.size() - 2);
 		unsigned char a[16] = {};
 		if (InetPtonW(AF_INET, text.c_str(), a) == 1) return publicV4Here(a);
 		if (InetPtonW(AF_INET6, text.c_str(), a) != 1) return false;

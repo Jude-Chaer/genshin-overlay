@@ -300,13 +300,15 @@ TEST_CASE("only addresses out on the internet count as public") {
         L"192.168.1.1", L"169.254.10.20", L"100.64.0.1", L"100.127.255.255", L"224.0.0.1", L"255.255.255.255",
         L"::", L"::1", L"fe80::1", L"fec0::1", L"fd12:3456::1", L"fc00::1", L"ff02::1",
         L"::ffff:192.168.1.1", L"::ffff:127.0.0.1", L"64:ff9b::a00:1", L"2002:c0a8:101::1",
-        L"router.home", L"", L"192.168.1" }) {
+        L"[::1]", L"[fe80::1]", L"[fd12:3456::1]", L"[::ffff:192.168.1.1]",
+        L"router.home", L"", L"192.168.1", L"[]" }) {
         INFO(ascii(home));
         CHECK_FALSE(Net::publicAddress(home));
     }
     // public DNS servers, a fake-IP proxy's range, the edges of the private ranges
     for (const wchar_t* out : { L"8.8.8.8", L"1.1.1.1", L"172.15.255.255", L"172.32.0.1", L"100.63.255.255", L"100.128.0.1",
-        L"198.18.0.5", L"2001:4860:4860::8888", L"2606:4700:4700::1111", L"::ffff:8.8.8.8", L"64:ff9b::808:808" }) {
+        L"198.18.0.5", L"2001:4860:4860::8888", L"2606:4700:4700::1111", L"::ffff:8.8.8.8", L"64:ff9b::808:808",
+        L"[2606:4700:10::ac42:93f3]", L"[2600:9000:20ea:b600:17:49e7:a000:93a1]" }) {
         INFO(ascii(out));
         CHECK(Net::publicAddress(out));
     }
@@ -328,6 +330,7 @@ TEST_CASE("every address of this PC is refused") {
             if (std::wstring(text).rfind(L"198.18.", 0) == 0 || std::wstring(text).rfind(L"198.19.", 0) == 0) continue;
             INFO(ascii(text));
             CHECK_FALSE(Net::publicAddress(text));
+            if (address->sa_family == AF_INET6) CHECK_FALSE(Net::publicAddress(L"[" + std::wstring(text) + L"]"));
             checked++;
             // the same IPv4 written as IPv6 goes to the same place
             if (address->sa_family == AF_INET) {
