@@ -47,9 +47,9 @@ jobs:
           $folder = "PocketEsoptron"
           New-Item -ItemType Directory $folder | Out-Null
           Copy-Item build\Release\PocketEsoptron.exe $folder
-          # the example is for extension authors, it uses the internet at every start
+          # example, map and minimap are for extension authors and testing
           New-Item -ItemType Directory "$folder\extensions" | Out-Null
-          Get-ChildItem extensions -Directory | Where-Object Name -ne "example" | Copy-Item -Recurse -Destination "$folder\extensions"
+          Get-ChildItem extensions -Directory | Where-Object Name -notin "example", "map", "minimap" | Copy-Item -Recurse -Destination "$folder\extensions"
           # the game traffic's keys, the ones the overlay falls back on
           Copy-Item -Recurse packets $folder
           Copy-Item README.md, LICENSE $folder
