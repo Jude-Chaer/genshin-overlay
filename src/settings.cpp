@@ -22,9 +22,10 @@ namespace Settings {
     std::string menuKey = "Alt+`";
     std::string look = "Windows 11";
     std::string lightDark = "Follow Windows";
-    int size = 100;
+    int size = 125;
     const std::vector<int> Sizes = { 80, 90, 100, 110, 125, 150 };
     bool readGameTraffic = false;
+    bool usageInList = true;
 
     std::filesystem::path file;
 
@@ -97,14 +98,15 @@ namespace Settings {
         menuKey = settings.value("menuKey", std::string("Alt+`"));
         look = settings.value("look", std::string("Windows 11"));
         lightDark = settings.value("lightDark", std::string("Follow Windows"));
-        // a size that isn't one of the choices, hand edited, is 100
+        // a size that isn't one of the choices, hand edited, is 125
         auto savedSize = settings.find("size");
-        size = 100;
+        size = 125;
         if (savedSize != settings.end() && savedSize->is_number_integer()) {
             int saved = savedSize->get<int>();
             if (std::find(Sizes.begin(), Sizes.end(), saved) != Sizes.end()) size = saved;
         }
         readGameTraffic = settings.value("readGameTraffic", false);
+        usageInList = settings.value("usageInList", true);
     }
 
     // extension settings are in the same file, don't wipe them
@@ -127,6 +129,7 @@ namespace Settings {
         settings["lightDark"] = lightDark;
         settings["size"] = size;
         settings["readGameTraffic"] = readGameTraffic;
+        settings["usageInList"] = usageInList;
         write(settings);
     }
 
@@ -211,6 +214,20 @@ namespace Settings {
         if (open.empty()) all.erase(folder);
         else all[folder] = open;
         if (all.empty()) settings.erase("extensionHeaders");
+        write(settings);
+    }
+
+    nlohmann::json LoadPageList() {
+        nlohmann::json settings = read();
+        auto it = settings.find("pageList");
+        if (it == settings.end() || !it->is_array()) return nlohmann::json::array();
+        return *it;
+    }
+
+    void SavePageList(const nlohmann::json& list) {
+        nlohmann::json settings = read();
+        if (list.empty()) settings.erase("pageList");
+        else settings["pageList"] = list;
         write(settings);
     }
 
@@ -328,6 +345,39 @@ namespace Settings {
     void SaveGrants(const std::string& folder, const Grants& grants) {
         nlohmann::json settings = read();
         settings["extensionGrants"][folder] = toJson(grants);
+        write(settings);
+    }
+
+    void SwitchOffEverywhere(const std::string& name) {
+        nlohmann::json settings = read();
+        auto all = settings.find("extensionGrants");
+        if (all == settings.end() || !all->is_object()) return;
+        bool changed = false;
+        for (auto& [folder, saved] : all->items()) {
+            Grants grants = grantsFrom(saved);
+            auto granted = std::find(grants.names.begin(), grants.names.end(), name);
+            if (!grants.saved || granted == grants.names.end()) continue;
+            grants.names.erase(granted);
+            if (std::find(grants.off.begin(), grants.off.end(), name) == grants.off.end()) grants.off.push_back(name);
+            saved = toJson(grants);
+            changed = true;
+        }
+        if (changed) write(settings);
+    }
+
+    std::string LoadAccountSeen(const std::string& site) {
+        nlohmann::json settings = read();
+        auto all = settings.find("accountsSeen");
+        if (all == settings.end() || !all->is_object()) return "";
+        auto seen = all->find(site);
+        return seen != all->end() && seen->is_string() ? seen->get<std::string>() : "";
+    }
+
+    void SaveAccountSeen(const std::string& site, const std::string& hash) {
+        nlohmann::json settings = read();
+        nlohmann::json& all = settings["accountsSeen"];
+        if (!all.is_object()) all = nlohmann::json::object();
+        all[site] = hash;
         write(settings);
     }
 }

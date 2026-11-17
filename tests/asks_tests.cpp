@@ -8,6 +8,7 @@
 #include "extensions.hpp"
 #include "files.hpp"
 #include "keybindings.hpp"
+#include "overlay.hpp"
 #include "settings.hpp"
 #include "test_extension.hpp"
 
@@ -171,6 +172,80 @@ TEST_CASE("PermissionState gives its five answers to Lua, nil for an unknown nam
     TestExtension::unloadAll();
     // its question went with it
     CHECK(Asks::queue().empty());
+}
+
+TEST_CASE("an account permission is never asked for and only the player turns it on") {
+    Fresh fresh;
+    const std::string code = R"(
+        metadata = { permissions = { hoyolab_map_account = { reason = "Syncs your marks." }, network = {} } }
+    )";
+    CaptureLog log;
+    Extensions::Extension* ext = TestExtension::load("accounts", code);
+    REQUIRE(ext != nullptr);
+    // listed, but only network is asked
+    REQUIRE(Asks::queue().size() == 1);
+    CHECK(Asks::queue()[0].permissions == std::vector<Permission>{ Permission::NetworkAccess });
+    Asks::answer(Answer::DontAllow);
+
+    REQUIRE(TestExtension::run(ext, R"(
+        state = PermissionState("hoyolab_map_account")
+        AskForPermission("hoyolab_map_account")
+        AskForPermission("appsample_account")
+    )"));
+    CHECK((*ext->luaState)["state"].get<std::string>() == "not_asked");
+    CHECK(Asks::queue().empty());
+    CHECK(log.has("hoyolab_map_account is only turned on by the player, on its Permissions tab"));
+    CHECK(log.has("appsample_account is only turned on by the player"));
+    CHECK_FALSE(Extensions::mayAsk(*ext, Permission::HoyolabMapAccount));
+    // a call it was refused doesn't ask either
+    Extensions::wanted(*ext, Permission::AppsampleAccount);
+    CHECK(Asks::queue().empty());
+
+    // the player's Allow on the tab, kept at the next start
+    Extensions::switchPermission(*ext, Permission::HoyolabMapAccount, true);
+    Extensions::saveExtensionPermissions(*ext);
+    CHECK(Extensions::permissionState(*ext, Permission::HoyolabMapAccount) == "allowed");
+    TestExtension::unloadAll();
+    ext = TestExtension::load("accounts", code);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->extensionPermissions.count(Permission::HoyolabMapAccount) == 1);
+    CHECK(ext->extensionPermissions.count(Permission::AppsampleAccount) == 0);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("OpenPermissions opens the menu on the extension's page, from its menu only") {
+    Fresh fresh;
+    bool menuWas = Overlay::MenuOpen();
+    Overlay::SetMenuOpen(false);
+    Extensions::Extension* ext = TestExtension::load("opens", "function Init() end");
+    REQUIRE(ext != nullptr);
+    CaptureLog log;
+    REQUIRE(TestExtension::run(ext, "OpenPermissions()"));
+    CHECK(log.has("OpenPermissions works only in Menu()"));
+    CHECK(Overlay::ShownExtension() == -1);
+    {
+        Extensions::InPhase menu(Extensions::Phase::Menu);
+        REQUIRE(TestExtension::run(ext, "OpenPermissions()"));
+    }
+    int index = -1;
+    for (size_t i = 0; i < Extensions::registeredExtensions.size(); i++) {
+        if (Extensions::registeredExtensions[i].get() == ext) index = (int)i;
+    }
+    CHECK(Overlay::ShownExtension() == index);
+    CHECK(ext->pointedAt.empty());
+
+    // with a name the tab points at that row; an unknown name opens it at the top
+    {
+        Extensions::InPhase menu(Extensions::Phase::Menu);
+        REQUIRE(TestExtension::run(ext, "OpenPermissions('hoyolab_map_account')"));
+        CHECK(ext->pointedAt == "hoyolab_map_account");
+        CHECK(ext->pointedSince < 0);
+        REQUIRE(TestExtension::run(ext, "OpenPermissions('no_such_one')"));
+        CHECK(ext->pointedAt.empty());
+    }
+    CHECK(log.has("OpenPermissions knows no permission named no_such_one, the tab opens at the top"));
+    Overlay::SetMenuOpen(menuWas);
+    TestExtension::unloadAll();
 }
 
 TEST_CASE("a changed extension is asked to allow the same again, and for what's new after it") {

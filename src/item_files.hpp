@@ -20,9 +20,10 @@
 // What's in a pack, format 2:
 //   tree.json              the groups and their types, [{id, name, children: [{id, name}]}]
 //   areas.json             the regions, [{id, name, map_id, l_x, l_y, r_x, r_y}]
-//   positions/<type>.json  [{id, map_id, x_pos, y_pos, area_id, point_group, appsample}]
+//   positions/<type>.json  [{id, map_id, x_pos, y_pos, area_id, point_group, appsample, appsample_level}]
 //                          point_group is {group_id, floor_id} for a point underground,
-//                          null otherwise. appsample is there when appsample has the point.
+//                          null otherwise. appsample is there when appsample has the point,
+//                          appsample_level when that point's level there is above 0.
 //   icons/<type>.png       at most 64 px
 // HoYoLAB's own key names, written without spaces. A point's region is its
 // area_id, not the box it sits in (a few Inazuma puzzles are outside Inazuma's).
@@ -53,6 +54,8 @@ namespace ItemFiles {
         std::map<int, std::vector<nlohmann::json>> points;
         // HoYoLAB point id: appsample point id
         std::map<int64_t, int64_t> pairs;
+        // appsample point id: its level there, the ones above 0
+        std::map<int64_t, int> appsampleLevels;
         // points HoYoLAB sent that were left out, by the field that's missing ("label_id": 3)
         std::map<std::string, size_t> dropped;
     };

@@ -29,6 +29,7 @@ namespace ItemCatalog {
 		uint16_t group = 0;     // group and floor when it's underground, 0 and 0 when not
 		uint16_t floor = 0;
 		uint16_t type = 0;
+		uint8_t appsampleLevel = 0;  // the pair's level on appsample, 0 when it has none or it isn't known
 	};
 
 	struct Type {

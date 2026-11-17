@@ -22,6 +22,8 @@
 #include "notices.hpp"
 #include "screen_pictures.hpp"
 #include "packets/game_traffic.hpp"
+#include "accounts.hpp"
+#include "marks.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <filesystem>
@@ -30,6 +32,9 @@
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
+#include "web_images.hpp"
+#include "point_guides.hpp"
+#include "language.hpp"
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -45,14 +50,17 @@ namespace LuaFunctions {
 	std::vector<LuaInterval> intervals;
 	static int nextIntervalId = 1;
 
-	// what is the kind of callback, for the log: "button", "key", "interval"
-	static void callLua(const sol::protected_function& function, const char* what) {
+	// what is the kind of callback, for the log: "button", "key", "interval", "menu item"
+	// false when it failed, the log says why
+	static bool callLua(const sol::protected_function& function, const char* what) {
 		auto result = function();
 		if (!result.valid()) {
 			sol::error err = result;
 			Extensions::Extension* ext = Extensions::currentExtension;
 			std::cerr << "[" << (ext ? ext->name : std::string("no extension")) << "] " << what << ": " << err.what() << std::endl;
+			return false;
 		}
+		return true;
 	}
 
 	// what a C++ function gave, as Lua values (a tuple gives one each)
@@ -145,6 +153,9 @@ namespace LuaFunctions {
 		global("ImGUI_Tabs", None, ImGUI_Tabs);
 		global("ImGUI_Header", None, ImGUI_Header);
 		global("ImGUI_EndHeader", None, ImGUI_EndHeader);
+		global("ImGUI_SideList", None, ImGUI_SideList);
+		global("ImGUI_EndSideList", None, ImGUI_EndSideList);
+		global("ImGUI_RightClick", None, ImGUI_RightClick);
 		global("ImGUI_InputText", None, ImGUI_InputText);
 		global("ImGUI_SameLine", None, ImGUI_SameLine);
 		global("ImGUI_Tooltip", None, ImGUI_Tooltip);
@@ -167,13 +178,19 @@ namespace LuaFunctions {
 		global("GetOSTimeMS", None, GetOSTimeMS);
 		global("PermissionState", None, PermissionState);
 		global("AskForPermission", None, AskForPermission);
+		global("OpenPermissions", None, OpenPermissions);
 
 		// they ask for Keybinds themselves, a key waits until it's allowed
 		global("RegisterKeybind", None, RegisterKeybind);
 		global("DeleteKeybind", None, DeleteKeybind);
+		// its own items in its ⋯ menu in the page list
+		global("AddMenuItem", None, AddMenuItem);
+		global("RemoveMenuItem", None, RemoveMenuItem);
 
 		// drawing on the overlay
 		global("DrawImage", DisplayOverlay, DrawImage);
+		global("GetWebImage", Network, GetWebImage);
+		global("GetPointGuide", Network, GetPointGuide);
 		global("DrawText", DisplayOverlay, GDrawText);
 		global("DrawRect", DisplayOverlay, DrawRect);
 		global("DrawCircle", DisplayOverlay, DrawCircle);
@@ -202,6 +219,14 @@ namespace LuaFunctions {
 		global("GetItemRegions", MapInfo, GetItemRegions);
 		global("GetItemIcon", MapInfo, GetItemIcon);
 		global("GetGameTraffic", None, GetGameTraffic);
+
+		// the player's logins, each site's account permission checked inside
+		global("GetAccount", None, GetAccount);
+		global("LogIn", None, LogIn);
+		global("LogOut", None, LogOut);
+		global("Marks_Start", None, MarksStart);
+		global("Marks_Result", None, MarksResult);
+		global("Marks_Backups", None, MarksBackups);
 
 		// files, only in the extension's own folder (pathFor)
 		global("LoadTexture", InternalRead, LoadTextureFromFileLua);
@@ -266,9 +291,12 @@ namespace LuaFunctions {
 		return Extensions::inPhase(function, Extensions::Phase::Update);
 	}
 
-	void ImGUI_Text(const std::string& str) {
+	// ImGUI_Text(text, options), options is optional: { look = "title" } for a part's name.
+	// It wraps at the page's edge.
+	void ImGUI_Text(const std::string& str, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Text")) return;
-		ImGui::Text("%s", str.c_str());
+		if (table && table->get_or<std::string>("look", "") == "title") Controls::PartTitle(str.c_str());
+		else ImGui::TextWrapped("%s", str.c_str());
 	}
 
 	// while the extension's button or key function runs, lowered however it ends
@@ -334,7 +362,28 @@ namespace LuaFunctions {
 		return ScreenPictures::owns(texture) && ext->extensionPermissions.count(Permission::DisplayRead) > 0;
 	}
 
-	static GLuint webImage(const std::string& url);
+	static WebImages::Image webImage(const char* function, const std::string& url);
+
+	// a number from Lua as a texture to draw: a web image's handle, or a texture
+	// the extension may draw; 0 for anything else
+	static GLuint textureOf(const char* function, double value) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (WebImages::isHandle(value)) return WebImages::texture(ext, value);
+		if (value < 0 || value != (double)(GLuint)value) return 0;
+		GLuint texture = (GLuint)value;
+		if (!ownsTexture(texture)) {
+			Extensions::logOnce(function, "draws only textures it loaded itself");
+			return 0;
+		}
+		return texture;
+	}
+
+	// a table's icon field, a texture or a web image's handle; 0 when none
+	static ImTextureID iconOf(const char* function, const sol::table& table) {
+		double value = table.get_or("icon", 0.0);
+		if (value == 0) return 0;
+		return (ImTextureID)(intptr_t)textureOf(function, value);
+	}
 
 	bool ImGUI_Image(sol::object image, float width, float height, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Image")) return false;
@@ -342,17 +391,13 @@ namespace LuaFunctions {
 		bool loading = false;
 		if (image.is<std::string>()) {
 			if (!Extensions::allowed("ImGUI_Image", Permission::NetworkAccess)) return false;
-			std::string url = image.as<std::string>();
-			texture = webImage(url);
-			auto found = Extensions::currentExtension->webImages.find(url);
-			loading = texture == 0 && (found == Extensions::currentExtension->webImages.end() || !found->second.failed);
+			WebImages::Image web = webImage("ImGUI_Image", image.as<std::string>());
+			texture = WebImages::texture(Extensions::currentExtension, web.handle);
+			loading = web.state == WebImages::State::Loading;
 		}
 		else if (image.is<double>()) {
-			texture = (GLuint)image.as<double>();
-			if (!ownsTexture(texture)) {
-				Extensions::logOnce("ImGUI_Image", "draws only textures it loaded itself");
-				return false;
-			}
+			texture = textureOf("ImGUI_Image", image.as<double>());
+			if (texture == 0) return false;
 		}
 		else return false;
 
@@ -447,16 +492,37 @@ namespace LuaFunctions {
 		return sol::make_object(state, open);
 	}
 
+	static size_t utf8Characters(const std::string& text) {
+		size_t characters = 0;
+		for (unsigned char c : text) if ((c & 0xC0) != 0x80) characters++;
+		return characters;
+	}
+
+	// a summary line from an extension, its line breaks and tabs as spaces;
+	// none past MaxSummary characters
+	static std::string summaryText(const char* function, const std::string& text) {
+		if (utf8Characters(text) > Extensions::MaxSummary) {
+			Extensions::logOnce(function, "summary is longer than " + std::to_string(Extensions::MaxSummary) + " characters");
+			return "";
+		}
+		std::string out = text;
+		for (char& c : out) if ((unsigned char)c < 0x20) c = ' ';
+		return out;
+	}
+
 	// ImGUI_Header(label, options) is true while the part under it is open. options is optional:
 	// { open = true } opens it until the player closes it. The player's choice is kept.
+	// { summary = "Synced 2 minutes ago" } is a short line under its name, open or closed.
 	// What's drawn while it's open sits in a card under the header, up to the next
 	// header, ImGUI_EndHeader() or the end of Menu().
 	bool ImGUI_Header(const std::string& label, sol::optional<sol::table> table) {
 		if (!inMenu("ImGUI_Header")) return false;
 		bool open = table ? table->get_or("open", false) : false;
+		Controls::Summary summary;
+		if (table) summary.text = summaryText("ImGUI_Header", table->get_or("summary", std::string()));
 		auto* ext = Extensions::currentExtension;
 		if (!ext) {
-			Controls::Header(label.c_str(), open);
+			Controls::Header(label.c_str(), open, false, summary);
 			return open;
 		}
 		ImGUI_EndHeader();
@@ -466,7 +532,7 @@ namespace LuaFunctions {
 		auto session = ext->sessionHeaders.find(label);
 		if (!known && session != ext->sessionHeaders.end()) open = session->second;
 		bool roomFor = known || (ext->openHeaders.size() < Extensions::MaxHeaders && label.size() <= Extensions::MaxHeaderLabel);
-		if (Controls::BeginHeader(label.c_str(), open, ext->dots.count(label) > 0).changed) {
+		if (Controls::BeginHeader(label.c_str(), open, ext->dots.count(label) > 0, summary).changed) {
 			if (roomFor) {
 				ext->openHeaders[label] = open;
 				Settings::SaveHeaders(ext->folderKey, ext->openHeaders);
@@ -488,6 +554,181 @@ namespace LuaFunctions {
 		Controls::EndSection();
 	}
 
+	// the open item of each extension's side lists, by folder and list id, kept by name
+	static std::map<std::string, std::string> sideListOpen;
+
+	// ImGUI_SideList(id, items) draws items down the page's side as the menu's own
+	// page list and gives the open one's number, from 1. items: { { name = "Chests",
+	// icon = a texture, summary = "3 on", on = true }, ... }, all but name optional;
+	// on draws the summary in the accent, for an item with picks in it; glyph =
+	// "sets" or "collected" draws the overlay's own icon instead of a picture,
+	// for an item that isn't one of the others; line = true puts a line under the item. A third
+	// argument { open = 2 } picks the item open until the player picks one. What's
+	// drawn after it sits beside the list, up to ImGUI_EndSideList() or the end of
+	// Menu(); the list and the part beside it each scroll by themselves, down to
+	// the page's visible end. A page too narrow for both shows the items as chips above instead.
+	sol::object ImGUI_SideList(const std::string& id, sol::table items, sol::optional<sol::table> options, sol::this_state state) {
+		if (!inMenu("ImGUI_SideList")) return sol::lua_nil;
+		auto* ext = Extensions::currentExtension;
+		if (!ext) return sol::lua_nil;
+		ImGUI_EndSideList();
+		ImGUI_EndHeader();
+		struct Item { std::string name; ImTextureID icon = 0; Controls::Summary summary; Controls::PageIcon glyph = Controls::PageIcon::None; bool line = false; };
+		std::vector<Item> list;
+		for (size_t i = 1; i <= Extensions::MaxSideItems; i++) {
+			sol::optional<sol::table> entry = items[i];
+			if (!entry) break;
+			Item item;
+			item.name = entry->get_or<std::string>("name", "");
+			item.icon = iconOf("ImGUI_SideList", *entry);
+			item.summary.text = summaryText("ImGUI_SideList", entry->get_or<std::string>("summary", ""));
+			if (entry->get_or("on", false)) item.summary.kind = Controls::Summary::Kind::On;
+			std::string glyph = entry->get_or<std::string>("glyph", "");
+			if (glyph == "sets") item.glyph = Controls::PageIcon::Sets;
+			if (glyph == "collected") item.glyph = Controls::PageIcon::Collected;
+			if (item.glyph != Controls::PageIcon::None) item.icon = 0;
+			item.line = entry->get_or("line", false);
+			list.push_back(item);
+		}
+		if (list.empty()) return sol::lua_nil;
+
+		std::string key = ext->folderKey + "\n" + id;
+		// options { open = 2 }: the item open until the player picks one, from 1
+		size_t open = 0;
+		if (options) open = (size_t)std::clamp(options->get_or("open", 1), 1, (int)list.size()) - 1;
+		auto kept = sideListOpen.find(key);
+		if (kept != sideListOpen.end()) {
+			for (size_t i = 0; i < list.size(); i++) if (list[i].name == kept->second) open = i;
+		}
+
+		float font = ImGui::GetFontSize();
+		float avail = ImGui::GetContentRegionAvail().x;
+		float width = font * 8;
+		for (const Item& item : list) width = std::max(width, Controls::PageButtonWidth(item.name.c_str(), item.summary));
+		width = std::ceil(std::min(width, avail * 0.45f));
+		bool beside = avail - width >= font * 14;
+		// beside: the list and what's next to it each scroll by themselves, down
+		// to the page's visible end
+		float height = std::max(font * 16, ImGui::GetContentRegionAvail().y);
+
+		ImGui::PushID(("##side" + id).c_str());
+		if (beside) {
+			ImGui::BeginChild("list", ImVec2(width, height), 0, ImGuiWindowFlags_NoBackground);
+			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
+			for (size_t i = 0; i < list.size(); i++) {
+				ImGui::PushID((int)i);
+				if (Controls::PageButton(list[i].name.c_str(), i == open, list[i].icon, false, 0, list[i].summary, list[i].glyph, false, true)) open = i;
+				ImGui::PopID();
+				if (list[i].line) {
+					// a thin line in the look's line colour, with room around it
+					ImVec2 at = ImGui::GetCursorScreenPos();
+					float y = std::floor(at.y + font * 0.3f) + 0.5f;
+					ImGui::GetWindowDrawList()->AddLine(ImVec2(at.x, y), ImVec2(at.x + ImGui::GetContentRegionAvail().x, y), Controls::Color(Controls::GetTheme().line));
+					ImGui::Dummy(ImVec2(0, font * 0.6f));
+				}
+			}
+			ImGui::PopStyleVar();
+			ImGui::EndChild();
+		}
+		else {
+			for (size_t i = 0; i < list.size(); i++) {
+				ImGui::PushID((int)i);
+				bool on = i == open;
+				Controls::ToggleOptions options;
+				options.chip = true;
+				options.icon = list[i].icon;
+				options.note = list[i].summary.text;
+				if (Controls::Toggle(list[i].name.c_str(), &on, options)) open = i;
+				ImGui::PopID();
+			}
+		}
+		ImGui::PopID();
+		sideListOpen[key] = list[open].name;
+		if (beside) {
+			ImGui::SameLine(0, font);
+			ImGui::BeginChild(("##beside" + id).c_str(), ImVec2(0, height), 0, ImGuiWindowFlags_NoBackground);
+			ext->sideList = true;
+		}
+		return sol::make_object(state, (int)open + 1);
+	}
+
+	// ImGUI_EndSideList() ends the part beside a side list, so what comes after
+	// takes the page's whole width. Nothing happens with no side list open.
+	void ImGUI_EndSideList() {
+		auto* ext = Extensions::currentExtension;
+		if (!ext || !ext->sideList) return;
+		ImGUI_EndHeader();
+		ext->sideList = false;
+		ImGui::EndChild();
+	}
+
+	// ImGUI_RightClick(id, items) goes right after an item: a right-click on that
+	// item opens a menu, as the menu's own page list has it. items: { { name =
+	// "Rename" }, { name = "Icon", items = { { name = "Chests", icon = a texture }
+	// } }, ... }, an item with items opens them beside it. Gives the picked item's
+	// name and the name of the item it's in, nothing while none is picked.
+	struct RightClickItem { std::string name; ImTextureID icon = 0; std::vector<RightClickItem> inside; };
+
+	static std::vector<RightClickItem> rightClickItems(sol::table items, bool top) {
+		std::vector<RightClickItem> list;
+		for (size_t i = 1; i <= Extensions::MaxMenuEntries; i++) {
+			sol::optional<sol::table> entry = items[i];
+			if (!entry) break;
+			RightClickItem item;
+			item.name = entry->get_or<std::string>("name", "");
+			if (item.name.empty()) continue;
+			item.icon = iconOf("ImGUI_RightClick", *entry);
+			// one level of items inside
+			sol::optional<sol::table> inside = entry->get<sol::optional<sol::table>>("items");
+			if (top && inside) item.inside = rightClickItems(*inside, false);
+			list.push_back(item);
+		}
+		return list;
+	}
+
+	static bool rightClickRow(const RightClickItem& item) {
+		ImGui::PushID(item.name.c_str());
+		bool picked;
+		if (item.icon) {
+			float side = ImGui::GetTextLineHeight();
+			ImVec2 at = ImGui::GetCursorScreenPos();
+			// spaces as wide as the icon and a gap, whatever the font's space is
+			float space = std::max(1.0f, ImGui::CalcTextSize(" ").x);
+			std::string room = std::string((size_t)std::ceil(side * 1.4f / space), ' ') + item.name;
+			picked = ImGui::MenuItem(room.c_str());
+			ImGui::GetWindowDrawList()->AddImage(item.icon, ImVec2(at.x, at.y), ImVec2(at.x + side, at.y + side));
+		}
+		else picked = ImGui::MenuItem(item.name.c_str());
+		ImGui::PopID();
+		return picked;
+	}
+
+	sol::variadic_results ImGUI_RightClick(const std::string& id, sol::table items, sol::this_state state) {
+		sol::variadic_results out;
+		if (!inMenu("ImGUI_RightClick")) return out;
+		std::string popup = "##rightclick" + id;
+		if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
+			&& ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()))
+			ImGui::OpenPopup(popup.c_str());
+		if (!ImGui::BeginPopup(popup.c_str())) return out;
+		for (const RightClickItem& item : rightClickItems(items, true)) {
+			if (item.inside.empty()) {
+				if (rightClickRow(item)) out.push_back(sol::make_object(state, item.name));
+				continue;
+			}
+			if (!ImGui::BeginMenu(item.name.c_str())) continue;
+			for (const RightClickItem& inner : item.inside) {
+				if (rightClickRow(inner)) {
+					out.push_back(sol::make_object(state, inner.name));
+					out.push_back(sol::make_object(state, item.name));
+				}
+			}
+			ImGui::EndMenu();
+		}
+		ImGui::EndPopup();
+		return out;
+	}
+
 	bool Notice(const std::string& text, sol::optional<sol::table> options) {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		if (!ext) return false;
@@ -505,17 +746,20 @@ namespace LuaFunctions {
 	}
 
 	// ImGUI_Toggle(label, value, options), options is optional:
-	// { look = "checkbox", size = "small", icon = a texture from LoadTexture }
+	// { look = "checkbox" or "chip", size = "small", icon = a texture from LoadTexture,
+	//   note = muted text after a chip's name }
 	bool ImGUI_Toggle(const std::string& label, bool currentValue, sol::optional<sol::table> table)
 	{
 		bool value = currentValue;
 		if (!inMenu("ImGUI_Toggle")) return value;
 		Controls::ToggleOptions options;
 		if (table) {
-			options.checkbox = table->get_or<std::string>("look", "") == "checkbox";
+			std::string look = table->get_or<std::string>("look", "");
+			options.checkbox = look == "checkbox";
+			options.chip = look == "chip";
+			options.note = table->get_or<std::string>("note", "");
 			options.compact = table->get_or<std::string>("size", "") == "small";
-			GLuint icon = table->get_or<GLuint>("icon", 0);
-			if (icon && ownsTexture(icon)) options.icon = (ImTextureID)(intptr_t)icon;
+			options.icon = iconOf("ImGUI_Toggle", *table);
 		}
 		options.dotted = dotted(label);
 		used(label, Controls::Toggle(label.c_str(), &value, options));
@@ -569,12 +813,22 @@ namespace LuaFunctions {
 
 	// ImGUI_InputText(label, text, options), options is optional: { hint, default (shows
 	// Reset), clear = true (an x), confirm = true (counts once sent), taken = true (sent
-	// text greyed), backToGame = false (keeps the focus after Enter or Esc, for the next box) }
-	std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table)
+	// text greyed), backToGame = false (keeps the focus after Enter or Esc, for the next box),
+	// look = "search" (a search bar over the whole row, the label not shown), with search:
+	// tabs = { "Everywhere", "Here" } and tab = the open one's name, a segmented row at
+	// the bar's end, and then the open tab's name comes back second }. Without tabs,
+	// "enter" or "escape" comes back second on the frame the typing ends with that key.
+	sol::variadic_results ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> table,
+		sol::this_state state)
 	{
 		std::string value = currentText;
-		if (!inMenu("ImGUI_InputText")) return value;
+		sol::variadic_results out;
+		if (!inMenu("ImGUI_InputText")) {
+			out.push_back(sol::make_object(state, value));
+			return out;
+		}
 		Controls::TextOptions options;
+		int tab = 0;
 		if (table) {
 			options.backToGame = table->get_or("backToGame", true);
 			options.hint = table->get_or<std::string>("hint", "");
@@ -582,10 +836,30 @@ namespace LuaFunctions {
 			options.clear = table->get_or("clear", false);
 			options.confirm = table->get_or("confirm", false);
 			options.taken = table->get_or("taken", false);
+			options.search = table->get_or<std::string>("look", "") == "search";
+			if (options.search) {
+				if (auto tabs = table->get<sol::optional<sol::table>>("tabs")) {
+					std::string open = table->get_or<std::string>("tab", "");
+					for (size_t i = 1; i <= Extensions::MaxTabs; i++) {
+						sol::optional<std::string> name = (*tabs)[i];
+						if (!name) break;
+						if (*name == open) tab = (int)options.tabs.size();
+						options.tabs.push_back(*name);
+					}
+					if (!options.tabs.empty()) options.tab = &tab;
+				}
+			}
 		}
+		bool sent = false, escaped = false;
+		options.sent = &sent;
+		options.escaped = &escaped;
 		options.dotted = dotted(label);
 		used(label, Controls::Text(label.c_str(), value, options));
-		return value;
+		out.push_back(sol::make_object(state, value));
+		if (options.tab) out.push_back(sol::make_object(state, options.tabs[tab]));
+		else if (sent) out.push_back(sol::make_object(state, "enter"));
+		else if (escaped) out.push_back(sol::make_object(state, "escape"));
+		return out;
 	}
 
 	void ImGUI_SameLine()
@@ -734,6 +1008,65 @@ namespace LuaFunctions {
 		owner->keys.erase(it);
 		if (!bound.empty()) Keybindings::DeleteKeybind(bound);
 		else Asks::forgetKey(*owner, name);
+		return true;
+	}
+
+	// why a label can't be a menu item's, empty when it can
+	std::string WhyNotMenuLabel(const std::string& label) {
+		if (label.find_first_not_of(' ') == std::string::npos) return "the label is empty";
+		for (unsigned char c : label) {
+			if (c < 0x20 || c == 0x7F) return "the label has a line break, tab or other control character";
+		}
+		// ImGui reads ## as the start of an id
+		if (label.find("##") != std::string::npos) return "the label has ##";
+		size_t characters = utf8Characters(label);
+		if (characters > Extensions::MaxMenuItemLabel) {
+			return "the label has " + std::to_string(characters) + " characters, " +
+				std::to_string(Extensions::MaxMenuItemLabel) + " at most";
+		}
+		return "";
+	}
+
+	// AddMenuItem(label, function): an item under the line in the extension's
+	// own ⋯ menu in the page list, the function runs when the player picks it.
+	// Up to 3, the label up to 24 characters. The id for RemoveMenuItem, empty
+	// when it's refused, the log says why. The items go with the extension.
+	std::string AddMenuItem(const std::string& label, sol::protected_function callbackFunction) {
+		Extensions::Extension* owner = Extensions::currentExtension;
+		if (!owner) return "";
+		std::string whyNot = WhyNotMenuLabel(label);
+		if (whyNot.empty() && !callbackFunction.valid()) whyNot = "needs a function after the label";
+		if (whyNot.empty() && owner->menuItems.size() >= Extensions::MaxMenuItems) {
+			whyNot = "has " + std::to_string(Extensions::MaxMenuItems) + " menu items, no more are added";
+		}
+		if (!whyNot.empty()) {
+			Extensions::logOnce("AddMenuItem", whyNot);
+			return "";
+		}
+		Extensions::Extension::MenuItem item;
+		item.id = Helpers::GenerateUUID();
+		item.label = label;
+		item.callback = [owner, callbackFunction]() {
+			// stays false when the guard stopped it and nothing ran
+			bool worked = false;
+			Extensions::runForExtension(owner, [owner, &callbackFunction, &worked]() {
+				PlayerAction action(owner);
+				worked = callLua(callbackFunction, "menu item");
+				});
+			return worked;
+			};
+		owner->menuItems.push_back(std::move(item));
+		return owner->menuItems.back().id;
+	}
+
+	// only the extension's own items
+	bool RemoveMenuItem(const std::string& id) {
+		Extensions::Extension* owner = Extensions::currentExtension;
+		if (!owner) return false;
+		auto& items = owner->menuItems;
+		auto it = std::find_if(items.begin(), items.end(), [&](const auto& each) { return each.id == id; });
+		if (it == items.end()) return false;
+		items.erase(it);
 		return true;
 	}
 
@@ -1076,82 +1409,47 @@ namespace LuaFunctions {
 		return answerTable(*request, sol::state_view(state));
 	}
 
-	// One of ImGUI_Image's web images on its way. The thread writes only
-	// into answer, the draw thread reads it once done is set.
-	struct ImageDownload {
-		Extensions::Extension* owner = nullptr;
-		std::string url;
-		std::shared_ptr<NetRequest::Answer> answer = std::make_shared<NetRequest::Answer>();
-		// unpacked on the download's thread, only made a texture on the draw thread
-		std::shared_ptr<Helpers::Pixels> pixels = std::make_shared<Helpers::Pixels>();
-		std::thread thread;
-
-		~ImageDownload() {
-			answer->stopper.stop();
-			if (thread.joinable()) thread.join();
-		}
-	};
-	static std::vector<std::unique_ptr<ImageDownload>> imageDownloads;
-
-	int imageDownloadsOf(const Extensions::Extension* owner) {
-		return (int)std::count_if(imageDownloads.begin(), imageDownloads.end(), [owner](const auto& each) { return each->owner == owner; });
-	}
-
-	// the texture for url, 0 while it downloads or when it failed
-	static GLuint webImage(const std::string& url) {
+	// The picture at url for the running extension, held to its sites. Logged
+	// once when it has as many as it may keep.
+	static WebImages::Image webImage(const char* function, const std::string& url) {
 		Extensions::Extension* ext = Extensions::currentExtension;
-		if (!ext) return 0;
-		auto found = ext->webImages.find(url);
-		if (found != ext->webImages.end()) return found->second.texture;
-		if (ext->textures.size() + imageDownloadsOf(ext) >= Extensions::MaxTextures) {
-			Extensions::logOnce("ImGUI_Image", "has " + std::to_string(Extensions::MaxTextures) + " textures, no more are loaded");
-			return 0;
-		}
-		if (imageDownloadsOf(ext) >= ImageMaxWaiting) return 0;
-
-		ext->webImages[url] = {};
-		auto download = std::make_unique<ImageDownload>();
-		download->owner = ext;
-		download->url = url;
-		std::shared_ptr<NetRequest::Answer> answer = download->answer;
-		std::shared_ptr<Helpers::Pixels> pixels = download->pixels;
+		if (!ext) return {};
 		Net::Limits limits = limitsFor(ext, NetStartMs);
 		limits.maxBody = ImageMaxBody;
-		download->thread = std::thread([answer, pixels, url, limits]() {
-			answer->ok = Net::get(url, answer->response, false, nullptr, &answer->stopper, limits);
-			const Net::Response& response = answer->response;
-			if (answer->ok && response.status >= 200 && response.status < 300) Helpers::decodePicture(response.body, url, *pixels);
-			answer->done = true;
-		});
-		imageDownloads.push_back(std::move(download));
-		return 0;
+		WebImages::Image image = WebImages::get(ext, url, limits, function);
+		if (image.state == WebImages::State::Refused && WebImages::kept(ext) >= WebImages::MaxKept) {
+			Extensions::logOnce(function, "has " + std::to_string(WebImages::MaxKept) + " web images, no more are loaded");
+		}
+		return image;
+	}
+
+	// GetWebImage(url): the handle for DrawImage and ImGUI_Image, and the size;
+	// nil while it downloads, false when it couldn't be had. Asked every frame
+	// it's drawn, it's freed 30 s after the last ask.
+	sol::variadic_results GetWebImage(const std::string& url, sol::this_state state) {
+		sol::variadic_results out;
+		WebImages::Image image = webImage("GetWebImage", url);
+		if (image.state == WebImages::State::Ready) {
+			out.push_back(sol::make_object(state, image.handle));
+			out.push_back(sol::make_object(state, image.width));
+			out.push_back(sol::make_object(state, image.height));
+		}
+		else if (image.state == WebImages::State::Loading) out.push_back(sol::make_object(state, sol::lua_nil));
+		else out.push_back(sol::make_object(state, false));
+		return out;
 	}
 
 	// downloaded web images become textures, on the draw thread
 	static void updateImageDownloads() {
-		std::vector<std::unique_ptr<ImageDownload>> due;
-		for (auto it = imageDownloads.begin(); it != imageDownloads.end();) {
-			if ((*it)->answer->done) {
-				due.push_back(std::move(*it));
-				it = imageDownloads.erase(it);
-			}
-			else ++it;
-		}
-		for (auto& download : due) {
-			Extensions::Extension* owner = download->owner;
+		WebImages::endFrame([](const WebImages::Done& done) {
+			Extensions::Extension* owner = (Extensions::Extension*)done.owner;
 			Extensions::runForExtension(owner, [&]() {
-				download->thread.join();
-				const Net::Response& response = download->answer->response;
-				logRefused("ImGUI_Image", response.refused, response.notListed);
-				if (response.tooBig) Extensions::logOnce("ImGUI_Image", "got a picture over " + std::to_string(ImageMaxBody / (1024 * 1024)) + " MB, it's dropped");
-				if (response.timedOut) Extensions::logOnce("ImGUI_Image", "waited too long for a picture");
-				Extensions::Extension::WebImage& image = owner->webImages[download->url];
-				int width = 0, height = 0;
-				image.texture = Helpers::textureFromPixels(*download->pixels, width, height);
-				if (image.texture != 0) owner->textures.push_back(image.texture);
-				else image.failed = true;
+				const char* function = done.function.c_str();
+				logRefused(function, done.response.refused, done.response.notListed);
+				if (done.response.tooBig) Extensions::logOnce(function, "got a picture over " + std::to_string(ImageMaxBody / (1024 * 1024)) + " MB, it's dropped");
+				if (done.response.timedOut) Extensions::logOnce(function, "waited too long for a picture");
 			});
-		}
+		});
 	}
 
 	void UpdateNetRequests()
@@ -1266,6 +1564,7 @@ namespace LuaFunctions {
 	{
 		UpdateFileDialogs();
 		UpdateNetRequests();
+		UpdateMarks();
 		UpdateSockets();
 	}
 
@@ -1299,8 +1598,7 @@ namespace LuaFunctions {
 	void forgetNetRequests(Extensions::Extension* owner)
 	{
 		netRequests.forget(owner);
-		imageDownloads.erase(std::remove_if(imageDownloads.begin(), imageDownloads.end(),
-			[owner](const auto& each) { return each->owner == owner; }), imageDownloads.end());
+		WebImages::forget(owner);
 	}
 
 	// Where the in-game map is looking, or nil when it isn't open. Positions are
@@ -1485,12 +1783,10 @@ namespace LuaFunctions {
 	}
 
 	// draws behind every ImGui window, straight onto the overlay
-	void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
-		if (textureID == 0 || !inFrame("DrawImage")) return;
-		if (!ownsTexture(textureID)) {
-			Extensions::logOnce("DrawImage", "draws only textures it loaded itself");
-			return;
-		}
+	void DrawImage(double image, float x0, float y0, float x1, float y1, sol::optional<float> alpha) {
+		if (image == 0 || !inFrame("DrawImage")) return;
+		GLuint textureID = textureOf("DrawImage", image);
+		if (textureID == 0) return;
 		int a = (int)(alpha.value_or(1.0f) * 255.0f);
 		ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)textureID, ImVec2(x0, y0), ImVec2(x1, y1),
 			ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
@@ -2144,8 +2440,20 @@ namespace LuaFunctions {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		const Extensions::PermissionInfo* info = permissionNamed("AskForPermission", name);
 		if (!ext) return;
-		if (info) Asks::askPermission(*ext, info->type);
+		if (info && info->playerOnly) Extensions::logOnce("AskForPermission", name + " is only turned on by the player, on its Permissions tab; OpenPermissions(\"" + name + "\") opens it there");
+		else if (info) Asks::askPermission(*ext, info->type);
 		else Asks::askSetting(*ext, name);
+	}
+
+	void OpenPermissions(sol::optional<std::string> name) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext || !Extensions::inPhase("OpenPermissions", Extensions::Phase::Menu)) return;
+		std::string permission;
+		if (name) {
+			if (Extensions::findPermission(*name)) permission = *name;
+			else Extensions::logOnce("OpenPermissions", "knows no permission named " + *name + ", the tab opens at the top");
+		}
+		Extensions::openPermissionsTab(*ext, permission);
 	}
 
 	std::optional<std::pair<int, int>> mouseFor(POINT cursor, const std::optional<RECT>& game, POINT overlay, bool anywhere) {
@@ -2249,6 +2557,8 @@ namespace LuaFunctions {
 			sol::optional<uint32_t> ring = (*options)["ring"];
 			if (ring) badge.ring = *ring;
 			badge.faded = options->get_or("faded", false);
+			std::string layer = options->get_or<std::string>("layer", "");
+			badge.layer = layer == "up" ? 1 : layer == "down" ? -1 : 0;
 		}
 		Controls::Badge(ImGui::GetBackgroundDrawList(), ImVec2(x, y), radius, (ImTextureID)(intptr_t)texture, badge);
 	}
@@ -2413,6 +2723,56 @@ namespace LuaFunctions {
 		return sol::make_object(state, texture);
 	}
 
+	// GetPointGuide(pointId): what the item files' point says about itself, in
+	// the overlay's language: { text, picture, summary, failed, comments }, each
+	// comment { author, date, text, original, from, translating, picture, likes },
+	// the most liked first. nil while it's on its way, false for a point the
+	// item files don't have, or when the extension's sites leave out the
+	// guide's. Asked every frame it's shown, the answer can change (a
+	// translation comes in, it's fetched again after 10 minutes).
+	sol::object GetPointGuide(double pointId, sol::this_state state) {
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext || !ext->listRead) return sol::lua_nil;
+		Net::Sites sites = sitesFor(ext);
+		if (sites.only) {
+			for (const std::string& site : PointGuides::sites()) {
+				if (Net::onSites(site, sites)) continue;
+				Extensions::logOnce("GetPointGuide", "needs " + Helpers::joined(PointGuides::sites()) + " in its main.lua's sites");
+				return sol::make_object(state, false);
+			}
+		}
+		const ItemCatalog::Catalog* catalog = Items::frameCatalog.get();
+		if (!catalog) return sol::lua_nil;
+		const ItemCatalog::Point* point = catalog->point((int64_t)pointId);
+		if (!point) return sol::make_object(state, false);
+
+		PointGuides::Guide guide;
+		if (!PointGuides::get({ point->id, point->map, point->type, point->appsample }, Language::current(), guide)) return sol::lua_nil;
+		Extensions::markUsed(*ext, Permission::NetworkAccess);
+		sol::state_view lua(state);
+		sol::table comments = lua.create_table((int)guide.comments.size(), 0);
+		for (size_t i = 0; i < guide.comments.size(); i++) {
+			const PointGuides::Comment& comment = guide.comments[i];
+			sol::table each = lua.create_table();
+			each["author"] = comment.author;
+			each["date"] = comment.date;
+			each["text"] = comment.text;
+			each["original"] = comment.original;
+			if (!comment.from.empty()) each["from"] = comment.from;
+			each["translating"] = comment.translating;
+			if (!comment.picture.empty()) each["picture"] = comment.picture;
+			each["likes"] = comment.likes;
+			comments[i + 1] = each;
+		}
+		sol::table result = lua.create_table();
+		result["text"] = guide.text;
+		if (!guide.picture.empty()) result["picture"] = guide.picture;
+		if (!guide.summary.empty()) result["summary"] = guide.summary;
+		result["failed"] = guide.failed;
+		result["comments"] = comments;
+		return result;
+	}
+
 	// Reading the game's traffic, for what needs it. on is the player's switch
 	// in the menu. state is off, cant_listen, waiting_for_login, searching,
 	// reading, needs_relog or no_key, and reason says why for cant_listen,
@@ -2430,5 +2790,226 @@ namespace LuaFunctions {
 	sol::table GetGameTraffic(sol::this_state state)
 	{
 		return gameTrafficTable(Settings::readGameTraffic, GameTraffic::GetStatus(), state);
+	}
+
+	static Permission accountPermission(Accounts::Site site) {
+		return site == Accounts::Site::HoyolabMap ? Permission::HoyolabMapAccount : Permission::AppsampleAccount;
+	}
+
+	static std::optional<Accounts::Site> siteNamed(const char* function, const std::string& name) {
+		std::optional<Accounts::Site> site = Accounts::SiteNamed(name);
+		if (!site) Extensions::logOnce(function, "knows no site named " + name + ", only hoyolab_map and appsample");
+		return site;
+	}
+
+	// account only with the site's permission, so a login as another account
+	// isn't seen without it
+	sol::table accountTable(Accounts::Site site, const Accounts::Status& status, sol::state_view lua)
+	{
+		sol::table table = lua.create_table_with(
+			"site", std::string(Accounts::SiteName(site)),
+			"state", std::string(Accounts::StateName(status.state)),
+			"problem", status.problem);
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (ext && ext->extensionPermissions.count(accountPermission(site)) && !status.account.empty()) {
+			Extensions::markUsed(*ext, accountPermission(site));
+			table["account"] = status.account;
+			if (!status.name.empty()) table["name"] = status.name;
+		}
+		return table;
+	}
+
+	sol::object GetAccount(const std::string& site, sol::this_state state)
+	{
+		std::optional<Accounts::Site> named = siteNamed("GetAccount", site);
+		if (!named) return sol::make_object(state, sol::lua_nil);
+		return accountTable(*named, Accounts::Get(*named), state);
+	}
+
+	void LogIn(const std::string& site)
+	{
+		std::optional<Accounts::Site> named = siteNamed("LogIn", site);
+		if (!named || !Extensions::inPhase("LogIn", Extensions::Phase::Menu)) return;
+		if (!Extensions::allowed("LogIn", accountPermission(*named))) return;
+		Accounts::LogIn(*named);
+	}
+
+	void LogOut(const std::string& site)
+	{
+		std::optional<Accounts::Site> named = siteNamed("LogOut", site);
+		if (!named || !Extensions::allowed("LogOut", accountPermission(*named))) return;
+		Accounts::LogOut(*named);
+	}
+	struct MarksRequest {
+		int id = 0;
+		Extensions::Extension* owner = nullptr;
+		sol::protected_function onDone;
+	};
+	// the jobs with onDone, the rest wait for Marks_Result
+	static std::vector<MarksRequest> marksRequests;
+
+	// a list of point ids from Lua, false when it's something else
+	static bool pointIds(const sol::object& value, std::vector<int64_t>& out) {
+		if (value == sol::lua_nil) return true;
+		if (!value.is<sol::table>()) return false;
+		sol::table table = value;
+		for (size_t i = 1; i <= table.size(); i++) {
+			sol::object id = table[i];
+			if (id.get_type() != sol::type::number) return false;
+			double number = id.as<double>();
+			if (number < 1 || number > 9.0e15 || number != std::floor(number)) return false;
+			out.push_back((int64_t)number);
+		}
+		return true;
+	}
+
+	static sol::table idList(const std::vector<int64_t>& ids, sol::state_view lua) {
+		sol::table table = lua.create_table((int)ids.size(), 0);
+		for (size_t i = 0; i < ids.size(); i++) table[i + 1] = ids[i];
+		return table;
+	}
+
+	static sol::table marksTable(const Marks::Result& result, sol::state_view lua) {
+		sol::table table = lua.create_table();
+		for (const Marks::SiteResult& site : result.sites) {
+			sol::table part = lua.create_table_with("ok", site.ok, "added", site.added, "removed", site.removed);
+			if (!site.ok) part["error"] = site.error;
+			part["marks"] = idList(site.marks, lua);
+			part["kept"] = idList(site.kept, lua);
+			part["skipped"] = idList(site.skipped, lua);
+			if (!site.backup.empty()) part["backup"] = site.backup;
+			table[Accounts::SiteName(site.site)] = part;
+		}
+		return table;
+	}
+
+	sol::object MarksStart(sol::object sites, const std::string& action, sol::object add, sol::object remove, sol::object onDone,
+		sol::this_state state)
+	{
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return sol::nil;
+		Marks::Request request;
+		request.owner = ext;
+		std::vector<std::string> names;
+		if (sites.is<std::string>()) names.push_back(sites.as<std::string>());
+		else if (sites.is<sol::table>()) {
+			sol::table list = sites;
+			for (size_t i = 1; i <= list.size(); i++) {
+				sol::object name = list[i];
+				if (name.is<std::string>()) names.push_back(name.as<std::string>());
+			}
+		}
+		if (names.empty()) {
+			Extensions::logOnce("Marks_Start", "takes a site name or a list of them, like \"hoyolab_map\" or { \"hoyolab_map\", \"appsample\" }");
+			return sol::nil;
+		}
+		for (const std::string& name : names) {
+			std::optional<Accounts::Site> site = siteNamed("Marks_Start", name);
+			if (!site) return sol::nil;
+			if (std::find(request.sites.begin(), request.sites.end(), *site) == request.sites.end()) request.sites.push_back(*site);
+		}
+		if (action == "fetch") request.action = Marks::Action::Fetch;
+		else if (action == "change") request.action = Marks::Action::Change;
+		else if (action == "restore") request.action = Marks::Action::Restore;
+		else {
+			Extensions::logOnce("Marks_Start", "knows \"fetch\", \"change\" and \"restore\", not " + action);
+			return sol::nil;
+		}
+		if (request.action == Marks::Action::Restore) {
+			if (request.sites.size() != 1 || !add.is<std::string>()) {
+				Extensions::logOnce("Marks_Start", "restores one site from a backup's name, like Marks_Start(\"appsample\", \"restore\", name)");
+				return sol::nil;
+			}
+			request.backup = add.as<std::string>();
+		}
+		else if (!pointIds(add, request.add) || !pointIds(remove, request.remove)) {
+			Extensions::logOnce("Marks_Start", "takes add and remove as lists of point ids");
+			return sol::nil;
+		}
+		if (request.add.size() + request.remove.size() > MarksMaxIds) {
+			Extensions::logOnce("Marks_Start", "takes " + std::to_string(MarksMaxIds) + " point ids at most");
+			return sol::nil;
+		}
+		if (onDone != sol::lua_nil && !onDone.is<sol::protected_function>()) {
+			Extensions::logOnce("Marks_Start", "takes a function as onDone");
+			return sol::nil;
+		}
+		for (Accounts::Site site : request.sites) {
+			if (!Extensions::allowed("Marks_Start", accountPermission(site))) return sol::nil;
+		}
+		int id = Marks::Start(request);
+		if (!id) {
+			Extensions::logOnce("Marks_Start", "has " + std::to_string(Marks::MaxWaiting) + " jobs waiting or not collected, no more start");
+			return sol::nil;
+		}
+		for (Accounts::Site site : request.sites) Extensions::markUsed(*ext, accountPermission(site));
+		if (onDone != sol::lua_nil) marksRequests.push_back({ id, ext, onDone.as<sol::protected_function>() });
+		return sol::make_object(state, id);
+	}
+
+	sol::object MarksResult(int id, sol::this_state state)
+	{
+		Extensions::Extension* ext = Extensions::currentExtension;
+		if (!ext) return sol::nil;
+		bool hasOnDone = std::any_of(marksRequests.begin(), marksRequests.end(), [id](const MarksRequest& each) { return each.id == id; });
+		if (hasOnDone) return sol::nil;
+		std::optional<Marks::Result> result = Marks::Take(id, ext);
+		if (!result) return sol::nil;
+		return marksTable(*result, sol::state_view(state));
+	}
+
+	sol::table MarksBackups(const std::string& site, sol::this_state state)
+	{
+		sol::state_view lua(state);
+		sol::table list = lua.create_table();
+		std::optional<Accounts::Site> named = siteNamed("Marks_Backups", site);
+		if (!named || !Extensions::allowed("Marks_Backups", accountPermission(*named))) return list;
+		int i = 1;
+		for (const Marks::Backup& backup : Marks::BackupsOf(*named)) {
+			// "<site>-2026-11-16_14-02-09", maybe with _2: the date as the player reads it
+			std::string date = backup.name.substr(backup.name.find('-') + 1);
+			if (date.size() >= 16) date = date.substr(0, 10) + " " + date.substr(11, 2) + ":" + date.substr(14, 2);
+			list[i++] = lua.create_table_with("name", backup.name, "count", backup.count, "date", date);
+		}
+		return list;
+	}
+
+	void UpdateMarks()
+	{
+		Marks::Frame();
+		std::vector<MarksRequest> due;
+		for (auto it = marksRequests.begin(); it != marksRequests.end();) {
+			if (Marks::Done(it->id)) {
+				due.push_back(std::move(*it));
+				it = marksRequests.erase(it);
+			}
+			else ++it;
+		}
+		// a callback can start new jobs, and its extension can be unloaded
+		for (MarksRequest& request : due) {
+			Extensions::Extension* owner = request.owner;
+			std::optional<Marks::Result> result = Marks::Take(request.id, owner);
+			if (!result) continue;
+			Extensions::runForExtension(owner, [&]() {
+				if (!owner->luaState) return;
+				sol::table table;
+				{
+					Extensions::HostAllocations host(owner->memory.get());
+					table = marksTable(*result, sol::state_view(*owner->luaState));
+				}
+				auto called = request.onDone(table);
+				if (!called.valid()) {
+					sol::error err = called;
+					std::cerr << "[" << owner->name << "] Marks_Start onDone: " << err.what() << std::endl;
+				}
+			});
+		}
+	}
+
+	void forgetMarks(Extensions::Extension* owner)
+	{
+		marksRequests.erase(std::remove_if(marksRequests.begin(), marksRequests.end(), [owner](const MarksRequest& each) { return each.owner == owner; }),
+			marksRequests.end());
+		Marks::Forget(owner);
 	}
 }

@@ -34,7 +34,9 @@ namespace Extensions {
 		Notices,
 		Dots,
 		TakeClicks,
-		MapInfo
+		MapInfo,
+		HoyolabMapAccount,
+		AppsampleAccount
 	};
 
 	// Saved in settings.json and named in Lua by name, shown to the player by
@@ -45,6 +47,9 @@ namespace Extensions {
 		const char* name;
 		const char* label;
 		const char* reason;
+		// Only the player turns it on, with a red Allow on the Permissions tab;
+		// it's never asked for.
+		bool playerOnly = false;
 	};
 
 	inline const std::vector<PermissionInfo> permissionList = {
@@ -59,6 +64,8 @@ namespace Extensions {
 		{ExtensionPermissionTypes::Notices, "notices", "Notices", "It can show you short messages."},
 		{ExtensionPermissionTypes::Dots, "dots", "Attention dots", "It can mark what needs your attention."},
 		{ExtensionPermissionTypes::TakeClicks, "take_clicks", "Take clicks", "Clicks on parts of what it draws go to it instead of the game, while the map or the menu is open."},
+		{ExtensionPermissionTypes::HoyolabMapAccount, "hoyolab_map_account", "HoYoLAB Map account", "It can use your HoYoLAB Map account to mark and unmark anything on your map.", true},
+		{ExtensionPermissionTypes::AppsampleAccount, "appsample_account", "appsample account", "It can use your appsample account to mark and unmark anything on your map.", true},
 	};
 
 	// saved names of permissions that no longer exist, dropped when grants are loaded
@@ -74,7 +81,7 @@ namespace Extensions {
 		ExtensionPermissionTypes::Dots
 	};
 
-	inline const int PermissionCount = (int)ExtensionPermissionTypes::MapInfo + 1;
+	inline const int PermissionCount = (int)ExtensionPermissionTypes::AppsampleAccount + 1;
 
 	// nullptr for None and for a name this overlay doesn't know
 	const PermissionInfo* findPermission(ExtensionPermissionTypes type);
@@ -123,9 +130,18 @@ namespace Extensions {
 	inline const size_t MaxTextures = 256;
 	inline const size_t MaxSettings = 128;
 	inline const size_t MaxTabs = 16;
+	// items in one ImGUI_SideList
+	inline const size_t MaxSideItems = 64;
+	// items in one ImGUI_RightClick list
+	inline const size_t MaxMenuEntries = 64;
+	// items in its ⋯ menu, and their labels' length in characters
+	inline const size_t MaxMenuItems = 3;
+	inline const size_t MaxMenuItemLabel = 24;
 	// headers whose open state is kept, and their labels' length
 	inline const size_t MaxHeaders = 64;
 	inline const size_t MaxHeaderLabel = 128;
+	// a header's summary line, in characters
+	inline const size_t MaxSummary = 120;
 	// headers past those, kept open or closed for the session only
 	inline const size_t MaxSessionHeaders = 256;
 	// attention dots on at once, and how long their part is open before one goes
@@ -238,6 +254,9 @@ namespace Extensions {
 		// an open header's card is being drawn, ended by the next header,
 		// ImGUI_EndHeader or the end of the call
 		bool headerCard = false;
+		// what's drawn sits beside an ImGUI_SideList, ended by ImGUI_EndSideList,
+		// the next side list or the end of the call
+		bool sideList = false;
 		struct DotSeen {
 			// when its part opened, and the frame it was last open
 			double since = -1;
@@ -271,6 +290,11 @@ namespace Extensions {
 		// Permissions tab (never asked again either)
 		std::unordered_set<std::string> neverAsk;
 		std::unordered_set<std::string> switchedOff;
+		// the row openPermissionsTab points at, when that was asked, and when
+		// the row was first drawn (negative: not yet, the tab scrolls to it then)
+		std::string pointedAt;
+		double pointedAsked = 0;
+		double pointedSince = -1;
 		// "Don't allow" or "Not now", asked again at the next start
 		std::unordered_set<ExtensionPermissionTypes> refused;
 		// the keys it may take by their shown name (Ctrl+F5), saved, and the
@@ -322,14 +346,16 @@ namespace Extensions {
 			std::string bound;
 		};
 		std::vector<HeldKey> keys;
+		// An item AddMenuItem put under the line in its ⋯ menu in the page list
+		struct MenuItem {
+			std::string id;
+			std::string label;
+			// false when the Lua function failed
+			std::function<bool()> callback;
+		};
+		std::vector<MenuItem> menuItems;
 		// the textures it loaded with LoadTexture or from a web link, freed with it
 		std::vector<GLuint> textures;
-		// ImGUI_Image's web links this session, 0 while downloading
-		struct WebImage {
-			GLuint texture = 0;
-			bool failed = false;
-		};
-		std::map<std::string, WebImage> webImages;
 		std::filesystem::path folder;
 		// its folder's name, the key for everything it keeps in settings.json
 		std::string folderKey;
@@ -410,17 +436,22 @@ namespace Extensions {
 	// start), or "not_asked".
 	extern std::string permissionState(const Extension& ext, ExtensionPermissionTypes permission);
 	// Whether asking for it would show a question: not allowed, off, never or
-	// refused already.
+	// refused already, and not one only the player turns on.
 	extern bool mayAsk(const Extension& ext, ExtensionPermissionTypes permission);
 	// the player's answers, saved
 	extern void allow(Extension& ext, ExtensionPermissionTypes permission);
 	extern void refuse(Extension& ext, ExtensionPermissionTypes permission, bool never);
 	// its switch on the Permissions tab
 	extern void switchPermission(Extension& ext, ExtensionPermissionTypes permission, bool on);
+	// off for every extension, loaded or not, saved
+	extern void switchOffEverywhere(ExtensionPermissionTypes permission);
 	// "Let it ask"
 	extern void letAsk(Extension& ext, const std::string& name);
 	// the Permissions tab on its page
 	extern void drawPermissionsTab(Extension& ext);
+	// opens the menu on its page's Permissions tab; with a permission's name,
+	// scrolled to its row, lit up for a moment
+	extern void openPermissionsTab(Extension& ext, const std::string& permission = "");
 	// its About tab: metadata.about, version, author, folder
 	extern void drawAboutTab(const Extension& ext);
 	// Switched off on its Permissions tab: Shutdown runs, everything it

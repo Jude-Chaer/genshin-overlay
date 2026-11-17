@@ -18,7 +18,20 @@ namespace Asks {
 		// its own Permissions question, after this one
 		Changed,
 		// an overlay setting it asks to turn on
-		Setting
+		Setting,
+		// a change of its that unmarks more than one point: Allow unmarks,
+		// DontAllow keeps them marked, NotNow cancels the whole change
+		Unmark
+	};
+
+	enum class Answer { Allow, DontAllow, Never, NotNow };
+
+	// one site's part of an Unmark question
+	struct UnmarkLine {
+		std::string site;
+		int count = 0;
+		// ("Liyue, Common Chest", 20), most first
+		std::vector<std::pair<std::string, int>> which;
 	};
 
 	struct Ask {
@@ -28,6 +41,9 @@ namespace Asks {
 		// keys by their shown name, when it asks for Keybinds or more keys
 		std::vector<std::string> keys;
 		std::string setting;
+		std::vector<UnmarkLine> unmarks;
+		int unmarkPoints = 0;
+		std::function<void(Answer)> answered;
 		bool shown = false;
 	};
 
@@ -54,6 +70,10 @@ namespace Asks {
 	void askKeys(Extensions::Extension& ext, const std::string& key);
 	void askChanged(Extensions::Extension& ext);
 	void askSetting(Extensions::Extension& ext, const std::string& name);
+	// one question per change, answered gets the player's answer once;
+	// forgotten with the extension, it isn't called
+	// points: how many in all, one unmarked on both sites is one
+	void askUnmark(Extensions::Extension& ext, const std::vector<UnmarkLine>& lines, int points, std::function<void(Answer)> answered);
 	// its questions leave the queue, when it stops or unloads
 	void forget(const Extensions::Extension& ext);
 	void forget(const Extensions::Extension& ext, Kind kind);
@@ -65,7 +85,6 @@ namespace Asks {
 	// the question on screen now: the first in line while the map or menu is open
 	const Ask* showing(bool mapOpen, bool menuOpen);
 
-	enum class Answer { Allow, DontAllow, Never, NotNow };
 	// answers the question showing, saves it, and the next one comes up
 	void answer(Answer answer);
 

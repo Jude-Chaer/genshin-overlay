@@ -19,6 +19,8 @@ namespace Appsample {
         int type = 0;
         int group = 0, floor = 0;
         double lng = 0, lat = 0;
+        // their site lets a point be marked found only from level 5 up
+        int level = 0;
     };
 
     // A HoYoLAB point to pair, in HoYoLAB map units (y going down).

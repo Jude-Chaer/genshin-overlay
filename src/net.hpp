@@ -51,6 +51,12 @@ namespace Net {
         const Limits& limits = {});
     extern bool post(const std::string& url, const std::string& body, Response& out, bool hoyolab = false, const Limits& limits = {},
         Stopper* stopper = nullptr);
+    // A GET or POST that carries a login in its headers ("Cookie: ...\r\n",
+    // ASCII). It has a session of its own that keeps no cookies, and a
+    // redirect comes back as the answer, so the headers reach only the host
+    // in url. A body goes as JSON.
+    extern bool sendLogin(const std::string& method, const std::string& url, const std::string& headers, const std::string& body,
+        Response& out, const Limits& limits = {}, Stopper* stopper = nullptr);
 
     // Out on the internet: not this PC, not a private, link-local or Tailscale
     // range, not a network this PC's adapters are on. The address as text,

@@ -81,6 +81,12 @@ namespace Stats {
         ImGui::PlotLines(label, values, HISTORY, filled ? next : 0, text, 0.0f, top, ImVec2(width, height));
     }
 
+    void Latest(float& cpu, float& ramMb) {
+        int latest = (next + HISTORY - 1) % HISTORY;
+        cpu = cpuHistory[latest];
+        ramMb = ramHistory[latest];
+    }
+
     void Draw() {
         graph("CPU", cpuHistory, "%.1f %%", 5.0f);
         graph("RAM", ramHistory, "%.0f MB", 50.0f);

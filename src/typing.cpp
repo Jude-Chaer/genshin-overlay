@@ -13,15 +13,17 @@ namespace Typing {
         state = State::Off;
         focused = false;
         from = nullptr;
+        lettingGo = false;
     }
 
     Change Focus::update(const Frame& frame, Windows& windows) {
-        bool stays = std::find(staying.begin(), staying.end(), frame.lastBox) != staying.end();
+        bool stays = !lettingGo && std::find(staying.begin(), staying.end(), frame.lastBox) != staying.end();
         staying.clear();
         // text boxes are only in the menu
         bool typing = frame.menuOpen && frame.typing;
 
         if (state == State::Off) {
+            lettingGo = false;
             if (!typing) return Change::None;
             state = State::Typing;
             from = windows.foreground();
@@ -40,10 +42,11 @@ namespace Typing {
         }
 
         if (typing) {
+            lettingGo = false;
             state = State::Typing;
             return Change::None;
         }
-        if (frame.menuOpen && (state == State::Holding || stays)) {
+        if (frame.menuOpen && !lettingGo && (state == State::Holding || stays)) {
             state = State::Holding;
             return Change::None;
         }

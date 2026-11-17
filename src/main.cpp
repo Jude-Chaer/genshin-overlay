@@ -23,6 +23,10 @@
 #include "minimap.hpp"
 #include "locator/map_locator.hpp"
 #include "packets/game_traffic.hpp"
+#include "point_guides.hpp"
+#include "accounts.hpp"
+#include "marks.hpp"
+#include "web_images.hpp"
 
 // genshin-overlay.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
@@ -211,6 +215,7 @@ int main(int argc, char** argv) {
     }
 
     Settings::Load();
+    Accounts::Init();
 
 
     if (!glfwInit()) {
@@ -223,6 +228,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    Marks::Init();
     MapTracking::Start(Helpers::exeDirectory() / "map_data");
     ItemFiles::Start(Helpers::exeDirectory() / "items", Settings::downloadItems);
     MapTiles::Init(Helpers::exeDirectory() / "map_data");
@@ -233,6 +239,8 @@ int main(int argc, char** argv) {
     Extensions::initExtensions();
     Overlay::MainLoop();
     Extensions::destroyExtensions();
+    PointGuides::stop();
+    WebImages::clear();
     // told first so it winds down while the others are joined
     ItemFiles::AskToStop();
     ScreenPictures::stop();
@@ -245,6 +253,8 @@ int main(int argc, char** argv) {
     MapTiles::Shutdown();
     ScreenPictures::clear();
     Overlay::Shutdown();
+    Marks::Shutdown();
+    Accounts::Shutdown();
 
     return 0;
 }

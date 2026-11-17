@@ -1,6 +1,8 @@
 #include <windows.h>
 #include <dwmapi.h>
+#include <shellapi.h>
 #include "overlay.hpp"
+#include "accounts.hpp"
 #include "notices.hpp"
 #include "controls.hpp"
 #include "keybindings.hpp"
@@ -23,6 +25,8 @@
 #include "typing.hpp"
 #include <imgui_internal.h>
 #include "game_traffic_text.hpp"
+#include "menu_summary.hpp"
+#include "page_order.hpp"
 #include "npcap_download.hpp"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -42,6 +46,18 @@ namespace Overlay {
     static bool menuOpen = false;
     // the menu's page: 0 = Home, 1 = Usage, 2+ = extensions
     static int activeTab = 0;
+    // Home, Usage and Accounts come before the extensions' pages
+    static const int OwnPages = 3;
+    // the player's order and folders of the extensions' pages
+    static PageOrder::List pageList;
+    static bool pageListLoaded = false;
+    // the row the page list's menu is open for
+    static PageOrder::Place pageMenuAt;
+    static int renamedFolder = -1;
+    static bool renameAsked = false;
+    static std::string folderName;
+    // why the typed folder name wasn't taken, shown under the field
+    static std::string renameProblem;
     static std::string iniPath;
     static double startTime = 0.0;
 
@@ -146,6 +162,33 @@ namespace Overlay {
         else GameTraffic::Stop(false);
     }
 
+    // A white disc with a soft edge, mipmapped, that badges tint for their
+    // round parts.
+    static ImTextureID makeDisc() {
+        const int side = 128;
+        std::vector<unsigned char> pixels(side * side * 4, 255);
+        float middle = side / 2.0f, radius = side / 2.0f - 1;
+        for (int y = 0; y < side; y++) {
+            for (int x = 0; x < side; x++) {
+                float d = std::hypot(x + 0.5f - middle, y + 0.5f - middle);
+                float alpha = std::clamp(radius - d + 0.5f, 0.0f, 1.0f);
+                pixels[(y * side + x) * 4 + 3] = (unsigned char)std::lround(alpha * 255);
+            }
+        }
+        GLuint texture = 0;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, side, side, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return (ImTextureID)(intptr_t)texture;
+    }
+
     bool Init() {
         Asks::addSetting({ "Game traffic", "Read the game's traffic", "It only reads, nothing is ever sent to the game.",
             []() { return Settings::readGameTraffic; }, []() { setGameTraffic(true); } });
@@ -217,6 +260,7 @@ namespace Overlay {
 
         ImGui_ImplGlfw_InitForOpenGL(Overlay::Window, true);
         ImGui_ImplOpenGL3_Init(glsl_version);
+        Controls::SetDiscTexture(makeDisc());
 
         // The menu key (Alt+` unless the player picked another) toggles the
         // menu, so it has to work while the menu is closed too. A plain ` didn't
@@ -253,12 +297,12 @@ namespace Overlay {
     }
 
     int ShownExtension() {
-        if (!menuOpen || activeTab < 2) return -1;
-        return activeTab - 2;
+        if (!menuOpen || activeTab < OwnPages) return -1;
+        return activeTab - OwnPages;
     }
 
     void ShowExtension(int index) {
-        activeTab = index + 2;
+        activeTab = index + OwnPages;
         SetMenuOpen(true);
     }
 
@@ -303,6 +347,7 @@ namespace Overlay {
         lastRaise = now;
 
         SetWindowPos(glfwGetWin32Window(Overlay::Window), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        Accounts::RaiseWindow();
     }
 
     void MouseClaims::claim(float left, float top, float right, float bottom, const std::string& owner) {
@@ -444,92 +489,60 @@ namespace Overlay {
         }
     }
 
-    // what the tracker sees right now, mainly for testing until markers are drawn
-    static void DrawMapStatus() {
+    static MenuSummary::MapState mapState() {
+        using Data = MenuSummary::MapState::Data;
+        MenuSummary::MapState map;
         switch (MapTracking::GetStatus()) {
-        case MapTracking::Status::NoData:
-            ImGui::TextWrapped("Couldn't get the map data. Check your internet connection and restart.");
-            return;
-        case MapTracking::Status::Downloading: {
-            int percent = 0;
-            std::string stage = MapTracking::GetDownloadStage(percent);
-            Controls::Progress(stage.c_str(), percent / 100.0f);
-            return;
-        }
-        case MapTracking::Status::Loading:
-            Controls::Waiting("Loading map data...");
-            return;
-        case MapTracking::Status::Failed:
-            ImGui::Text("Map data failed to load, check the console");
-            return;
-        case MapTracking::Status::Ready:
+        case MapTracking::Status::NoData: map.data = Data::NoData; break;
+        case MapTracking::Status::Downloading:
+            map.data = Data::Downloading;
+            map.stage = MapTracking::GetDownloadStage(map.percent);
             break;
+        case MapTracking::Status::Loading: map.data = Data::Loading; break;
+        case MapTracking::Status::Failed: map.data = Data::Failed; break;
+        case MapTracking::Status::Ready: map.data = Data::Ready; break;
         }
+        if (map.data != Data::Ready) return map;
+        MapTracking::MapView view = MapTracking::GetView();
+        map.visible = view.visible;
+        map.mapOpen = MapTracking::IsMapOpen();
+        if (view.visible) map.mapName = MapTracking::GetMapName(view.result.mapId);
+        return map;
+    }
+
+    // what the tracker sees right now under the Map section's line, mainly for
+    // testing until markers are drawn
+    static void DrawMapStatus(const MenuSummary::MapText& text) {
+        if (!text.detail.empty()) ImGui::TextWrapped("%s", text.detail.c_str());
+        MapTracking::Status status = MapTracking::GetStatus();
+        if (status == MapTracking::Status::Downloading) {
+            int percent = 0;
+            MapTracking::GetDownloadStage(percent);
+            Controls::Progress("", percent / 100.0f);
+            return;
+        }
+        if (status != MapTracking::Status::Ready) return;
 
         ImGui::TextDisabled(Capture::isCapturing() ? "Capture: WGC" : "Capture: not working");
 
         MapTracking::MapView view = MapTracking::GetView();
-        if (!view.visible) {
-            if (MapTracking::IsMapOpen())
-                Controls::Waiting("Map is open, looking for where it is...");
-            else
-                Controls::Waiting("Waiting for the in-game map (M)");
-            return;
-        }
-
+        if (!view.visible) return;
         const MapLocator::Result& r = view.result;
-        ImGui::Text("%s", MapTracking::GetMapName(r.mapId));
-        if (r.groupId != 0) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("underground %d / floor %d", r.groupId, r.floorId);
-        }
+        if (r.groupId != 0) ImGui::TextDisabled("underground %d / floor %d", r.groupId, r.floorId);
         ImGui::Text("Center: %.0f, %.0f", r.lng, r.lat);
         ImGui::Text("Zoom: %.2f units/px  (%d inliers)", r.unitsPerPixel, r.inliers);
         ImGui::TextDisabled("updated %.1f s ago", view.secondsSinceUpdate);
     }
 
-    // the map items' line when something's off, and the player's controls under it
-    static void DrawItemsStatus() {
-        static_assert(ItemFiles::RETRY == std::chrono::seconds(60), "the line says every minute");
-        ItemFiles::Status items = ItemFiles::GetStatus();
-        // the first check of the release takes a moment, the line waits for it
-        if (items.started) {
-            using ItemFiles::Reason;
-            using ItemFiles::State;
-            bool tryAgain = false;
-            std::string line;
-            if (items.state == State::Downloading) {
-                std::string downloading = "Map items: downloading " + std::to_string(items.percent) + "%";
-                Controls::Progress(downloading.c_str(), items.percent / 100.0f);
-            }
-            else if (items.reason == Reason::NoNetwork) {
-                line = items.state == State::Old ? "Map items: couldn't update, using the list from " + items.built + ", trying again every minute"
-                    : "Map items: not downloaded yet, trying again every minute (no internet?)";
-            }
-            else if (items.reason == Reason::NewerFormat) {
-                line = "Map items: update the overlay to get the new list";
-                if (items.state == State::Old) line += ", using the list from " + items.built;
-            }
-            else if (items.reason == Reason::BrokenPack) {
-                line = "Map items: the download was broken";
-                if (items.state == State::Old) line += ", using the list from " + items.built;
-                tryAgain = true;
-            }
-            else if (items.reason == Reason::CantSave) {
-                line = "Map items: can't save to the overlay folder, check it isn't read-only";
-                tryAgain = true;
-            }
-            else if (items.reason == Reason::DownloadOff && items.state == State::None) {
-                line = "Map items: none, the download is off";
-            }
-            if (!line.empty()) ImGui::TextWrapped("%s", line.c_str());
-            if (tryAgain) {
-                ImGui::BeginDisabled(items.checking);
-                if (Controls::Button("Try again")) ItemFiles::CheckNow();
-                ImGui::EndDisabled();
-            }
+    // what the Map section's line doesn't say about the map items, and Try again
+    static void DrawItemsStatus(const ItemFiles::Status& items, const MenuSummary::ItemsText& text) {
+        if (items.state == ItemFiles::State::Downloading) Controls::Progress("Map items", items.percent / 100.0f);
+        if (!text.detail.empty()) ImGui::TextWrapped("%s", text.detail.c_str());
+        if (text.tryAgain) {
+            ImGui::BeginDisabled(items.checking);
+            if (Controls::Button("Try again")) ItemFiles::CheckNow();
+            ImGui::EndDisabled();
         }
-
         if (Controls::Toggle("Download map items", &Settings::downloadItems)) {
             Settings::Save();
             ItemFiles::SetDownload(Settings::downloadItems);
@@ -816,14 +829,311 @@ namespace Overlay {
             NpcapDownload::Start();
     }
 
-    static void DrawGameTraffic() {
+    static void DrawMapSection() {
+        MenuSummary::MapText map = MenuSummary::Map(mapState());
+        ItemFiles::Status itemFiles = ItemFiles::GetStatus();
+        MenuSummary::ItemsText items = MenuSummary::Items(itemFiles);
+        if (!Controls::BeginSection("Map", true, false, MenuSummary::MapSection(map, items))) return;
+        DrawMapStatus(map);
+        DrawItemsStatus(itemFiles, items);
+        if (Controls::Toggle("Hide on map close", &Settings::hideOnMapClose)) {
+            Settings::Save();
+        }
+        Controls::EndSection();
+    }
+
+    static Controls::Summary trafficSummary(const GameTrafficText::Line& line) {
+        return { line.text, line.problem ? Controls::Summary::Kind::Strong : Controls::Summary::Kind::Plain };
+    }
+
+    static Controls::Summary appearanceSummary() {
+        return { MenuSummary::Join(MenuSummary::Join(Settings::look, Settings::lightDark), std::to_string(Settings::size) + "%") };
+    }
+
+    static void DrawGameTraffic(const GameTrafficText::Line& line) {
         bool on = Settings::readGameTraffic;
         if (Controls::Toggle("Read the game's traffic", &on)) setGameTraffic(on);
-        GameTrafficText::Line line = GameTrafficText::For(GameTraffic::GetStatus());
-        if (line.quiet) ImGui::TextDisabled("%s", line.text.c_str());
-        else ImGui::TextWrapped("%s", line.text.c_str());
         if (line.downloadNpcap) DrawNpcapButton();
         if (line.orAdmin) ImGui::TextWrapped("Or run the overlay as admin.");
+    }
+
+    static void DrawGameTrafficSection() {
+        GameTrafficText::Line traffic = GameTrafficText::For(GameTraffic::GetStatus());
+        if (!Controls::BeginSection("Game traffic", false, false, trafficSummary(traffic))) return;
+        DrawGameTraffic(traffic);
+        Controls::EndSection();
+    }
+
+    // the overlay's logins, and the extensions allowed to use each
+    static void DrawAccounts() {
+        Controls::PageTitle("Accounts");
+        for (Accounts::Site site : { Accounts::Site::HoyolabMap, Accounts::Site::Appsample }) {
+            ImGui::PushID((int)site);
+            Accounts::Status status = Accounts::Get(site);
+            if (Controls::BeginSection(Accounts::SiteLabel(site), true, false, MenuSummary::Account(site, status))) {
+                if (site == Accounts::Site::HoyolabMap && status.state == Accounts::State::LoggedIn && !status.name.empty())
+                    ImGui::TextDisabled("Account %s", status.account.c_str());
+                if (!status.problem.empty()) ImGui::TextWrapped("%s", status.problem.c_str());
+
+                Controls::ButtonOptions main;
+                main.look = Controls::ButtonOptions::Look::Main;
+                // one window at a time
+                std::optional<Accounts::Site> windowSite = Accounts::WindowSite();
+                bool otherWindow = windowSite && *windowSite != site;
+                if (otherWindow) {
+                    std::string open = std::string("The ") + Accounts::SiteLabel(*windowSite) + " window is open.";
+                    ImGui::TextDisabled("%s", open.c_str());
+                }
+                Controls::ButtonOptions logIn = main;
+                logIn.busy = otherWindow;
+                switch (status.state) {
+                case Accounts::State::LoggedOut:
+                    logIn.busyLabel = "Log in";
+                    if (Controls::Button("Log in", logIn)) Accounts::LogIn(site);
+                    break;
+                case Accounts::State::WindowOpen:
+                    if (Controls::Button("Cancel")) Accounts::CloseWindow(false);
+                    break;
+                case Accounts::State::LoggedIn:
+                    if (Controls::Button("Log out")) Accounts::LogOut(site);
+                    break;
+                case Accounts::State::NeedsLogin:
+                    logIn.busyLabel = "Log in again";
+                    if (Controls::Button("Log in again", logIn)) Accounts::LogIn(site);
+                    break;
+                case Accounts::State::Captcha:
+                    logIn.busyLabel = "Open HoYoLAB Map";
+                    if (Controls::Button("Open HoYoLAB Map", logIn)) Accounts::OpenHoyolabMap();
+                    ImGui::SameLine();
+                    if (Controls::Button("Log out")) Accounts::LogOut(site);
+                    break;
+                }
+
+                Extensions::ExtensionPermissionTypes permission = site == Accounts::Site::HoyolabMap
+                    ? Extensions::ExtensionPermissionTypes::HoyolabMapAccount : Extensions::ExtensionPermissionTypes::AppsampleAccount;
+                std::string users;
+                for (const auto& ext : Extensions::registeredExtensions) {
+                    if (!ext->extensionPermissions.count(permission)) continue;
+                    users += (users.empty() ? "" : ", ") + ext->name;
+                }
+                if (users.empty()) ImGui::TextDisabled("No extension can use it.");
+                else ImGui::TextWrapped("Used by: %s", users.c_str());
+                Controls::EndSection();
+            }
+            ImGui::PopID();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("Logging out keeps who's allowed. Logging in as another account switches them all off again.");
+        ImGui::PopStyleColor();
+    }
+
+    // an extension in the page order, by its folder
+    static std::string PageKey(const Extensions::Extension& ext, size_t index) {
+        if (!ext.folderKey.empty()) return ext.folderKey;
+        return "#" + std::to_string(index);
+    }
+
+    static ImTextureID PageImage(const Extensions::Extension& ext) {
+        return ext.extensionImage ? (ImTextureID)(intptr_t)ext.extensionImage : 0;
+    }
+
+    static void OpenFolder(const std::filesystem::path& folder) {
+        ShellExecuteW(nullptr, L"open", folder.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+
+    // Undo and redo of the page list's moves, asked by the arrows on the
+    // notice a move shows and done at the next frame's page list.
+    static PageOrder::History pageHistory;
+    static int pageNotice = 0;
+    enum class PageStep { None, Undo, Redo };
+    static PageStep pageStepAsked = PageStep::None;
+
+    // one notice for every step, its text the last one
+    static void PageNotice(const std::string& text) {
+        double now = glfwGetTime();
+        if (Notices::Update(pageNotice, text, now)) return;
+        pageNotice = Notices::Add("", "Genshin Overlay", Notices::Kind::Plain, text, now);
+        Notices::SetIcons(pageNotice, {
+            { Controls::ButtonIcon::Undo, "Undo", [] { return pageHistory.CanUndo(); }, [] { pageStepAsked = PageStep::Undo; } },
+            { Controls::ButtonIcon::Redo, "Redo", [] { return pageHistory.CanRedo(); }, [] { pageStepAsked = PageStep::Redo; } },
+        }, false);
+    }
+
+    static void ChangedPageList(const PageOrder::List& before, const std::string& text) {
+        pageHistory.Did(before, text);
+        Settings::SavePageList(PageOrder::ToJson(pageList));
+        PageNotice(text);
+    }
+
+    static std::string PageName(const std::string& key) {
+        for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+            if (PageKey(*Extensions::registeredExtensions[i], i) == key) return Extensions::registeredExtensions[i]->name;
+        }
+        return key;
+    }
+
+    // A move in the page list, saved when something moved. The
+    // folder an extension goes into opens.
+    static void MovePage(const std::function<PageOrder::Place(PageOrder::List&)>& move) {
+        PageOrder::List before = pageList;
+        PageOrder::Place moved = move(pageList);
+        if (moved.top < 0) return;
+        const PageOrder::Item& item = pageList[moved.top];
+        std::string name = moved.inside >= 0 ? PageName(item.inside[moved.inside]) : item.folder ? item.key : PageName(item.key);
+        if (moved.inside >= 0) pageList[moved.top].open = true;
+        ChangedPageList(before, "Moved " + name);
+    }
+
+    // a row of the page list is being dragged, its click doesn't count
+    static bool pageDragging = false;
+
+    struct PageDrop {
+        bool set = false;
+        bool onto = false;
+        PageOrder::Place from, to;
+    };
+
+    // Drag and drop on the row drawn last. The top and bottom quarters drop
+    // before or after it, the middle of a folder or of an extension outside
+    // folders drops onto it. A folder dropped on a folder's extension goes
+    // after that folder.
+    static void PageDragDrop(PageOrder::Place at, const char* name, PageDrop& drop) {
+        using PageOrder::Place;
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+            pageDragging = true;
+            ImGui::SetDragDropPayload("page place", &at, sizeof at);
+            ImGui::TextUnformatted(name);
+            ImGui::EndDragDropSource();
+        }
+        if (!ImGui::BeginDragDropTarget()) return;
+        const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("page place",
+            ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+        if (payload) {
+            Place from = *static_cast<const Place*>(payload->Data);
+            const PageOrder::Item& target = pageList[at.top];
+            bool movingFolder = from.inside < 0 && pageList[from.top].folder;
+            bool folderRow = target.folder && at.inside < 0;
+            ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+            float y = ImGui::GetMousePos().y, quarter = (max.y - min.y) / 4;
+            bool canOnto = !movingFolder && at.inside < 0 && at.top != from.top;
+            enum { Before, Onto, After } zone;
+            if (movingFolder && at.inside >= 0) zone = After;
+            else if (canOnto) zone = y < min.y + quarter ? Before : y > max.y - quarter ? After : Onto;
+            else zone = y < (min.y + max.y) / 2 ? Before : After;
+
+            Place to = at;
+            if (zone == After) {
+                if (movingFolder || (at.inside < 0 && !(folderRow && target.open))) to = { at.top + 1, -1 };
+                else if (at.inside >= 0) to = { at.top, at.inside + 1 };
+                else to = { at.top, 0 };
+            }
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            ImU32 accent = Controls::Color(Controls::GetTheme().accent);
+            float line = std::max(2.0f, ImGui::GetFontSize() * 0.12f);
+            if (zone == Onto) draw->AddRect(min, max, accent, ImGui::GetStyle().FrameRounding, 0, line);
+            else {
+                float edge = zone == Before ? min.y : max.y;
+                draw->AddLine(ImVec2(min.x, edge), ImVec2(max.x, edge), accent, line);
+            }
+            if (payload->IsDelivery()) drop = { true, zone == Onto, from, to };
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+    // a move picked in the ⋯ menu, done once the menu is drawn
+    static std::function<PageOrder::Place(PageOrder::List&)> pageMoveAsked;
+
+    static bool CanMove(const std::function<PageOrder::Place(PageOrder::List&)>& move) {
+        PageOrder::List copy = pageList;
+        return move(copy).top >= 0;
+    }
+
+    static void MoveMenu(PageOrder::Place at, bool folder) {
+        using namespace PageOrder;
+        if (!ImGui::BeginMenu("Move")) return;
+        auto item = [&](const char* label, const std::function<Place(List&)>& move) {
+            if (ImGui::MenuItem(label, nullptr, false, CanMove(move))) pageMoveAsked = move;
+        };
+        item("Up", [at](List& list) { return Up(list, at); });
+        item("Down", [at](List& list) { return Down(list, at); });
+        item("To the top", [at](List& list) { return ToTop(list, at); });
+        item("To the bottom", [at](List& list) { return ToBottom(list, at); });
+        if (!folder) {
+            ImGui::Separator();
+            std::vector<int> folders;
+            for (int top = 0; top < (int)pageList.size(); top++) {
+                if (pageList[top].folder && top != at.top) folders.push_back(top);
+            }
+            if (ImGui::BeginMenu("Into folder", !folders.empty())) {
+                for (int top : folders) {
+                    ImGui::PushID(top);
+                    item(pageList[top].key.c_str(), [at, top](List& list) { return IntoFolder(list, at, top); });
+                    ImGui::PopID();
+                }
+                ImGui::EndMenu();
+            }
+            item("New folder", [at](List& list) { return NewFolder(list, at); });
+            if (at.inside >= 0) item("Out of folder", [at](List& list) { return OutOfFolder(list, at); });
+        }
+        ImGui::EndMenu();
+    }
+
+    // The ⋯ menu of an extension's or a folder's row in the page list
+    static void PageMenu(const std::map<std::string, size_t>& byKey) {
+        PageOrder::Place at = pageMenuAt;
+        if (at.top < 0 || at.top >= (int)pageList.size()) {
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+        const PageOrder::Item& item = pageList[at.top];
+        if (item.folder && at.inside < 0) {
+            MoveMenu(at, true);
+            if (ImGui::MenuItem("Rename")) {
+                renamedFolder = at.top;
+                folderName = item.key;
+                renameProblem.clear();
+                renameAsked = true;
+            }
+            if (ImGui::MenuItem("Ungroup")) {
+                PageOrder::List before = pageList;
+                std::string name = item.key;
+                if (PageOrder::Ungroup(pageList, at.top)) ChangedPageList(before, "Ungrouped " + name);
+            }
+            return;
+        }
+        const std::string& key = at.inside >= 0 ? item.inside[at.inside] : item.key;
+        auto found = byKey.find(key);
+        if (found == byKey.end()) {
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+        Extensions::Extension& ext = *Extensions::registeredExtensions[found->second];
+        MoveMenu(at, false);
+        if (ImGui::MenuItem(ext.enabled ? "Turn off" : "Turn on")) Extensions::setRunning(ext, !ext.enabled);
+        if (ImGui::MenuItem("Permissions")) Extensions::openPermissionsTab(ext);
+        if (ImGui::MenuItem("Show in folder", nullptr, false, !ext.folder.empty())) OpenFolder(ext.folder);
+        if (!ext.enabled || ext.stopped || !ext.stopReason.empty() || ext.menuItems.empty()) return;
+        ImGui::Separator();
+        // run once the menu is drawn, the function can add or remove items
+        std::function<bool()> picked;
+        for (const auto& menuItem : ext.menuItems) {
+            ImGui::PushID(menuItem.id.c_str());
+            if (ImGui::MenuItem(menuItem.label.c_str())) picked = menuItem.callback;
+            ImGui::PopID();
+        }
+        if (picked && !picked()) {
+            Notices::Add(ext.folderKey, ext.name, Notices::Kind::Error, ext.name + " couldn't do that.", glfwGetTime());
+        }
+    }
+
+    // the official Map, Minimap and Markers get the overlay's own icons, any other
+    // extension its icon.png or its first letter
+    static Controls::PageIcon OfficialIcon(const Extensions::Extension& ext) {
+        if (!ext.official) return Controls::PageIcon::None;
+        if (ext.folderKey == "map") return Controls::PageIcon::Map;
+        if (ext.folderKey == "minimap") return Controls::PageIcon::Minimap;
+        if (ext.folderKey == "markers") return Controls::PageIcon::Markers;
+        return Controls::PageIcon::None;
     }
 
     static void DrawMenu() {
@@ -850,16 +1160,65 @@ namespace Overlay {
         float splitterWidth = std::max(2.0f, font * 0.35f);
         float listPad = font * 0.35f;
 
-        std::vector<std::string> pageNames = { "Home", "Usage" };
-        for (auto& ext : Extensions::registeredExtensions) pageNames.push_back(ext->name);
+        float cpu = 0, ram = 0;
+        Stats::Latest(cpu, ram);
+        std::vector<std::pair<std::string, Controls::Summary>> pages = {
+            { "Home", {} },
+            { "Usage", { Settings::usageInList ? MenuSummary::Usage(cpu, ram) : "" } },
+            { "Accounts", MenuSummary::AccountsPage(Accounts::Get(Accounts::Site::HoyolabMap), Accounts::Get(Accounts::Site::Appsample)) },
+        };
+
+        if (!pageListLoaded) {
+            pageList = PageOrder::FromJson(Settings::LoadPageList());
+            pageListLoaded = true;
+        }
+        std::vector<std::string> present;
+        std::map<std::string, size_t> byKey;
+        for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+            std::string key = PageKey(*Extensions::registeredExtensions[i], i);
+            present.push_back(key);
+            byKey[key] = i;
+        }
+        if (pageStepAsked != PageStep::None) {
+            bool undo = pageStepAsked == PageStep::Undo;
+            pageStepAsked = PageStep::None;
+            std::string what = undo ? pageHistory.NextUndo() : pageHistory.NextRedo();
+            // folders keep being open or closed as they are now
+            std::map<std::string, bool> open;
+            for (const auto& item : pageList) if (item.folder) open[item.key] = item.open;
+            if (undo ? pageHistory.Undo(pageList) : pageHistory.Redo(pageList)) {
+                for (auto& item : pageList) {
+                    if (item.folder && open.count(item.key)) item.open = open[item.key];
+                }
+                pageList = PageOrder::Arrange(pageList, present);
+                Settings::SavePageList(PageOrder::ToJson(pageList));
+                PageNotice(undo ? "Undone: " + what : what);
+            }
+        }
+        pageList = PageOrder::Arrange(pageList, present);
+
+        // shown only once the list is longer than the window
+        static bool listScrolls = false;
         float sidebarWidth = sidebarMin;
         if (sidebarFonts > 0) sidebarWidth = sidebarFonts * font;
         else {
-            // a page button's icon and gaps around its name
-            for (const std::string& name : pageNames) {
-                sidebarWidth = std::max(sidebarWidth, ImGui::CalcTextSize(name.c_str()).x + font * 3.45f + Controls::DotRoom());
+            for (const auto& [name, summary] : pages) {
+                sidebarWidth = std::max(sidebarWidth, Controls::PageButtonWidth(name.c_str(), summary));
             }
-            sidebarWidth += listPad * 2;
+            for (const auto& item : pageList) {
+                if (!item.folder) {
+                    sidebarWidth = std::max(sidebarWidth, Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[item.key]]->name.c_str(), {}, true));
+                    continue;
+                }
+                sidebarWidth = std::max(sidebarWidth, Controls::FolderButtonWidth(item.key.c_str()));
+                for (const auto& key : item.inside) {
+                    float width = Controls::PageButtonWidth(Extensions::registeredExtensions[byKey[key]]->name.c_str(), {}, true);
+                    sidebarWidth = std::max(sidebarWidth, width + Controls::PageIndent());
+                }
+            }
+            if (listScrolls) sidebarWidth += ImGui::GetStyle().ScrollbarSize;
+            // windows are whole pixels
+            sidebarWidth = std::ceil(sidebarWidth + listPad * 2);
         }
         sidebarWidth = std::clamp(sidebarWidth, sidebarMin, sidebarMax);
 
@@ -870,31 +1229,170 @@ namespace Overlay {
             "Sidebar",
             ImVec2(sidebarWidth, contentSize.y),
             ImGuiChildFlags_AlwaysUseWindowPadding,
-            ImGuiWindowFlags_NoScrollbar
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
         );
         ImGui::PopStyleVar();
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, font * 0.2f));
 
         // by number, so an extension named "Settings" or two with one name are their own buttons
-        auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile = 0) {
+        auto DrawPage = [&](const char* name, int index, ImTextureID icon, bool dotted, unsigned int tile,
+            const Controls::Summary& summary, Controls::PageIcon glyph, bool menu = false) {
             ImGui::PushID(index);
-            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile)) activeTab = index;
+            if (Controls::PageButton(name, activeTab == index, icon, dotted, tile, summary, glyph, menu) && !pageDragging) activeTab = index;
             ImGui::PopID();
         };
 
-        // Apple's grey and orange tiles for the overlay's own pages
-        DrawPage("Home", 0, 0, false, 0x8E8E93FF);
-        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF);
+        // Apple's grey, orange and blue tiles for the overlay's own pages
+        DrawPage("Home", 0, 0, false, 0x8E8E93FF, {}, Controls::PageIcon::Home);
+        DrawPage("Usage", 1, 0, false, 0xFF9F0AFF, pages[1].second, Controls::PageIcon::Usage);
+        DrawPage("Accounts", 2, 0, false, 0x0A84FFFF, pages[2].second, Controls::PageIcon::Accounts);
 
         if (!Extensions::registeredExtensions.empty()) {
             ImGui::Separator();
         }
 
-        for (size_t i = 0; i < Extensions::registeredExtensions.size(); ++i) {
+        // only the extensions scroll, the overlay's own pages stay put
+        ImGui::BeginChild("Extensions");
+        listScrolls = ImGui::GetScrollMaxY() > 0;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) pageDragging = false;
+        PageDrop drop;
+        auto DrawExtension = [&](size_t i, PageOrder::Place at) {
             auto& ext = Extensions::registeredExtensions[i];
-            ImTextureID icon = ext->extensionImage ? (ImTextureID)(intptr_t)ext->extensionImage : 0;
-            DrawPage(ext->name.c_str(), static_cast<int>(i) + 2, icon, !ext->dots.empty());
+            DrawPage(ext->name.c_str(), static_cast<int>(i) + OwnPages, PageImage(*ext), !ext->dots.empty(), 0, {}, OfficialIcon(*ext), true);
+            PageDragDrop(at, ext->name.c_str(), drop);
+            if (Controls::PageMenuAsked() && !pageDragging) {
+                pageMenuAt = at;
+                ImGui::OpenPopup("page menu");
+            }
+        };
+        bool listChanged = false;
+        for (int top = 0; top < (int)pageList.size(); ++top) {
+            PageOrder::Item& item = pageList[top];
+            if (!item.folder) {
+                DrawExtension(byKey[item.key], { top, -1 });
+                continue;
+            }
+            std::vector<Controls::PageMark> marks;
+            bool dotted = false, holdsOpenPage = false;
+            for (const auto& key : item.inside) {
+                size_t i = byKey[key];
+                auto& ext = Extensions::registeredExtensions[i];
+                if (marks.size() < 4) marks.push_back({ ext->name, PageImage(*ext), OfficialIcon(*ext) });
+                if (!ext->dots.empty()) dotted = true;
+                if (activeTab == static_cast<int>(i) + OwnPages) holdsOpenPage = true;
+            }
+            ImGui::PushID(("folder " + std::to_string(top)).c_str());
+            if (Controls::FolderButton(item.key.c_str(), item.open, marks, dotted && !item.open, holdsOpenPage && !item.open) && !pageDragging) {
+                item.open = !item.open;
+                listChanged = true;
+            }
+            ImGui::PopID();
+            PageDragDrop({ top, -1 }, item.key.c_str(), drop);
+            if (Controls::PageMenuAsked() && !pageDragging) {
+                pageMenuAt = { top, -1 };
+                ImGui::OpenPopup("page menu");
+            }
+            if (!item.open) continue;
+            ImGui::Indent(Controls::PageIndent());
+            for (int inside = 0; inside < (int)item.inside.size(); ++inside) DrawExtension(byKey[item.inside[inside]], { top, inside });
+            ImGui::Unindent(Controls::PageIndent());
         }
+        // under the last row, the end of the list outside folders
+        if (pageDragging && !pageList.empty()) {
+            float end = ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y;
+            // the rest of the window, or a line's height once the list scrolls
+            float room = ImGui::GetContentRegionAvail().y;
+            ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, room > 0 ? room : font));
+            if (ImGui::BeginDragDropTarget()) {
+                const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("page place",
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload) {
+                    float line = std::max(2.0f, ImGui::GetFontSize() * 0.12f);
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetItemRectMin().x, end), ImVec2(ImGui::GetItemRectMax().x, end),
+                        Controls::Color(Controls::GetTheme().accent), line);
+                    PageOrder::Place from = *static_cast<const PageOrder::Place*>(payload->Data);
+                    if (payload->IsDelivery()) drop = { true, false, from, { (int)pageList.size(), -1 } };
+                }
+                ImGui::EndDragDropTarget();
+            }
+        }
+        if (listChanged) Settings::SavePageList(PageOrder::ToJson(pageList));
+        if (drop.set) {
+            MovePage([&](PageOrder::List& list) {
+                return drop.onto ? PageOrder::Onto(list, drop.from, drop.to) : PageOrder::Move(list, drop.from, drop.to);
+            });
+        }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) pageDragging = false;
+
+        if (ImGui::BeginPopup("page menu")) {
+            PageMenu(byKey);
+            ImGui::EndPopup();
+        }
+        if (pageMoveAsked) {
+            auto move = std::move(pageMoveAsked);
+            pageMoveAsked = nullptr;
+            MovePage(move);
+        }
+        if (renameAsked) {
+            ImGui::OpenPopup("rename folder");
+            renameAsked = false;
+        }
+        // wide enough for the 40 bytes a name can have
+        ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 24, 0));
+        // the box keeps the keyboard while the popup is open, and gives it back as it closes
+        static bool renaming = false;
+        if (ImGui::BeginPopup("rename folder")) {
+            renaming = true;
+            // in the box when it opens and after a refused name
+            static bool typeAgain = false;
+            bool appearing = ImGui::IsWindowAppearing();
+            if (appearing || typeAgain) ImGui::SetKeyboardFocusHere(0);
+            typeAgain = false;
+            bool sent = false, escaped = false;
+            Controls::TextOptions options;
+            options.confirm = true;
+            options.maxBytes = 40;
+            options.backToGame = false;
+            options.fresh = appearing;
+            options.sent = &sent;
+            options.escaped = &escaped;
+            std::string name = folderName;
+            Controls::Text("Name", name, options);
+            bool close = escaped || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+            if (sent) {
+                using PageOrder::NameCheck;
+                PageOrder::List before = pageList;
+                NameCheck check = PageOrder::CheckName(pageList, renamedFolder, name);
+                if (PageOrder::Rename(pageList, renamedFolder, name)) {
+                    ChangedPageList(before, "Renamed " + before[renamedFolder].key + " to " + pageList[renamedFolder].key);
+                    close = true;
+                }
+                // Enter on the name it has closes it like Esc
+                else if (check == NameCheck::Same) close = true;
+                else {
+                    folderName = name;
+                    typeAgain = true;
+                    switch (check) {
+                    case NameCheck::Empty: renameProblem = "The name can't be empty"; break;
+                    case NameCheck::Taken: renameProblem = "A folder already has this name"; break;
+                    case NameCheck::HasHashes: renameProblem = "The name can't have ##"; break;
+                    case NameCheck::Fine: case NameCheck::Same: break;
+                    }
+                }
+            }
+            if (close) ImGui::CloseCurrentPopup();
+            if (!renameProblem.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, Controls::ColorVec(Controls::GetTheme().risky));
+                ImGui::TextWrapped("%s", renameProblem.c_str());
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndPopup();
+        }
+        else if (renaming) {
+            renaming = false;
+            Typing::focus.letGo();
+        }
+        ImGui::EndChild();
 
         ImGui::PopStyleVar();
         ImGui::EndChild();
@@ -970,22 +1468,11 @@ namespace Overlay {
             }
             ImGui::Dummy(ImVec2(0, font * 0.4f));
 
-            if (Controls::BeginSection("Map", true)) {
-                DrawMapStatus();
-                DrawItemsStatus();
+            DrawMapSection();
 
-                if (Controls::Toggle("Hide on map close", &Settings::hideOnMapClose)) {
-                    Settings::Save();
-                }
-                Controls::EndSection();
-            }
+            DrawGameTrafficSection();
 
-            if (Controls::BeginSection("Game traffic")) {
-                DrawGameTraffic();
-                Controls::EndSection();
-            }
-
-            if (Controls::BeginSection("Appearance")) {
+            if (Controls::BeginSection("Appearance", false, false, appearanceSummary())) {
                 int look = indexOf(lookNames, Settings::look);
                 if (Controls::Choice("Theme", look, lookNames)) {
                     Settings::look = lookNames[look];
@@ -1010,7 +1497,7 @@ namespace Overlay {
                 Controls::EndSection();
             }
 
-            if (Controls::BeginSection("Keys")) {
+            if (Controls::BeginSection("Keys", false, false, { "Menu: " + KeyChoices::menuKeyName() })) {
                 KeyChoices::drawMenuKeyRow();
                 Controls::EndSection();
             }
@@ -1086,14 +1573,19 @@ namespace Overlay {
 
         case 1:
             Controls::PageTitle("Usage");
-
+            if (Controls::Toggle("Show CPU and RAM in the page list", &Settings::usageInList)) Settings::Save();
             Stats::Draw();
+
+            break;
+
+        case 2:
+            DrawAccounts();
 
             break;
 
         default:
             Extensions::drawExtensionMenus(
-                activeTab - 2
+                activeTab - OwnPages
             );
 
             break;
@@ -1126,6 +1618,7 @@ namespace Overlay {
             lookPicked = false;
             updateFont();
             ScreenPictures::nextTurn();
+            Accounts::Frame();
             Triggers::checkNow();
             LuaFunctions::UpdateAnswers();
             updateTrafficNote();

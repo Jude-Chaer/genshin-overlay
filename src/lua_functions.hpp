@@ -10,6 +10,7 @@
 #include "controls.hpp"
 #include "screens.hpp"
 #include "packets/game_traffic.hpp"
+#include "accounts.hpp"
 
 namespace ItemCatalog { class Catalog; }
 namespace ItemFiles { struct Status; }
@@ -44,17 +45,15 @@ namespace LuaFunctions {
     // removes the extension's intervals, see Extensions::unload
     void forgetIntervals(Extensions::Extension* owner);
 
-    void ImGUI_Text(const std::string& str);
+    void ImGUI_Text(const std::string& str, sol::optional<sol::table> table);
     void ImGUI_Button(const std::string& label, sol::protected_function callback, sol::optional<sol::table> options);
     // ImGUI_Image(texture or web link, width, height, { onClick = function })
-    // Sizes are pixels at 1080p. A web link needs Network Access and is
-    // downloaded once a session, a grey box shows until it's there. True
-    // when it was clicked.
+    // Sizes are pixels at 1080p. image is a texture, a handle from GetWebImage
+    // or a web link; a link needs Network Access and goes through WebImages,
+    // a grey box shows until it's there. True when it was clicked.
     bool ImGUI_Image(sol::object image, float width, float height, sol::optional<sol::table> options);
     // a web image's download size at most
     inline const size_t ImageMaxBody = 4 * 1024 * 1024;
-    // downloads of one extension's web images at a time
-    inline const int ImageMaxWaiting = 8;
     bool ImGUI_Checkbox(const std::string& label, bool currentValue);
     // a muted line with a spinner, for something under way
     void ImGUI_Waiting(const std::string& text);
@@ -69,7 +68,11 @@ namespace LuaFunctions {
     sol::object ImGUI_Tabs(sol::table names, sol::this_state state);
     bool ImGUI_Header(const std::string& label, sol::optional<sol::table> options);
     void ImGUI_EndHeader();
-    std::string ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options);
+    sol::object ImGUI_SideList(const std::string& id, sol::table items, sol::optional<sol::table> options, sol::this_state state);
+    void ImGUI_EndSideList();
+    sol::variadic_results ImGUI_RightClick(const std::string& id, sol::table items, sol::this_state state);
+    sol::variadic_results ImGUI_InputText(const std::string& label, const std::string& currentText, sol::optional<sol::table> options,
+        sol::this_state state);
     void ImGUI_SameLine();
     void ImGUI_Tooltip(const std::string& text);
     // Notice(text, { kind = "error" | "tip" | "done", id }): a short message
@@ -91,6 +94,9 @@ namespace LuaFunctions {
     std::string RegisterKeybind(int glfwKey, sol::protected_function callbackFunction, sol::optional<int> modifiers,
         sol::optional<std::string> label);
     bool DeleteKeybind(const std::string& uuid);
+    std::string WhyNotMenuLabel(const std::string& label);
+    std::string AddMenuItem(const std::string& label, sol::protected_function callbackFunction);
+    bool RemoveMenuItem(const std::string& id);
     void DefineExtensionSetting(const std::string& id, const std::string& label, const std::string& type, sol::object defaultValue,
         sol::object minOrOptions, sol::optional<float> max);
     sol::object GetExtensionSetting(const std::string& id, sol::this_state state);
@@ -117,7 +123,46 @@ namespace LuaFunctions {
     sol::table GetGameTraffic(sol::this_state state);
     // what GetGameTraffic and the GameTraffic trigger give
     sol::table gameTrafficTable(bool on, const GameTraffic::Status& status, sol::state_view lua);
-    void DrawImage(GLuint textureID, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
+    // GetAccount("hoyolab_map" or "appsample"): { site, state, problem, account }.
+    // state is logged_out, window_open, logged_in, needs_login or captcha,
+    // problem what went wrong last for the player, "" when nothing did.
+    // account (HoYoLAB's id, appsample's email) and name (HoYoLAB's nickname)
+    // only with the site's account permission. Nil for a site it doesn't know.
+    sol::object GetAccount(const std::string& site, sol::this_state state);
+    // what GetAccount and the Account trigger give
+    sol::table accountTable(Accounts::Site site, const Accounts::Status& status, sol::state_view lua);
+    // Opens the site's login window, from its menu only, with the site's
+    // account permission. It closes on its own once logged in.
+    void LogIn(const std::string& site);
+    void LogOut(const std::string& site);
+    // Marks_Start(sites, "fetch" or "change", add, remove, onDone) gives an id,
+    // nil when refused (logged). sites is "hoyolab_map", "appsample" or a list
+    // of them, each needing its account permission; add and remove are lists
+    // of HoYoLAB point ids, for "change"; for "fetch", add's ids that can't
+    // be marked on the site come back in skipped. "restore" takes one site and a
+    // backup's name from Marks_Backups instead of add, and only adds back
+    // what that backup had. The jobs run one after another on
+    // the overlay's own thread. The answer has a table per site name: { ok,
+    // error, marks, added, removed, kept, skipped, backup }, see Marks::SiteResult.
+    // onDone gets it once; without onDone Marks_Result(id) gives nil while it
+    // runs, then the answer once. An answer nobody took goes after 5 minutes.
+    sol::object MarksStart(sol::object sites, const std::string& action, sol::object add, sol::object remove, sol::object onDone,
+        sol::this_state state);
+    sol::object MarksResult(int id, sol::this_state state);
+    // Marks_Backups(site): the backups of the account logged in there, newest
+    // first, { { name, count, date = "2026-11-16 14:02" }, ... }; the site's
+    // account permission is needed, an empty list without it
+    sol::table MarksBackups(const std::string& site, sol::this_state state);
+    // gives the jobs that are done to their onDone, see UpdateAnswers
+    void UpdateMarks();
+    // drops the extension's jobs and answers, see Extensions::unload
+    void forgetMarks(Extensions::Extension* owner);
+    // the most point ids one Marks_Start takes, add and remove together
+    inline const size_t MarksMaxIds = 200000;
+    // image is a texture the extension may draw, or a handle from GetWebImage
+    void DrawImage(double image, float x0, float y0, float x1, float y1, sol::optional<float> alpha);
+    sol::variadic_results GetWebImage(const std::string& url, sol::this_state state);
+    sol::object GetPointGuide(double pointId, sol::this_state state);
     // DrawText(text, x, y, size, color, { wrap = width }), color is 0xRRGGBBAA
     void GDrawText(const std::string& text, float x, float y, sol::optional<float> size, sol::optional<uint32_t> color,
         sol::optional<sol::table> options); // The "G" is only there because DrawText is already used by the Windows API
@@ -175,8 +220,6 @@ namespace LuaFunctions {
     void UpdateNetRequests();
     // stops the extension's requests and drops their answers, see Extensions::unload
     void forgetNetRequests(Extensions::Extension* owner);
-    // its web images downloading, for the tests
-    int imageDownloadsOf(const Extensions::Extension* owner);
     // its requests waiting or not collected, for the tests
     int netRequestsOf(const Extensions::Extension* owner);
     sol::object JSONEncode(sol::object value, sol::this_state state);
@@ -228,6 +271,9 @@ namespace LuaFunctions {
     // it shows while the map or menu is open.
     sol::object PermissionState(const std::string& name, sol::this_state state);
     void AskForPermission(const std::string& name);
+    // OpenPermissions(name): its Permissions tab, from its menu only; with a
+    // permission's name the tab scrolls to its row and outlines it for a moment
+    void OpenPermissions(sol::optional<std::string> name);
 
     // The cursor in overlay pixels. Without Mouse anywhere only over the game
     // window, nil anywhere else.

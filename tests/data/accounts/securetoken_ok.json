@@ -1,0 +1,9 @@
+{
+  "access_token": "redacted-access_token",
+  "expires_in": "3600",
+  "id_token": "redacted-id_token",
+  "project_id": "redacted-project_id",
+  "refresh_token": "redacted-refresh_token",
+  "token_type": "Bearer",
+  "user_id": "redacted-user_id"
+}

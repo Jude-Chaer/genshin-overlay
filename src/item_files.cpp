@@ -47,7 +47,7 @@ namespace ItemFiles {
 		return from.is_object() && from.contains(key) ? ordered(from[key]) : ordered();
 	}
 
-	static ordered trimPoint(const json& point, const std::map<int64_t, int64_t>& pairs) {
+	static ordered trimPoint(const json& point, const Source& source) {
 		ordered out;
 		for (const char* key : { "id", "map_id", "x_pos", "y_pos", "area_id" }) out[key] = field(point, key);
 		const json* group = point.contains("point_group") ? &point["point_group"] : nullptr;
@@ -55,8 +55,12 @@ namespace ItemFiles {
 			out["point_group"] = { { "group_id", field(*group, "group_id") }, { "floor_id", field(*group, "floor_id") } };
 		}
 		else out["point_group"] = nullptr;
-		auto pair = pairs.find(point["id"].get<int64_t>());
-		if (pair != pairs.end()) out["appsample"] = pair->second;
+		auto pair = source.pairs.find(point["id"].get<int64_t>());
+		if (pair != source.pairs.end()) {
+			out["appsample"] = pair->second;
+			auto level = source.appsampleLevels.find(pair->second);
+			if (level != source.appsampleLevels.end()) out["appsample_level"] = level->second;
+		}
 		return out;
 	}
 
@@ -108,7 +112,7 @@ namespace ItemFiles {
 			std::string list;
 			for (const json& point : points) {
 				if (!hasId(point) || !pointsSeen.insert(point["id"].get<int64_t>()).second) continue;
-				list += (list.empty() ? "[\n" : ",\n") + dump(trimPoint(point, source.pairs));
+				list += (list.empty() ? "[\n" : ",\n") + dump(trimPoint(point, source));
 			}
 			list = list.empty() ? "[]" : list + "\n]";
 			if (!Files::writeFile(folder / "positions" / (std::to_string(type) + ".json"), list)) return false;
@@ -889,6 +893,9 @@ namespace ItemFiles {
 		}
 		Appsample::Result result = Appsample::pair(ours, theirs);
 		source.pairs = std::move(result.pairs);
+		for (const Appsample::Point& point : theirs) {
+			if (point.level > 0) source.appsampleLevels[point.id] = point.level;
+		}
 		for (const auto& [map, stats] : result.maps) {
 			std::cout << "[items] map " << map << ": ";
 			if (!stats.skipped.empty()) {

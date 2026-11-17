@@ -19,6 +19,7 @@
     },
     "sol2",
     "soil2",
+    "webview2",
     "zlib"
   ],
   "overrides": [

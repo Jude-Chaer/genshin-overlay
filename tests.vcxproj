@@ -59,7 +59,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;crypt32.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;crypt32.lib;advapi32.lib;psapi.lib;user32.lib;shell32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildProjectDirectory)\tools\official_extensions.ps1" "$(MSBuildProjectDirectory)\extensions" "$(IntDir)official_extensions.inc"</Command>
@@ -139,9 +139,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\appsample.cpp" />
+    <ClCompile Include="src\accounts.cpp" />
+    <ClCompile Include="src\accounts_window.cpp" />
+    <ClCompile Include="src\marks.cpp" />
+    <ClCompile Include="src\menu_summary.cpp" />
+    <ClCompile Include="src\page_order.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\asks.cpp" />
     <ClCompile Include="src\controls.cpp" />
+    <ClCompile Include="src\credentials.cpp" />
     <ClCompile Include="src\notices.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
@@ -168,6 +174,7 @@
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\npcap_download.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\point_guides.cpp" />
     <ClCompile Include="src\packets\frames.cpp" />
     <ClCompile Include="src\game_traffic_text.cpp" />
     <ClCompile Include="src\packets\game_traffic.cpp" />
@@ -183,8 +190,11 @@
     <ClCompile Include="src\stats.cpp" />
     <ClCompile Include="src\triggers.cpp" />
     <ClCompile Include="src\typing.cpp" />
+    <ClCompile Include="src\web_images.cpp" />
     <ClCompile Include="tests\asks_tests.cpp" />
+    <ClCompile Include="tests\accounts_tests.cpp" />
     <ClCompile Include="tests\controls_tests.cpp" />
+    <ClCompile Include="tests\credentials_tests.cpp" />
     <ClCompile Include="tests\notices_tests.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
@@ -196,7 +206,14 @@
     <ClCompile Include="tests\item_files_tests.cpp" />
     <ClCompile Include="tests\item_patch_tests.cpp" />
     <ClCompile Include="tests\item_lua_tests.cpp" />
+    <ClCompile Include="tests\marks_tests.cpp" />
+    <ClCompile Include="tests\markers_sets_tests.cpp" />
+    <ClCompile Include="tests\markers_sync_tests.cpp" />
+    <ClCompile Include="tests\menu_summary_tests.cpp" />
+    <ClCompile Include="tests\page_order_tests.cpp" />
     <ClCompile Include="tests\net_tests.cpp" />
+    <ClCompile Include="tests\point_guides_tests.cpp" />
+    <ClCompile Include="tests\web_images_tests.cpp" />
     <ClCompile Include="tests\key_choices_tests.cpp" />
     <ClCompile Include="tests\keybindings_tests.cpp" />
     <ClCompile Include="tests\layer_choice_tests.cpp" />
@@ -220,9 +237,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\appsample.hpp" />
+    <ClInclude Include="src\accounts.hpp" />
+    <ClInclude Include="src\marks.hpp" />
+    <ClInclude Include="src\menu_summary.hpp" />
+    <ClInclude Include="src\page_order.hpp" />
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\asks.hpp" />
     <ClInclude Include="src\controls.hpp" />
+    <ClInclude Include="src\credentials.hpp" />
     <ClInclude Include="src\notices.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\game_ui.hpp" />
@@ -235,6 +257,7 @@
     <ClInclude Include="src\item_patch.hpp" />
     <ClInclude Include="src\key_choices.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
+    <ClInclude Include="src\language.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
     <ClInclude Include="src\locator\lit_floor.hpp" />
     <ClInclude Include="src\locator\map_locator.hpp" />
@@ -251,6 +274,7 @@
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\point_guides.hpp" />
     <ClInclude Include="src\packets\frames.hpp" />
     <ClInclude Include="src\game_traffic_text.hpp" />
     <ClInclude Include="src\npcap_download.hpp" />
@@ -267,6 +291,7 @@
     <ClInclude Include="src\stats.hpp" />
     <ClInclude Include="src\triggers.hpp" />
     <ClInclude Include="src\typing.hpp" />
+    <ClInclude Include="src\web_images.hpp" />
     <ClInclude Include="tests\test_extension.hpp" />
     <ClInclude Include="tests\test_map.hpp" />
     <ClInclude Include="tests\map_screen.hpp" />

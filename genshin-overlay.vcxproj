@@ -60,7 +60,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;psapi.lib;user32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;gdi32.lib;dwmapi.lib;d3d11.lib;windowsapp.lib;winhttp.lib;bcrypt.lib;advapi32.lib;psapi.lib;user32.lib;shell32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\extensions" "$(OutDir)extensions" &gt;nul
@@ -146,9 +146,15 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\appsample.cpp" />
+    <ClCompile Include="src\accounts.cpp" />
+    <ClCompile Include="src\accounts_window.cpp" />
+    <ClCompile Include="src\marks.cpp" />
+    <ClCompile Include="src\menu_summary.cpp" />
+    <ClCompile Include="src\page_order.cpp" />
     <ClCompile Include="src\capture.cpp" />
     <ClCompile Include="src\asks.cpp" />
     <ClCompile Include="src\controls.cpp" />
+    <ClCompile Include="src\credentials.cpp" />
     <ClCompile Include="src\notices.cpp" />
     <ClCompile Include="src\extensions.cpp" />
     <ClCompile Include="src\files.cpp" />
@@ -176,6 +182,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\npcap_download.cpp" />
     <ClCompile Include="src\overlay.cpp" />
+    <ClCompile Include="src\point_guides.cpp" />
     <ClCompile Include="src\packets\frames.cpp" />
     <ClCompile Include="src\game_traffic_text.cpp" />
     <ClCompile Include="src\packets\game_traffic.cpp" />
@@ -191,12 +198,18 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClCompile Include="src\stats.cpp" />
     <ClCompile Include="src\triggers.cpp" />
     <ClCompile Include="src\typing.cpp" />
+    <ClCompile Include="src\web_images.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\appsample.hpp" />
+    <ClInclude Include="src\accounts.hpp" />
+    <ClInclude Include="src\marks.hpp" />
+    <ClInclude Include="src\menu_summary.hpp" />
+    <ClInclude Include="src\page_order.hpp" />
     <ClInclude Include="src\capture.hpp" />
     <ClInclude Include="src\asks.hpp" />
     <ClInclude Include="src\controls.hpp" />
+    <ClInclude Include="src\credentials.hpp" />
     <ClInclude Include="src\notices.hpp" />
     <ClInclude Include="src\extensions.hpp" />
     <ClInclude Include="src\game_ui.hpp" />
@@ -209,6 +222,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClInclude Include="src\item_patch.hpp" />
     <ClInclude Include="src\key_choices.hpp" />
     <ClInclude Include="src\keybindings.hpp" />
+    <ClInclude Include="src\language.hpp" />
     <ClInclude Include="src\layer_choice.hpp" />
     <ClInclude Include="src\locator\lit_floor.hpp" />
     <ClInclude Include="src\locator\map_locator.hpp" />
@@ -225,6 +239,7 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClInclude Include="src\net.hpp" />
     <ClInclude Include="src\net_stop.hpp" />
     <ClInclude Include="src\overlay.hpp" />
+    <ClInclude Include="src\point_guides.hpp" />
     <ClInclude Include="src\packets\frames.hpp" />
     <ClInclude Include="src\game_traffic_text.hpp" />
     <ClInclude Include="src\npcap_download.hpp" />
@@ -241,10 +256,22 @@ xcopy /E /I /Y /Q "$(MSBuildProjectDirectory)\packets" "$(OutDir)packets" &gt;nu
     <ClInclude Include="src\stats.hpp" />
     <ClInclude Include="src\triggers.hpp" />
     <ClInclude Include="src\typing.hpp" />
+    <ClInclude Include="src\web_images.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extensions\example\main.lua" />
     <None Include="extensions\map\main.lua" />
+    <None Include="extensions\markers\bar.lua" />
+    <None Include="extensions\markers\catalog.lua" />
+    <None Include="extensions\markers\collected.lua" />
+    <None Include="extensions\markers\collectedpage.lua" />
+    <None Include="extensions\markers\guide.lua" />
+    <None Include="extensions\markers\main.lua" />
+    <None Include="extensions\markers\map.lua" />
+    <None Include="extensions\markers\menu.lua" />
+    <None Include="extensions\markers\minimap.lua" />
+    <None Include="extensions\markers\selection.lua" />
+    <None Include="extensions\markers\sync.lua" />
     <None Include="extensions\minimap\main.lua" />
     <None Include="tools\publish_map_index.bat" />
     <None Include="vcpkg.json" />

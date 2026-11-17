@@ -11,6 +11,7 @@
 #include "settings.hpp"
 #include "triggers.hpp"
 #include "key_choices.hpp"
+#include "marks.hpp"
 #include "typing.hpp"
 #include "controls.hpp"
 #include <imgui.h>
@@ -159,7 +160,8 @@ namespace Extensions {
 				skipSecond(ext->cost);
 				ext->cost.started = true;
 			}
-			else if (endSecond(ext->cost, turns)) {
+			// no notice for the overlay's own extensions
+			else if (endSecond(ext->cost, turns) && !ext->official) {
 				std::cerr << "[" << ext->name << "] slow: more than " << SlowMsPerFrame << " ms per frame for "
 					<< SlowSeconds << " s" << std::endl;
 				tellSlow(*ext);
@@ -201,6 +203,10 @@ namespace Extensions {
 				if (ext->callDepth == 0 && ext->headerCard) {
 					ext->headerCard = false;
 					Controls::EndSection();
+				}
+				if (ext->callDepth == 0 && ext->sideList) {
+					ext->sideList = false;
+					ImGui::EndChild();
 				}
 			}
 			// a clip left open would cut everything drawn after it
@@ -549,16 +555,17 @@ namespace Extensions {
 			if (!held.bound.empty()) Keybindings::DeleteKeybind(held.bound);
 		}
 		ext.keys.clear();
+		ext.menuItems.clear();
 		LuaFunctions::forgetIntervals(&ext);
 		Triggers::forget(&ext);
 		LuaFunctions::forgetNetRequests(&ext);
+		LuaFunctions::forgetMarks(&ext);
 		LuaFunctions::forgetFileDialogs(&ext);
 		LuaFunctions::forgetSockets(&ext);
 		if (!ext.textures.empty()) {
 			glDeleteTextures((GLsizei)ext.textures.size(), ext.textures.data());
 			ext.textures.clear();
 		}
-		ext.webImages.clear();
 		ext.dots.clear();
 
 		ext.initializeFunction = nullptr;
@@ -697,6 +704,35 @@ namespace Extensions {
 	}
 
 	// one section per extension: icon, info, settings, then its own Menu()
+	static const char* ExtensionTabs = "##extensionTabs";
+
+	static double secondsNow() {
+		return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	}
+
+	void openPermissionsTab(Extension& ext, const std::string& permission) {
+		for (size_t i = 0; i < registeredExtensions.size(); i++) {
+			if (registeredExtensions[i].get() != &ext) continue;
+			Overlay::ShowExtension((int)i);
+			Controls::OpenTab(ExtensionTabs, "Permissions");
+			ext.pointedAt = permission;
+			ext.pointedAsked = secondsNow();
+			ext.pointedSince = -1;
+		}
+	}
+
+	// how long a row openPermissionsTab points at stays lit, fading out, and
+	// how soon it has to be drawn (the menu closed first, or no such row)
+	static const double PointedFor = 1.5;
+	static const double PointedWait = 1.0;
+
+	static void drawSettings(Extension& ext) {
+		for (const auto& id : ext.settingsOrder) {
+			auto it = ext.settings.find(id);
+			if (it != ext.settings.end() && drawSetting(it->second)) saveSettings();
+		}
+	}
+
 	void drawExtensionMenus(int extensionIndex) {
 		if (extensionIndex < 0 ||
 			extensionIndex >= static_cast<int>(registeredExtensions.size())) {
@@ -735,11 +771,14 @@ namespace Extensions {
 		ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.3f));
 
 		std::vector<std::string> tabs = { "General" };
+		// its settings get their own tab when it has a page of its own
+		bool settingsTab = ext->menuFunction && !ext->settingsOrder.empty();
+		if (settingsTab) tabs.push_back("Settings");
 		if (!::Notices::Of(ext->folderKey).empty()) tabs.push_back("Notices");
 		if (!ext->keys.empty()) tabs.push_back("Keys");
 		tabs.push_back("Permissions");
 		tabs.push_back("About");
-		const std::string& tab = tabs[Controls::Tabs("##extensionTabs", tabs)];
+		const std::string& tab = tabs[Controls::Tabs(ExtensionTabs, tabs)];
 		{
 			if (tab == "General") {
 				if (!ext->stopReason.empty() || !ext->startError.empty()) {
@@ -752,19 +791,14 @@ namespace Extensions {
 				else if (ext->stopped) {
 					ImGui::TextDisabled("Switched off.");
 				}
-				for (const auto& id : ext->settingsOrder) {
-					auto it = ext->settings.find(id);
-
-					if (it != ext->settings.end() && drawSetting(it->second)) {
-						saveSettings();
-					}
-				}
+				if (!settingsTab) drawSettings(*ext);
 
 				{
 					InPhase menu(Phase::Menu);
 					runForExtension(ext.get(), ext->menuFunction);
 				}
 			}
+			else if (tab == "Settings") drawSettings(*ext);
 			else if (tab == "Notices") ::Notices::DrawList(ext->folderKey);
 			else if (tab == "Keys") KeyChoices::drawKeysTab(*ext);
 			else if (tab == "Permissions") drawPermissionsTab(*ext);
@@ -1400,7 +1434,27 @@ namespace Extensions {
 		ImGui::Text("Folder: %s", ext.folderKey.c_str());
 	}
 
+	// the row just drawn, scrolled to on its first frame and outlined in the
+	// accent, fading out over PointedFor
+	static void drawPointed(Extension& ext) {
+		double now = secondsNow();
+		if (ext.pointedSince < 0) {
+			ext.pointedSince = now;
+			ImGui::SetScrollHereY(0.3f);
+		}
+		double gone = (now - ext.pointedSince) / PointedFor;
+		if (gone >= 1) {
+			ext.pointedAt.clear();
+			return;
+		}
+		Controls::Theme theme = Controls::GetTheme();
+		unsigned int lit = Controls::Faded(theme.accent, (float)(1 - gone));
+		ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), Controls::Color(lit),
+			theme.rounding, 0, std::max(2.0f, theme.font / 8));
+	}
+
 	void drawPermissionsTab(Extension& ext) {
+		if (!ext.pointedAt.empty() && ext.pointedSince < 0 && secondsNow() - ext.pointedAsked > PointedWait) ext.pointedAt.clear();
 		// its files weren't read, so what's saved for it wasn't either
 		if (ext.extensionHash.empty()) {
 			ImGui::TextDisabled("Its files can't be read.");
@@ -1410,7 +1464,7 @@ namespace Extensions {
 		if (Controls::Toggle("Run this extension", &on)) setRunning(ext, on);
 		if (!ext.stopped && ext.stopReason.empty() && ext.cost.perFrame >= 0) {
 			if (ext.cost.perFrame < 0.05) ImGui::Text("Time it takes: less than 0.1 ms per frame");
-			else if (ext.cost.perFrame > SlowMsPerFrame) ImGui::Text("Time it takes: about %.1f ms per frame, it's slowing the overlay down", ext.cost.perFrame);
+			else if (ext.cost.perFrame > SlowMsPerFrame && !ext.official) ImGui::Text("Time it takes: about %.1f ms per frame, it's slowing the overlay down", ext.cost.perFrame);
 			else ImGui::Text("Time it takes: about %.1f ms per frame", ext.cost.perFrame);
 		}
 		ImGui::Separator();
@@ -1430,14 +1484,19 @@ namespace Extensions {
 			}
 			if (permission.type == ExtensionPermissionTypes::Keybinds && !ext.allowedKeys.empty())
 				row.lines.push_back({ "Keys: " + Helpers::joined(ext.allowedKeys), false });
-			row.lines.push_back({ reasonLine(ext, permission) });
+			row.lines.push_back({ reasonLine(ext, permission), !permission.playerOnly, permission.playerOnly });
+			if (permission.playerOnly) row.allowLabel = "Allow";
 			if (!has && ext.refused.count(permission.type)) row.lines.push_back({ "Refused at this start." });
 			std::string used = lastUsedLine(ext, permission.type, (long long)std::time(nullptr));
 			if (!used.empty()) row.lines.push_back({ used });
+			bool pointed = ext.pointedAt == permission.name;
+			ImGui::BeginGroup();
 			if (Controls::Toggle((std::string(permission.label) + "##" + permission.name).c_str(), &has, row)) {
 				switchPermission(ext, permission.type, has);
 				changedOnTab(ext);
 			}
+			ImGui::EndGroup();
+			if (pointed) drawPointed(ext);
 		}
 
 		std::vector<std::string> never(ext.neverAsk.begin(), ext.neverAsk.end());
@@ -1548,7 +1607,8 @@ namespace Extensions {
 	}
 
 	bool mayAsk(const Extension& ext, ExtensionPermissionTypes permission) {
-		return findPermission(permission) && permissionState(ext, permission) == "not_asked";
+		const PermissionInfo* info = findPermission(permission);
+		return info && !info->playerOnly && permissionState(ext, permission) == "not_asked";
 	}
 
 	void allow(Extension& ext, ExtensionPermissionTypes permission) {
@@ -1593,6 +1653,10 @@ namespace Extensions {
 		else {
 			ext.extensionPermissions.erase(permission);
 			ext.switchedOff.insert(info->name);
+			if (permission == ExtensionPermissionTypes::HoyolabMapAccount)
+				Marks::Cancel(&ext, Accounts::Site::HoyolabMap);
+			else if (permission == ExtensionPermissionTypes::AppsampleAccount)
+				Marks::Cancel(&ext, Accounts::Site::Appsample);
 		}
 		if (permission != ExtensionPermissionTypes::Keybinds) return;
 		if (on) {
@@ -1608,6 +1672,23 @@ namespace Extensions {
 				held.bound.clear();
 			}
 		}
+	}
+
+	void switchOffEverywhere(ExtensionPermissionTypes permission) {
+		const PermissionInfo* info = findPermission(permission);
+		if (!info) return;
+		for (auto& ext : registeredExtensions) {
+			// waiting for "Allow the same": it doesn't come back with it
+			auto before = std::find(ext->grantsBeforeChange.begin(), ext->grantsBeforeChange.end(), info->name);
+			if (before != ext->grantsBeforeChange.end()) {
+				ext->grantsBeforeChange.erase(before);
+				ext->switchedOff.insert(info->name);
+			}
+			if (!ext->extensionPermissions.count(permission)) continue;
+			switchPermission(*ext, permission, false);
+			saveExtensionPermissions(*ext);
+		}
+		Settings::SwitchOffEverywhere(info->name);
 	}
 
 	void letAsk(Extension& ext, const std::string& name) {

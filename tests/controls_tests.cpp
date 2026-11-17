@@ -690,6 +690,69 @@ TEST_CASE("a risky button asks Sure? in its place and counts only on Yes") {
     CHECK(pressed == 1);
 }
 
+TEST_CASE("an Allow row asks Sure? in the switch's place and turns on only at Yes and is a switch after") {
+    Frames frames;
+    bool on = false;
+    Controls::ToggleOptions options;
+    options.allowLabel = "Allow";
+    options.lines.push_back({ "It can use your HoYoLAB Map account.", false, true });
+    int changed = 0;
+    auto draw = [&] { changed += Controls::Toggle("HoYoLAB Map account", &on, options); };
+    // Allow, then No, the question's last item
+    clickLast(draw);
+    clickLast(draw);
+    CHECK(changed == 0);
+    CHECK_FALSE(on);
+
+    // Allow again, then Yes, the item before No
+    clickLast(draw);
+    ImVec2 yes;
+    frame(700, [&] {
+        draw();
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        yes = ImVec2(ImGui::GetItemRectMin().x - g.Style.ItemSpacing.x - 4, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) / 2);
+    });
+    ImGui::GetIO().AddMousePosEvent(yes.x, yes.y);
+    frame(700, draw);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frame(700, draw);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frame(700, draw);
+    CHECK(changed == 1);
+    CHECK(on);
+
+    // on, it's the switch: a click turns it off
+    clickLast(draw);
+    CHECK(changed == 2);
+    CHECK_FALSE(on);
+}
+
+TEST_CASE("an Allow button ends where the switches end and asking moves nothing") {
+    Frames frames;
+    bool plain = false, account = false;
+    Controls::ToggleOptions options;
+    options.allowLabel = "Allow";
+    float switchEnd = 0, allowEnd = 0, allowTop = 0, askingEnd = 0, askingTop = 0;
+    auto draw = [&](float& end, float& top) {
+        Controls::Toggle("Chests", &plain);
+        switchEnd = ImGui::GetItemRectMax().x;
+        top = ImGui::GetCursorScreenPos().y;
+        Controls::Toggle("HoYoLAB Map account", &account, options);
+        end = ImGui::GetItemRectMax().x;
+        top = ImGui::GetCursorScreenPos().y - top;
+    };
+    frame(700, [&] { draw(allowEnd, allowTop); });
+    CHECK(allowEnd == Catch::Approx(switchEnd).margin(1));
+    // pressed, it asks in the same place and the row keeps its height
+    clickLast([&] { Controls::Toggle("HoYoLAB Map account", &account, options); });
+    frame(700, [&] { draw(askingEnd, askingTop); });
+    CHECK(askingEnd == Catch::Approx(switchEnd).margin(1));
+    CHECK(askingTop == Catch::Approx(allowTop).margin(1));
+    CHECK_FALSE(account);
+    // No, so the next test starts with no question open
+    clickLast([&] { Controls::Toggle("HoYoLAB Map account", &account, options); });
+}
+
 TEST_CASE("a busy button can't be pressed") {
     Frames frames;
     Controls::ButtonOptions busy;
@@ -821,6 +884,98 @@ TEST_CASE("a section shows its part only once a click on its header opens it") {
     // the header is the last item while closed
     clickLast(section);
     CHECK(drawn > 0);
+}
+
+TEST_CASE("in every look a summary goes under a header's or page's name and wraps, never cut") {
+    const std::string longer = "HoYoLAB Map logged in as Traveller of Teyvat, account 123456789, used by Markers and two more extensions";
+    for (Controls::Look look : { Controls::Look::Windows, Controls::Look::Material, Controls::Look::Game, Controls::Look::Apple }) {
+        Controls::SetLook(look, true);
+        Frames frames;
+        auto height = [&](auto draw) {
+            float h = 0;
+            frame(300, [&] { draw(); h = ImGui::GetItemRectSize().y; });
+            return h;
+        };
+        auto head = [&](const std::string& text) {
+            return height([&] { bool open = false; Controls::Header("Accounts", open, false, { text }); });
+        };
+        auto page = [&](const std::string& text) {
+            return height([&] { Controls::PageButton("Accounts", false, 0, false, 0, { text }); });
+        };
+        INFO(Controls::LookName(look));
+        CHECK(head("Logged in") > head(""));
+        CHECK(head(longer) > head("Logged in"));
+        CHECK(page(longer) > page("Logged in"));
+        CHECK(page("Logged in") >= page(""));
+    }
+    Controls::SetLook(Controls::Look::Windows, true);
+}
+
+TEST_CASE("in every look a page's name fits on one line at PageButtonWidth, not narrower") {
+    for (Controls::Look look : { Controls::Look::Windows, Controls::Look::Material, Controls::Look::Game, Controls::Look::Apple }) {
+        Controls::SetLook(look, true);
+        Frames frames;
+        float need = 0;
+        frame(300, [&] { need = Controls::PageButtonWidth("Accounts"); });
+        float sides = ImGui::GetStyle().WindowPadding.x * 2;
+        // two summary lines at both widths, so a second name line always makes it taller
+        auto height = [&](float width) {
+            float h = 0;
+            frame(std::ceil(width + sides), [&] { Controls::PageButton("Accounts", false, 0, false, 0, { "Accounts Accounts" }); h = ImGui::GetItemRectSize().y; });
+            return h;
+        };
+        INFO(Controls::LookName(look));
+        CHECK(height(need) == height(need + 20));
+        CHECK(height(need - 4) > height(need));
+
+        // summary words wider than the name: whole at the width, broken narrower
+        Controls::Summary word = { "appsample-appsample appsample-appsample" };
+        frame(300, [&] { need = Controls::PageButtonWidth("Home", word); });
+        auto withWord = [&](float width) {
+            float h = 0;
+            frame(std::ceil(width + sides), [&] { Controls::PageButton("Home", false, 0, false, 0, word); h = ImGui::GetItemRectSize().y; });
+            return h;
+        };
+        CHECK(withWord(need) == withWord(need + 20));
+        CHECK(withWord(need - 4) > withWord(need));
+    }
+    Controls::SetLook(Controls::Look::Windows, true);
+}
+
+TEST_CASE("every page icon draws inside its square, from Apple's 14 px to 4K") {
+    Frames frames;
+    for (Controls::PageIcon icon : { Controls::PageIcon::Home, Controls::PageIcon::Usage, Controls::PageIcon::Accounts,
+             Controls::PageIcon::Map, Controls::PageIcon::Minimap }) {
+        for (float size : { 14.0f, 16.0f, 24.0f, 48.0f }) {
+            INFO("icon " << (int)icon << " at " << size << " px");
+            frame(300, [&] {
+                ImDrawList* draw = ImGui::GetWindowDrawList();
+                ImVec2 at = ImGui::GetCursorScreenPos();
+                int before = draw->VtxBuffer.Size;
+                Controls::DrawPageIcon(draw, icon, at, size, IM_COL32_WHITE);
+                CHECK(draw->VtxBuffer.Size > before);
+                ImVec2 low(FLT_MAX, FLT_MAX), high(-FLT_MAX, -FLT_MAX);
+                for (int i = before; i < draw->VtxBuffer.Size; ++i) {
+                    ImVec2 pos = draw->VtxBuffer[i].pos;
+                    low = ImVec2(std::min(low.x, pos.x), std::min(low.y, pos.y));
+                    high = ImVec2(std::max(high.x, pos.x), std::max(high.y, pos.y));
+                }
+                CHECK(low.x >= at.x);
+                CHECK(low.y >= at.y);
+                CHECK(high.x <= at.x + size);
+                CHECK(high.y <= at.y + size);
+            });
+        }
+    }
+}
+
+TEST_CASE("a header with a summary still opens and closes on a click") {
+    Frames frames;
+    bool open = false;
+    bool changed = false;
+    clickLast([&] { changed |= Controls::Header("Game traffic", open, false, { "Off" }).changed; });
+    CHECK(changed);
+    CHECK(open);
 }
 
 TEST_CASE("a tab added before the open one keeps it open") {

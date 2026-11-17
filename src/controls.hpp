@@ -126,18 +126,31 @@ namespace Controls {
     struct ToggleLine {
         std::string text;
         bool grey = true;
+        // in the look's red, for what it lets an extension do with an account
+        bool risky = false;
     };
 
     struct ToggleOptions {
         bool checkbox = false;
+        // a filter chip: the name in a framed box that fills with the accent
+        // and a tick while on; chips in a row wrap by themselves
+        bool chip = false;
+        // with chip: muted text after the name, e.g. "3/120"; with checkbox:
+        // muted before the box, and the whole row takes the click
+        std::string note;
         // an attention dot on the switch's corner
         bool dotted = false;
         // a smaller switch after the name, a row of them wraps by itself
         bool compact = false;
-        // drawn before the name, 0 for none
+        // drawn before the name, 0 for none; a checkbox with one is a row of a
+        // list to pick from, the whole row taking the click
         ImTextureID icon = 0;
         // under the name, wrapped beside the switch (not with compact)
         std::vector<ToggleLine> lines;
+        // While off, a red button with this label in the switch's place: it
+        // asks "Sure?" like a risky Button and turns it on at Yes. Once on,
+        // it's the switch. Not with compact or checkbox.
+        std::string allowLabel;
     };
 
     // On/off: the name, then a small track with a round knob, filled while
@@ -148,6 +161,9 @@ namespace Controls {
     struct TextOptions {
         // an attention dot in the box's corner
         bool dotted = false;
+        // a search bar: the whole row, a magnifier and the hint inside, no
+        // name shown and no card, an x while there's text
+        bool search = false;
         // grey in the empty box
         std::string hint;
         // shows Reset, greyed out while the text is this
@@ -160,6 +176,17 @@ namespace Controls {
         bool taken = false;
         bool backToGame = true;
         size_t maxBytes = 4096;
+        // with confirm: drops text typed and not sent, e.g. as its popup opens
+        bool fresh = false;
+        // with confirm: set when Enter or the tick sends the box, changed or not
+        bool* sent = nullptr;
+        // set when Esc ends the typing
+        bool* escaped = nullptr;
+        // with search: a segmented row at the bar's end, the same height
+        // (under it when the page is too narrow for both); tab is the open
+        // piece's index, set when another is picked
+        std::vector<std::string> tabs;
+        int* tab = nullptr;
     };
 
     // A text box, the label, Reset. True when value changed. With confirm,
@@ -182,6 +209,10 @@ namespace Controls {
 
     // True when pressed, for Risky once Yes is pressed.
     bool Button(const char* label, const ButtonOptions& options = {});
+    enum class ButtonIcon { Undo, Redo };
+    // A square button showing only the icon, no frame of its own, a soft fill
+    // under the mouse. label shows as its tooltip.
+    bool IconButton(const char* label, ButtonIcon icon, bool enabled = true);
     // how big Button draws the label, for lining it up before it's drawn
     ImVec2 ButtonSize(const char* label);
 
@@ -208,33 +239,81 @@ namespace Controls {
     // name, 0 when there are none. dotted: the tabs with an attention dot, by
     // index; each tab keeps room for one.
     int Tabs(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted = {});
+    // the tab row id opens on the tab with this name the next time it's
+    // drawn, if it has one
+    void OpenTab(const char* id, const std::string& name);
     // The same choice as a segmented button, for views inside a page (an
     // extension's ImGUI_Tabs), so they're told apart from the page's own tabs:
     // one framed row, the open piece filled (Material You: its tonal colour,
     // the others the accent). Pieces that don't fit go on a row under it.
     int Segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted = {});
 
+    // A short line under a header's or a page's name that says its state,
+    // open or closed, e.g. "Logged in as Traveller". It wraps, it's never cut.
+    struct Summary {
+        enum class Kind { Plain, Strong, Warning, On };
+        std::string text;
+        // Plain: muted (faint under Apple's section heads). Strong: the text's
+        // colour, for a problem to act on.
+        // Warning: the warning colour. On: the accent, for "3 on" so what's
+        // picked stands out.
+        Kind kind = Kind::Plain;
+    };
+
     // A header that opens and closes the part under it: a card row with the
     // name and a chevron at its end. open is its state, true while it's open;
     // the result says when the player changed it.
-    Result Header(const char* label, bool& open, bool dotted = false);
+    Result Header(const char* label, bool& open, bool dotted = false, const Summary& summary = {});
     // A header like Header with the part under it in a card that meets it.
     // While open it gives true, then EndSection goes after the part.
-    bool BeginSection(const char* label, bool defaultOpen = false, bool dotted = false);
+    bool BeginSection(const char* label, bool defaultOpen = false, bool dotted = false, const Summary& summary = {});
     // BeginSection with the open state kept by the caller. While open,
     // EndSection goes after the part.
-    Result BeginHeader(const char* label, bool& open, bool dotted = false);
+    Result BeginHeader(const char* label, bool& open, bool dotted = false, const Summary& summary = {});
     void EndSection();
     // A page's name at its top, larger than its text.
     void PageTitle(const char* text);
+    // A part's name inside a page, between the page's name and its text.
+    void PartTitle(const char* text);
     // the look's bold font for page names, none: the text's own
     void SetTitleFont(ImFont* font);
-    // A page in the menu's list: its icon (none: the name's first letter in a
-    // tile), the name on up to two lines; the picked one filled, with a short
-    // accent bar at its start (Material You: a filled pill, no bar; Apple:
-    // filled blue, the icon on a coloured tile). tile: Apple's tile colour,
-    // none: one of Apple's colours by the name. True when clicked.
-    bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0);
+    // a white disc badges tint for their round parts, none: drawn circles
+    void SetDiscTexture(ImTextureID disc);
+    // The overlay's own icons for its pages and its official extensions, drawn
+    // as lines in one colour.
+    enum class PageIcon { None, Home, Usage, Accounts, Map, Minimap, Markers, Sets, Collected };
+    // One of them in a size by size square at at.
+    void DrawPageIcon(ImDrawList* draw, PageIcon icon, ImVec2 at, float size, ImU32 color);
+    // A page in the menu's list: its icon (an extension's picture, else glyph,
+    // else the name's first letter in a tile), the name on up to two lines;
+    // the picked one filled, with a short accent bar at its start (Material
+    // You: a filled pill, no bar; Apple: filled blue, the icon on a coloured
+    // tile). tile: Apple's tile colour, none: one of Apple's colours by the
+    // name. The summary goes under the name. True when clicked.
+    // menu: a ⋯ on the row while it's under the mouse, see PageMenuAsked
+    // framed: the icon is a map item's picture, drawn on a tile
+    bool PageButton(const char* label, bool picked, ImTextureID icon = 0, bool dotted = false, unsigned int tile = 0,
+        const Summary& summary = {}, PageIcon glyph = PageIcon::None, bool menu = false, bool framed = false);
+    // The width a page button needs for its name on one line and no word of
+    // its summary broken, in the look's fonts.
+    float PageButtonWidth(const char* label, const Summary& summary = {}, bool menu = false);
+    // one of the first four pages a folder shows on its icon
+    struct PageMark {
+        std::string label;
+        ImTextureID icon = 0;
+        PageIcon glyph = PageIcon::None;
+        unsigned int tile = 0;
+    };
+    // A folder's row in the page list, drawn like a page: its first four
+    // pages' icons small, its name and an arrow pointing down while it's
+    // open, and a ⋯ like a page's. True when clicked. picked: the open page
+    // is in it while it's closed.
+    bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted = false, bool picked = false);
+    // the page or folder row drawn last had its ⋯ clicked, or was right-clicked
+    bool PageMenuAsked();
+    float FolderButtonWidth(const char* label);
+    // how far a folder's pages sit in from it
+    float PageIndent();
     // A small filled tag after the item drawn last, like Official.
     void Tag(const char* text);
 
@@ -265,7 +344,7 @@ namespace Controls {
     void Waiting(const char* text);
     // A muted line for a list or a page with nothing in it yet.
     void Empty(const char* text);
-    // The text, then a bar of how far it got, 0 to 1. Below 0 when that
+    // The text ("" for none), then a bar of how far it got, 0 to 1. Below 0 when that
     // isn't known: the spinner in front, the bar runs back and forth.
     void Progress(const char* text, float fraction);
 
@@ -274,6 +353,9 @@ namespace Controls {
         std::optional<unsigned int> ring;
         // drawn at the theme's faded opacity, its ring the done grey
         bool faded = false;
+        // 1: on a layer above, -1: on a layer below; the floor picker's
+        // layer picture on its lower corner, the upper or lower layer lit
+        int layer = 0;
     };
     // A round badge like the game's map icons: a soft shadow, a light ring,
     // a dark inside and the icon in the middle. radius in pixels. Badges and

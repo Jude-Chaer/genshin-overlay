@@ -1,0 +1,19 @@
+{
+  "name": "projects/genshin-impact/databases/(default)/documents/users/uid1",
+  "fields": {
+    "markerIds": {
+      "arrayValue": {
+        "values": [
+          {
+            "stringValue": "29202"
+          },
+          {
+            "stringValue": "28219"
+          }
+        ]
+      }
+    }
+  },
+  "createTime": "2026-07-05T16:47:01.372501Z",
+  "updateTime": "2026-07-05T16:47:59.023736Z"
+}

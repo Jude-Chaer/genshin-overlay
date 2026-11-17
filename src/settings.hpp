@@ -43,6 +43,8 @@ namespace Settings {
     extern bool downloadItems;
     // Game traffic, off until the player turns it on in the menu
     extern bool readGameTraffic;
+    // CPU and RAM on the Usage page's line in the page list
+    extern bool usageInList;
 
     // the key that opens and closes the menu, by its shown name (KeyChoices::startMenuKey)
     extern std::string menuKey;
@@ -51,7 +53,8 @@ namespace Settings {
     extern std::string look;
     extern std::string lightDark;
     // the overlay's size in percent of what Windows' scale gives, one of Sizes:
-    // the menu and everything else drawn with its font (map labels, extensions)
+    // the menu and everything else drawn with its font (map labels, extensions);
+    // 125 at first
     extern int size;
     extern const std::vector<int> Sizes;
 
@@ -78,6 +81,9 @@ namespace Settings {
     // which of an extension's headers are open, by label, under extensionHeaders
     extern std::map<std::string, bool> LoadHeaders(const std::string& folder);
     extern void SaveHeaders(const std::string& folder, const std::map<std::string, bool>& open);
+    // the player's order and folders of the extensions in the page list, under pageList
+    extern nlohmann::json LoadPageList();
+    extern void SavePageList(const nlohmann::json& list);
     // the tips an extension's player closed, by tip id, under closedTips
     extern std::set<std::string> LoadClosedTips(const std::string& folder);
     extern void SaveClosedTips(const std::string& folder, const std::set<std::string>& closed);
@@ -103,4 +109,10 @@ namespace Settings {
     // moved to the folder the first time that hash loads.
     extern Grants LoadGrants(const std::string& folder, const std::string& hash);
     extern void SaveGrants(const std::string& folder, const Grants& grants);
+    // the permission off in every folder's grants that has it
+    extern void SwitchOffEverywhere(const std::string& name);
+
+    // the sha256 of the account last logged in to a site, "" for none
+    extern std::string LoadAccountSeen(const std::string& site);
+    extern void SaveAccountSeen(const std::string& site, const std::string& hash);
 }

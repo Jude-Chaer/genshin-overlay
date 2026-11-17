@@ -20,8 +20,9 @@ static void defaults() {
     Settings::findSmallFirst = true;
     Settings::look = "Windows 11";
     Settings::lightDark = "Follow Windows";
-    Settings::size = 100;
+    Settings::size = 125;
     Settings::readGameTraffic = false;
+    Settings::usageInList = true;
 }
 
 TEST_CASE("settings come back after Save and Load") {
@@ -32,8 +33,9 @@ TEST_CASE("settings come back after Save and Load") {
     Settings::findSmallFirst = false;
     Settings::look = "Game";
     Settings::lightDark = "Light";
-    Settings::size = 125;
+    Settings::size = 150;
     Settings::readGameTraffic = true;
+    Settings::usageInList = false;
     Settings::Save();
 
     defaults();
@@ -43,8 +45,9 @@ TEST_CASE("settings come back after Save and Load") {
     CHECK(Settings::findSmallFirst == false);
     CHECK(Settings::look == "Game");
     CHECK(Settings::lightDark == "Light");
-    CHECK(Settings::size == 125);
+    CHECK(Settings::size == 150);
     CHECK(Settings::readGameTraffic == true);
+    CHECK(Settings::usageInList == false);
     // the ones that weren't changed
     CHECK(Settings::lineUpWithMap == true);
     CHECK(Settings::guessAhead == true);
@@ -56,21 +59,23 @@ TEST_CASE("a setting that isn't in the file gets its default") {
     defaults();
     Settings::guessAhead = false;
     Settings::readGameTraffic = true;
+    Settings::usageInList = false;
     Settings::Load();
     CHECK(Settings::ignoreSea == false);
     CHECK(Settings::guessAhead == true);
     // game traffic is off until the player turns it on
     CHECK(Settings::readGameTraffic == false);
+    CHECK(Settings::usageInList == true);
     defaults();
 }
 
-TEST_CASE("a saved size that isn't one of the choices is 100") {
+TEST_CASE("a saved size that isn't one of the choices is 125, the default") {
     for (const char* file : { R"({ "size": 300 })", R"({ "size": "big" })", R"({ "size": 112.5 })" }) {
         std::ofstream(Settings::file, std::ios::trunc) << file;
         defaults();
         Settings::size = 150;
         Settings::Load();
-        CHECK(Settings::size == 100);
+        CHECK(Settings::size == 125);
     }
     std::ofstream(Settings::file, std::ios::trunc) << R"({ "size": 80 })";
     Settings::Load();

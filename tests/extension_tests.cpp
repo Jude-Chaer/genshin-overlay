@@ -242,6 +242,98 @@ TEST_CASE("an extension can only delete its own keybinds") {
     CHECK(Keybindings::DoesKeybindExist(GLFW_KEY_F9, Keybindings::KeybindModifiers_Alt) == nullptr);
 }
 
+TEST_CASE("an extension adds up to three menu items with short labels") {
+    auto lua = Extensions::newLuaState(DATA / "extensions" / "registers_in_init");
+    Extensions::Extension ext;
+    ext.name = "menu";
+    ext.extensionPermissions = Extensions::defaultPermissions;
+    RunAs runAs(ext);
+    CaptureLog log;
+    sol::function add = (*lua)["AddMenuItem"];
+    sol::protected_function nothing = lua->script("return function() end");
+    auto added = [&](const std::string& label) { return !add(label, nothing).get<std::string>().empty(); };
+
+    CHECK(added("Sync now"));
+    // 24 characters, also when one takes more bytes
+    CHECK(added("Show every item on a map"));
+    CHECK(added(u8"Ännoying label of 24 chr"));
+    CHECK_FALSE(added("Fourth"));
+    // a call made every frame logs it once
+    CHECK_FALSE(added("Fourth"));
+    CHECK(log.count("[menu] AddMenuItem has 3 menu items, no more are added") == 1);
+    REQUIRE(ext.menuItems.size() == 3);
+    CHECK(ext.menuItems[0].label == "Sync now");
+
+    ext.menuItems.clear();
+    CHECK_FALSE(added("Show every item on a map!"));
+    CHECK(log.count("AddMenuItem the label has 25 characters, 24 at most") == 1);
+    CHECK_FALSE(added(""));
+    CHECK_FALSE(added("   "));
+    CHECK_FALSE(added("Two\nlines"));
+    CHECK_FALSE(added("Tab\there"));
+    CHECK_FALSE(added("Hidden##id"));
+    CHECK(add("No function", sol::lua_nil).get<std::string>().empty());
+    CHECK(log.count("AddMenuItem needs a function after the label") == 1);
+    CHECK(ext.menuItems.empty());
+}
+
+TEST_CASE("a menu item that fails leaves the others working") {
+    auto lua = Extensions::newLuaState(DATA / "extensions" / "registers_in_init");
+    Extensions::Extension ext;
+    ext.name = "menu";
+    ext.extensionPermissions = Extensions::defaultPermissions;
+    CaptureLog log;
+    {
+        RunAs runAs(ext);
+        lua->script(R"(
+            picked = 0
+            AddMenuItem("Breaks", function() error("on purpose") end)
+            AddMenuItem("Counts", function() picked = picked + 1 end)
+        )");
+    }
+    REQUIRE(ext.menuItems.size() == 2);
+    CHECK_FALSE(ext.menuItems[0].callback());
+    CHECK(log.count("[menu] menu item:") == 1);
+    CHECK(log.count("on purpose") == 1);
+    CHECK(ext.menuItems[1].callback());
+    CHECK(ext.menuItems[1].callback());
+    CHECK((*lua)["picked"].get<int>() == 2);
+    CHECK(ext.menuItems.size() == 2);
+}
+
+TEST_CASE("menu items can remove themselves and go with their extension") {
+    auto lua = Extensions::newLuaState(DATA / "extensions" / "registers_in_init");
+    Extensions::Extension first, second;
+    first.name = "first";
+    second.name = "second";
+    first.extensionPermissions = second.extensionPermissions = Extensions::defaultPermissions;
+    std::string id;
+    {
+        RunAs runAs(first);
+        lua->script(R"(
+            once = AddMenuItem("Once", function() RemoveMenuItem(once) end)
+            AddMenuItem("Stays", function() end)
+        )");
+        id = (*lua)["once"].get<std::string>();
+    }
+    REQUIRE(first.menuItems.size() == 2);
+    {
+        RunAs runAs(second);
+        sol::function remove = (*lua)["RemoveMenuItem"];
+        CHECK(remove(id).get<bool>() == false);
+    }
+    CHECK(first.menuItems.size() == 2);
+    // the overlay copies the function before it runs it, like here
+    auto callback = first.menuItems[0].callback;
+    CHECK(callback());
+    REQUIRE(first.menuItems.size() == 1);
+    CHECK(first.menuItems[0].label == "Stays");
+
+    // turned off, it has none
+    Extensions::unload(first);
+    CHECK(first.menuItems.empty());
+}
+
 TEST_CASE("an extension that fails while loading leaves only its error behind") {
     fs::remove(Settings::file);
     Keybindings::keybinds.clear();
@@ -1494,6 +1586,21 @@ TEST_CASE("a header past the saved ones still opens and stays open for the sessi
     TestExtension::unloadAll();
 }
 
+TEST_CASE("a header's summary goes under its name, one too long is left out") {
+    Extensions::Extension* ext = TestExtension::load("summed", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    auto below = [&](const std::string& options) {
+        frames.draw("ImGUI_Header('Sync', " + options + ") ImGUI_EndHeader() ImGUI_Text('after')");
+        return frames.last.y;
+    };
+    float plain = below("{}");
+    CHECK(below("{ summary = 'Synced 2 minutes ago' }") > plain);
+    CHECK(below("{ summary = string.rep('a', 121) }") == plain);
+    CHECK(below("{ summary = string.rep('é', 120) }") > plain);
+    TestExtension::unloadAll();
+}
+
 TEST_CASE("an open header's part is one card, ended by the next header, ImGUI_EndHeader or the end of the code") {
     Extensions::Extension* ext = TestExtension::load("carded", "function Init() end");
     REQUIRE(ext != nullptr);
@@ -1547,6 +1654,110 @@ TEST_CASE("a renamed tab keeps its row's open tab") {
     CHECK(ext->luaState->get<std::string>("open") == "Types (3)");
     frames.draw("open = ImGUI_Tabs({ 'Regions', 'Types (4)' })");
     CHECK(ext->luaState->get<std::string>("open") == "Types (4)");
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("a text box tells Enter and Esc as its second value on the frame typing ends") {
+    Extensions::Extension* ext = TestExtension::load("named", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    const std::string code = "text, key = ImGUI_InputText('Name', text or '') if key then ended = key end";
+    for (ImGuiKey end : { ImGuiKey_Enter, ImGuiKey_Escape }) {
+        TestExtension::run(ext, "ended = nil");
+        frames.clickLast(code);
+        REQUIRE(ImGui::GetActiveID() != 0);
+        ImGui::GetIO().AddInputCharactersUTF8("Ore run");
+        frames.draw(code);
+        CHECK(TestExtension::run(ext, "assert(ended == nil)"));
+        ImGui::GetIO().AddKeyEvent(end, true);
+        frames.draw(code);
+        ImGui::GetIO().AddKeyEvent(end, false);
+        frames.draw(code);
+        CHECK(ImGui::GetActiveID() == 0);
+        CHECK(TestExtension::run(ext, end == ImGuiKey_Enter ? "assert(ended == 'enter')" : "assert(ended == 'escape')"));
+        CHECK(TestExtension::run(ext, "assert(text:find('Ore run'))"));
+    }
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("what's drawn after a side list sits beside it, up to ImGUI_EndSideList or the end of the code") {
+    Extensions::Extension* ext = TestExtension::load("sided", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    const std::string list = "open = ImGUI_SideList('groups', { { name = 'Chests', summary = '2 on' }, { name = 'Ores' } }) ";
+    frames.draw(list + "ImGUI_Text('beside')");
+    CHECK(ext->luaState->get<int>("open") == 1);
+    float beside = frames.last.x;
+    CHECK_FALSE(ext->sideList);
+    frames.draw(list + "ImGUI_EndSideList() ImGUI_Text('under')");
+    CHECK(frames.last.x < beside);
+    CHECK_FALSE(ext->sideList);
+
+    // the second item opens, and stays open by its name
+    frames.draw("ImGUI_SideList('groups', { { name = 'Chests' }, { name = 'Ores' } })");
+    ImGuiWindow* listWindow = nullptr;
+    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
+        if (window->ParentWindow && std::string(window->Name).find("list") != std::string::npos) listWindow = window;
+    REQUIRE(listWindow != nullptr);
+    ImVec2 second(listWindow->Pos.x + listWindow->Size.x / 2, listWindow->Pos.y + listWindow->ContentSize.y * 0.75f);
+    ImGui::GetIO().AddMousePosEvent(second.x, second.y);
+    frames.draw(list);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frames.draw(list);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frames.draw(list);
+    frames.draw(list);
+    CHECK(ext->luaState->get<int>("open") == 2);
+    frames.draw("open = ImGUI_SideList('groups', { { name = 'New' }, { name = 'Chests' }, { name = 'Ores' } })");
+    CHECK(ext->luaState->get<int>("open") == 3);
+
+    // a long part beside the list scrolls by itself
+    frames.draw(list + "for i = 1, 200 do ImGUI_Text('row ' .. i) end");
+    frames.draw(list + "for i = 1, 200 do ImGUI_Text('row ' .. i) end");
+    ImGuiWindow* besideWindow = nullptr;
+    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
+        if (window->ParentWindow && std::string(window->Name).find("beside") != std::string::npos) besideWindow = window;
+    REQUIRE(besideWindow != nullptr);
+    CHECK(besideWindow->ScrollMax.y > 0);
+
+    // { open = 2 } is the one open until the player picks one, a kept pick wins
+    frames.draw("open = ImGUI_SideList('fresh', { { name = 'Sets' }, { name = 'Chests' } }, { open = 2 })");
+    CHECK(ext->luaState->get<int>("open") == 2);
+    frames.draw("open = ImGUI_SideList('groups', { { name = 'Chests' }, { name = 'Ores' } }, { open = 1 })");
+    CHECK(ext->luaState->get<int>("open") == 2);
+    TestExtension::unloadAll();
+}
+
+TEST_CASE("a right-click on an item opens its menu, and the picked name comes back") {
+    Extensions::Extension* ext = TestExtension::load("righted", "function Init() end");
+    REQUIRE(ext != nullptr);
+    MenuFrames frames(ext);
+    const std::string code = "ImGUI_Button('Chests', function() end) "
+        "picked, from = ImGUI_RightClick('chests', { { name = 'Rename' }, { name = 'Delete' } }) ";
+    frames.draw(code);
+    CHECK(ext->luaState->get<sol::object>("picked") == sol::lua_nil);
+    frames.draw("ImGUI_Button('Chests', function() end)");
+    ImVec2 middle = frames.last;
+    ImGui::GetIO().AddMousePosEvent(middle.x, middle.y);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(1, true);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(1, false);
+    frames.draw(code);
+    ImGuiWindow* menu = nullptr;
+    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
+        if (window->Active && (window->Flags & ImGuiWindowFlags_Popup)) menu = window;
+    REQUIRE(menu != nullptr);
+    // the second row, Delete
+    float row = ImGui::GetTextLineHeightWithSpacing();
+    ImVec2 second(menu->Pos.x + menu->Size.x / 2, menu->Pos.y + menu->WindowPadding.y + row * 1.5f);
+    ImGui::GetIO().AddMousePosEvent(second.x, second.y);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frames.draw(code);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frames.draw(code);
+    CHECK(ext->luaState->get<std::string>("picked") == "Delete");
     TestExtension::unloadAll();
 }
 

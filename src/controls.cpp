@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <unordered_map>
 #include <climits>
 #include <cctype>
 #include <cmath>
@@ -868,7 +869,192 @@ namespace Controls {
     static ImGuiID lastCompact = 0;
     static int lastCompactFrame = -1;
 
+    // the risky button asking "Sure?", one at a time
+    static ImGuiID asking = 0;
+    // a question not drawn last frame is dropped, e.g. the page changed
+    static int askedFrame = -1;
+
+    // a risky button's width, wider while it asks
+    static float riskyWidth(const char* label, bool askingNow) {
+        if (!askingNow) return ButtonSize(label).x;
+        float gap = ImGui::GetStyle().ItemSpacing.x;
+        std::string question = std::string(label, ImGui::FindRenderedTextEnd(label)) + "?";
+        return ImGui::CalcTextSize(question.c_str()).x + gap + ButtonSize("Yes").x + gap + ButtonSize("No").x;
+    }
+
+    // the last chip, so the next one in the same window goes on its row
+    static ImGuiID lastChip = 0;
+    static int lastChipFrame = -1;
+
+    static bool chip(const char* label, bool* value, const ToggleOptions& options) {
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        if (window->SkipItems) return false;
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        Theme theme = GetTheme();
+        float font = ImGui::GetFontSize();
+        const char* labelEnd = ImGui::FindRenderedTextEnd(label);
+        ImVec2 name = ImGui::CalcTextSize(label, labelEnd);
+        ImVec2 note = options.note.empty() ? ImVec2(0, 0) : ImGui::CalcTextSize(options.note.c_str());
+        float padX = font * 0.7f, gap = font * 0.45f;
+        float iconSide = options.icon ? font * 2.0f : 0;
+        float tick = *value ? font * 0.8f : 0;
+        float height = std::max(font * 2.2f, iconSide + font * 0.6f);
+        float width = padX + (tick ? tick + gap : 0) + (iconSide ? iconSide + gap : 0) + name.x + (note.x ? gap + note.x : 0) + padX;
+
+        ImGuiID id = window->GetID(label);
+        if (lastChipFrame == ImGui::GetFrameCount() && g.LastItemData.ID == lastChip) {
+            ImGui::SameLine(0, font * 0.5f);
+            if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+        }
+        ImVec2 pos = window->DC.CursorPos;
+        ImRect box(pos, ImVec2(pos.x + width, pos.y + height));
+        ImGui::ItemSize(box.GetSize());
+        // kept before ItemAdd: a chip scrolled out of view still shares its line with the next
+        lastChip = id;
+        lastChipFrame = ImGui::GetFrameCount();
+        if (!ImGui::ItemAdd(box, id)) return false;
+
+        bool hovered, held;
+        bool clicked = ImGui::ButtonBehavior(box, id, &hovered, &held);
+        if (clicked) {
+            *value = !*value;
+            ImGui::MarkItemEdited(id);
+        }
+        ImDrawList* draw = window->DrawList;
+        float rounding = theme.rounding;
+        if (*value) {
+            draw->AddRectFilled(box.Min, box.Max, Color(Faded(theme.accent, held ? 0.28f : hovered ? 0.22f : 0.16f)), rounding);
+            draw->AddRect(box.Min, box.Max, Color(theme.accent), rounding);
+        }
+        else {
+            if (hovered) draw->AddRectFilled(box.Min, box.Max, Color(Faded(theme.text, held ? 0.1f : 0.06f)), rounding);
+            draw->AddRect(box.Min, box.Max, Color(theme.buttonLine), rounding);
+        }
+        float x = box.Min.x + padX, middle = box.Min.y + height / 2;
+        if (tick) {
+            ImGui::RenderCheckMark(draw, ImVec2(x, middle - tick / 2), Color(theme.accent), tick);
+            x += tick + gap;
+        }
+        if (iconSide) {
+            draw->AddImage(options.icon, ImVec2(x, middle - iconSide / 2), ImVec2(x + iconSide, middle + iconSide / 2));
+            x += iconSide + gap;
+        }
+        draw->AddText(ImVec2(x, std::floor(middle - name.y / 2)), Color(theme.text), label, labelEnd);
+        if (note.x) draw->AddText(ImVec2(x + name.x + gap, std::floor(middle - note.y / 2)), Color(theme.muted), options.note.c_str());
+        if (options.dotted) CornerDot(box.Min, box.Max, rounding);
+        return clicked;
+    }
+
+    // A checkbox row with an icon or a note: the icon, the name, the note muted
+    // before the box at the row's end. The whole card takes the click, as a
+    // list of things to pick from does.
+    // A map item's picture on a tile, as the menu's letter tiles are drawn:
+    // the inside colour, the card's line, the look's corners. Game art has no
+    // ground of its own and floats without it.
+    static void itemTile(ImDrawList* draw, ImTextureID icon, ImVec2 at, float size) {
+        Theme theme = GetTheme();
+        ImVec2 to(at.x + size, at.y + size);
+        float rounding = std::min(ImGui::GetStyle().FrameRounding, size * 0.3f);
+        if (isMaterial()) rounding = std::min(8 * dp(), size * 0.3f);
+        draw->AddRectFilled(at, to, Color(theme.inside), rounding);
+        draw->AddRect(at, to, Color(theme.cardLine), rounding);
+        float in = std::floor(size * 0.12f);
+        draw->AddImage(icon, ImVec2(at.x + in, at.y + in), ImVec2(to.x - in, to.y - in));
+    }
+
+    static bool itemRow(const char* label, bool* value, const ToggleOptions& options) {
+        RowCard row;
+        beginRow(row);
+        ImGui::PushID(label);
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        Theme theme = GetTheme();
+        float font = ImGui::GetFontSize();
+        float side = ImGui::GetFrameHeight();
+        float gap = ImGui::GetStyle().ItemSpacing.x;
+        float iconSide = options.icon ? std::floor(font * 1.9f) : 0;
+        float height = std::max(side, iconSide);
+        ImVec2 at = ImGui::GetCursorScreenPos();
+        float width = rowAvail();
+
+        // the click over the card, padding and all; the row's own size after
+        ImVec2 cardMin(row.start.x, row.start.y), cardSize(row.width, height + row.pad.y * 2);
+        ImGui::SetCursorScreenPos(cardMin);
+        bool clicked = ImGui::InvisibleButton("##row", cardSize);
+        bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+        if (clicked) {
+            *value = !*value;
+            ImGui::MarkItemEdited(ImGui::GetItemID());
+        }
+        window->DC.CursorMaxPos.y = row.start.y + row.pad.y;
+        ImGui::SetCursorScreenPos(at);
+        ImGui::Dummy(ImVec2(width, height));
+
+        ImDrawList* draw = window->DrawList;
+        ImVec2 cardMax(cardMin.x + cardSize.x, cardMin.y + cardSize.y);
+        // on: the card tinted with the accent and edged with it, told apart at a glance
+        if (*value) {
+            draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.accent, 0.14f)), cardRounding(theme));
+            draw->AddRect(cardMin, cardMax, Color(Faded(theme.accent, 0.6f)), cardRounding(theme));
+        }
+        if (hovered) draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.text, held ? 0.08f : 0.04f)), cardRounding(theme));
+        float middle = at.y + height / 2;
+        float x = at.x;
+        if (iconSide) {
+            itemTile(draw, options.icon, ImVec2(x, std::floor(middle - iconSide / 2)), iconSide);
+            x += iconSide + gap;
+        }
+        float right = at.x + width;
+        float boxX = right - side;
+        float noteWidth = options.note.empty() ? 0 : ImGui::CalcTextSize(options.note.c_str()).x;
+        float noteX = boxX - gap * 2 - noteWidth;
+        {
+            NameType type;
+            bool cut = false;
+            std::vector<std::string> lines = FitLines(std::string(label, ImGui::FindRenderedTextEnd(label)), std::max(font, noteX - gap - x), 1, cut);
+            if (cut && hovered) Tooltip(std::string(label, ImGui::FindRenderedTextEnd(label)).c_str());
+            if (!lines.empty()) draw->AddText(ImVec2(x, std::floor(middle - ImGui::GetTextLineHeight() / 2)), Color(theme.text), lines[0].c_str());
+        }
+        if (noteWidth) draw->AddText(ImVec2(noteX, std::floor(middle - ImGui::GetTextLineHeight() / 2)), Color(theme.muted), options.note.c_str());
+
+        // the look's checkbox, drawn as its own Checkbox draws it
+        ImVec2 boxMin(boxX, std::floor(middle - side / 2)), boxMax(boxX + side, boxMin.y + side);
+        if (isMaterial()) {
+            const MaterialRoles& roles = materialRoles[theme.dark ? 1 : 0];
+            float d = dp(), half = 9 * d;
+            ImVec2 center((boxMin.x + boxMax.x) / 2, (boxMin.y + boxMax.y) / 2);
+            if (hovered) draw->AddCircleFilled(center, side / 2, Color(Faded(*value ? theme.accent : theme.text, held ? 0.1f : 0.08f)));
+            ImVec2 inMin(std::floor(center.x - half), std::floor(center.y - half)), inMax(inMin.x + half * 2, inMin.y + half * 2);
+            if (*value) {
+                draw->AddRectFilled(inMin, inMax, Color(theme.accent), 2 * d);
+                ImGui::RenderCheckMark(draw, ImVec2(inMin.x + 3 * d, inMin.y + 3 * d), Color(theme.onAccent), 12 * d);
+            }
+            else draw->AddRect(ImVec2(inMin.x + d, inMin.y + d), ImVec2(inMax.x - d, inMax.y - d), Color(roles.onSurfaceVariant), d, 2 * d);
+        }
+        else {
+            float boxRounding = ImGui::GetStyle().FrameRounding;
+            if (*value) {
+                // ticked: filled with the accent, the tick on it
+                draw->AddRectFilled(boxMin, boxMax, Color(theme.accent), boxRounding);
+                if (hovered) draw->AddRectFilled(boxMin, boxMax, Color(Faded(theme.onAccent, held ? 0.15f : 0.08f)), boxRounding);
+                float pad = std::max(1.0f, std::floor(side / 6));
+                ImGui::RenderCheckMark(draw, ImVec2(boxMin.x + pad, boxMin.y + pad), Color(theme.onAccent), side - pad * 2);
+            }
+            else {
+                ImGui::RenderFrame(boxMin, boxMax, ImGui::GetColorU32(held ? ImGuiCol_FrameBgActive : hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg),
+                    true, boxRounding);
+                // a look whose frames have no edge (Game) would lose the box on the card
+                if (ImGui::GetStyle().FrameBorderSize < 1) draw->AddRect(boxMin, boxMax, Color(theme.buttonLine), boxRounding);
+            }
+        }
+        if (options.dotted) CornerDot(boxMin, boxMax, ImGui::GetStyle().FrameRounding);
+        ImGui::PopID();
+        endRow(row);
+        return clicked;
+    }
+
     bool Toggle(const char* label, bool* value, const ToggleOptions& options) {
+        if (options.chip) return chip(label, value, options);
+        if (options.checkbox && (options.icon || !options.note.empty())) return itemRow(label, value, options);
         if (options.checkbox) {
             // the name first, the box at the row's end where a switch would be
             RowCard row;
@@ -935,6 +1121,12 @@ namespace Controls {
         // On or Off before the switch, in a slot as wide as the wider of them
         bool stateText = theme.switchText && !options.compact;
         float stateWidth = stateText ? std::max(ImGui::CalcTextSize("On").x, ImGui::CalcTextSize("Off").x) + font * 0.85f : 0;
+        // with allowLabel the row's end is as wide as the button's question,
+        // so asking moves nothing
+        bool allowRow = !options.allowLabel.empty() && !options.compact;
+        bool allowButton = allowRow && !*value;
+        float switchRoom = stateWidth + trackWidth;
+        if (allowRow) switchRoom = std::max(switchRoom, riskyWidth(options.allowLabel.c_str(), true));
         // a full switch's name in Material's 16
         ImFont* nameFont = ImGui::GetFont();
         float nameSize = isMaterial() && !options.compact ? 16 * dp() : font;
@@ -969,16 +1161,16 @@ namespace Controls {
         else {
             // the switch at the end of the list, so every name lines up and every switch does
             float avail = rowAvail();
-            wrap = std::max(font * 4, avail - stateWidth - trackWidth - gap - iconSide - iconGap);
+            wrap = std::max(font * 4, avail - switchRoom - gap - iconSide - iconGap);
             ImVec2 text = nameFont->CalcTextSizeA(nameSize, FLT_MAX, wrap, label, labelEnd);
             // Material's switch sits in a box's height, so its rows are as tall as the others
-            float band = isMaterial() ? std::max(trackHeight, ImGui::GetFrameHeight()) : trackHeight;
+            float band = isMaterial() || allowRow ? std::max(trackHeight, ImGui::GetFrameHeight()) : trackHeight;
             // the name's first line centred on the switch
             float textTop = std::floor(pos.y + std::max(0.0f, (band - nameSize) / 2));
             float bottom = textTop + text.y;
             for (const ToggleLine& line : options.lines)
                 bottom += std::floor(g.Style.ItemSpacing.y / 2) + ImGui::CalcTextSize(line.text.c_str(), nullptr, false, wrap).y;
-            float right = pos.x + std::max(avail, iconSide + iconGap + text.x + gap + stateWidth + trackWidth);
+            float right = pos.x + std::max(avail, iconSide + iconGap + text.x + gap + switchRoom);
             float trackTop = std::floor(pos.y + (band - trackHeight) / 2);
             track = ImRect(ImVec2(right - trackWidth, trackTop), ImVec2(right, trackTop + trackHeight));
             iconAt = ImVec2(pos.x, textTop + nameSize / 2 - iconSide / 2);
@@ -986,6 +1178,19 @@ namespace Controls {
             size = ImVec2(right - pos.x, std::max(band, bottom - pos.y));
         }
 
+        bool allowed = false;
+        if (allowButton) {
+            ImGui::PushOverrideID(id);
+            const char* allowLabel = options.allowLabel.c_str();
+            float width = riskyWidth(allowLabel, asking == ImGui::GetID(allowLabel));
+            float height = ImGui::GetFrameHeight();
+            ImGui::SetCursorScreenPos(ImVec2(track.Max.x - width, std::floor((track.Min.y + track.Max.y - height) / 2)));
+            ButtonOptions risky;
+            risky.look = ButtonOptions::Look::Risky;
+            allowed = Button(allowLabel, risky);
+            ImGui::PopID();
+            ImGui::SetCursorScreenPos(pos);
+        }
         ImGui::ItemSize(ImRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)), 0);
         ImDrawList* draw = window->DrawList;
         if (options.icon) draw->AddImage(options.icon, iconAt, ImVec2(iconAt.x + iconSide, iconAt.y + iconSide));
@@ -994,12 +1199,17 @@ namespace Controls {
             float y = textAt.y + nameFont->CalcTextSizeA(nameSize, FLT_MAX, wrap, label, labelEnd).y;
             for (const ToggleLine& line : options.lines) {
                 y += std::floor(g.Style.ItemSpacing.y / 2);
-                draw->AddText(nullptr, 0, ImVec2(textAt.x, y),
-                    ImGui::GetColorU32(line.grey ? ImGuiCol_TextDisabled : ImGuiCol_Text), line.text.c_str(), nullptr, wrap);
+                ImU32 color = line.risky ? Color(theme.risky) : ImGui::GetColorU32(line.grey ? ImGuiCol_TextDisabled : ImGuiCol_Text);
+                draw->AddText(nullptr, 0, ImVec2(textAt.x, y), color, line.text.c_str(), nullptr, wrap);
                 y += ImGui::CalcTextSize(line.text.c_str(), nullptr, false, wrap).y;
             }
         }
 
+        if (allowButton) {
+            if (allowed) *value = true;
+            endRow(row);
+            return allowed;
+        }
         if (!ImGui::ItemAdd(track, id)) {
             if (!options.compact) endRow(row);
             return false;
@@ -1092,7 +1302,7 @@ namespace Controls {
     static std::unordered_map<ImGuiID, std::string> unsent;
 
     // a square button the height of a box, with a drawn mark on it
-    enum class Mark { Clear, Tick };
+    enum class Mark { Clear, Tick, Undo, Redo };
     // An X or a tick inside a text box's end, no frame of its own, a soft
     // fill under the mouse. accent: the tick that sends, a filled accent
     // button so it reads as one to press.
@@ -1110,6 +1320,9 @@ namespace Controls {
         ImGui::EndDisabled();
         ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
         ImU32 ink = accent ? Color(theme.onAccent) : ImGui::GetColorU32(enabled ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        // a greyed arrow well apart from one that can be pressed
+        bool arrow = mark == Mark::Undo || mark == Mark::Redo;
+        if (arrow && !enabled) ink = Color(Faded(theme.text, 0.25f));
         float inset = side * 0.32f;
         ImDrawList* draw = ImGui::GetWindowDrawList();
         if (accent) {
@@ -1124,18 +1337,139 @@ namespace Controls {
             draw->AddLine(ImVec2(min.x + inset, min.y + inset), ImVec2(max.x - inset, max.y - inset), ink, thick);
             draw->AddLine(ImVec2(max.x - inset, min.y + inset), ImVec2(min.x + inset, max.y - inset), ink, thick);
         }
-        else {
+        else if (mark == Mark::Tick) {
             ImGui::RenderCheckMark(draw, ImVec2(min.x + inset * 0.8f, min.y + inset * 0.8f), ink, side - inset * 1.6f);
+        }
+        else {
+            // an arrow pointing back along the top, turning down round the
+            // far side, Redo mirrored
+            float thick = std::max(1.0f, side / 14);
+            bool redo = mark == Mark::Redo;
+            auto x = [&](float at) { return redo ? max.x - side * at : min.x + side * at; };
+            float top = min.y + side * 0.36f, radius = side * 0.17f, head = side * 0.11f;
+            draw->PathLineTo(ImVec2(x(0.32f), top + radius * 2));
+            draw->PathLineTo(ImVec2(x(0.55f), top + radius * 2));
+            if (redo) draw->PathArcTo(ImVec2(x(0.55f), top + radius), radius, IM_PI / 2, IM_PI * 1.5f);
+            else draw->PathArcTo(ImVec2(x(0.55f), top + radius), radius, IM_PI / 2, -IM_PI / 2);
+            draw->PathLineTo(ImVec2(x(0.27f), top));
+            draw->PathStroke(ink, 0, thick);
+            draw->AddLine(ImVec2(x(0.27f), top), ImVec2(x(0.27f) + (redo ? -head : head), top - head), ink, thick);
+            draw->AddLine(ImVec2(x(0.27f), top), ImVec2(x(0.27f) + (redo ? -head : head), top + head), ink, thick);
         }
         return pressed;
     }
 
+    bool IconButton(const char* label, ButtonIcon icon, bool enabled) {
+        ImGui::PushID(label);
+        bool pressed = markButton("##icon", icon == ButtonIcon::Undo ? Mark::Undo : Mark::Redo, false, enabled);
+        ImGui::PopID();
+        Tooltip(label);
+        return pressed;
+    }
+
+    float DotRoom();
+    static void keepTab(const std::vector<std::string>& names, int open);
+    static int segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted, bool pill);
+
+    // the width Segments gives these names on one row
+    static float segmentsWidth(const std::vector<std::string>& names) {
+        bool material = GetTheme().look == Look::Material;
+        LabelType type;
+        float font = ImGui::GetFontSize();
+        float pad = material ? 12 * dp() : font * 0.9f;
+        float tick = material ? 26 * dp() : 0;
+        float width = 0;
+        for (const std::string& name : names) width += ImGui::CalcTextSize(name.c_str()).x + pad * 2 + tick + DotRoom();
+        return width;
+    }
+
+    static bool searchBar(const char* label, std::string& value, const TextOptions& options) {
+        ImGui::PushID(label);
+        Theme theme = GetTheme();
+        float font = ImGui::GetFontSize();
+        float height = std::floor(font * 2.4f);
+        float rounding = height / 2;
+        float iconRoom = height * 0.95f;
+        float clearSide = height;
+        ImVec2 boxMin = ImGui::GetCursorScreenPos();
+        float avail = ImGui::GetContentRegionAvail().x;
+        float gap = ImGui::GetStyle().ItemSpacing.x * 2;
+        float tabsWidth = options.tabs.empty() ? 0 : std::ceil(segmentsWidth(options.tabs)) + 1;
+        bool tabsBeside = tabsWidth > 0 && avail - tabsWidth - gap >= font * 12;
+        float width = std::max(font * 8, tabsBeside ? avail - tabsWidth - gap : avail);
+        ImVec2 boxMax(boxMin.x + width, boxMin.y + height);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_FrameBg), rounding);
+
+        // the magnifier: a ring and its handle
+        float r = font * 0.42f;
+        ImVec2 c(boxMin.x + height * 0.5f, boxMin.y + height * 0.5f - font * 0.06f);
+        float thick = std::max(1.5f, font * 0.1f);
+        unsigned int iconColor = Color(theme.muted);
+        draw->AddCircle(c, r, iconColor, 0, thick);
+        float d = r * 0.7071f;
+        draw->AddLine(ImVec2(c.x + d, c.y + d), ImVec2(c.x + d + r * 0.75f, c.y + d + r * 0.75f), iconColor, thick);
+
+        float textHeight = ImGui::GetFrameHeight();
+        ImGui::SetCursorScreenPos(ImVec2(boxMin.x + iconRoom, boxMin.y + (height - textHeight) / 2));
+        ImGui::SetNextItemWidth(width - iconRoom - clearSide);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ColorVec(0));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ColorVec(0));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ColorVec(0));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
+        std::string shown = value;
+        bool typed = Typing::InputText("##text", shown, options.maxBytes, options.backToGame, 0,
+            options.hint.empty() ? nullptr : options.hint.c_str());
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+        bool typing = ImGui::IsItemActive();
+        bool hovered = ImGui::IsItemHovered();
+        bool changed = typed && shown != value;
+        if (changed) value = shown;
+        if (ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && options.escaped) *options.escaped = true;
+
+        if (!value.empty()) {
+            float side = ImGui::GetFrameHeight();
+            ImGui::SetCursorScreenPos(ImVec2(boxMax.x - (clearSide + side) / 2, boxMin.y + (height - side) / 2));
+            if (markButton("##clear", Mark::Clear, false)) {
+                value.clear();
+                changed = true;
+            }
+        }
+        if (hovered && !typing) draw->AddRectFilled(boxMin, boxMax, Color(Faded(theme.text, 0.04f)), rounding);
+        float focused = isMaterial() ? 2 * dp() : std::max(1.0f, font * 0.1f);
+        if (typing) draw->AddRect(boxMin, boxMax, Color(theme.accent), rounding, 0, focused);
+        else if (ImGui::GetStyle().FrameBorderSize > 0) draw->AddRect(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_Border), rounding);
+        if (options.dotted) CornerDot(boxMin, boxMax, rounding);
+        ImGui::SetCursorScreenPos(boxMin);
+        ImGui::Dummy(ImVec2(width, height));
+        if (!options.tabs.empty() && options.tab) {
+            // the row follows the caller's choice, its pieces as tall as the bar
+            int shown = std::clamp(*options.tab, 0, (int)options.tabs.size() - 1);
+            ImGui::PushID("##tabs");
+            keepTab(options.tabs, shown);
+            ImGui::PopID();
+            if (tabsBeside) {
+                ImGui::SameLine(0, gap);
+                ImGui::SetCursorScreenPos(ImVec2(boxMax.x + gap, boxMin.y));
+            }
+            float lineHeight = ImGui::GetFontSize();
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, std::max(0.0f, (height - lineHeight) / 2)));
+            *options.tab = segments("##tabs", options.tabs, {}, true);
+            ImGui::PopStyleVar();
+        }
+        ImGui::PopID();
+        return changed;
+    }
+
     bool Text(const char* label, std::string& value, const TextOptions& options) {
+        if (options.search) return searchBar(label, value, options);
         bool changed = false;
         ImGui::PushID(label);
         RowCard row;
         beginRow(row);
         ImGuiID id = ImGui::GetID("##text");
+        if (options.fresh) unsent.erase(id);
         float side = ImGui::GetFrameHeight();
         // the X and the tick sit inside the box's end, a little apart, the
         // tick always last so it doesn't move
@@ -1193,7 +1527,9 @@ namespace Controls {
             if (escape) unsent.erase(id);
         }
 
+        if (escape && options.escaped) *options.escaped = true;
         auto send = [&] {
+            if (options.sent) *options.sent = true;
             auto it = unsent.find(id);
             if (it == unsent.end()) return;
             changed = it->second != value;
@@ -1240,10 +1576,6 @@ namespace Controls {
         ImGui::PopID();
         return changed;
     }
-    // the risky button asking "Sure?", one at a time
-    static ImGuiID asking = 0;
-    // a question not drawn last frame is dropped, e.g. the page changed
-    static int askedFrame = -1;
 
     bool Button(const char* label, const ButtonOptions& options) {
         using Look = ButtonOptions::Look;
@@ -1495,10 +1827,22 @@ namespace Controls {
         return open;
     }
 
+    static std::unordered_map<std::string, std::string> tabsToOpen;
+
+    void OpenTab(const char* id, const std::string& name) {
+        tabsToOpen[id] = name;
+    }
+
     int Tabs(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted) {
         if (names.empty()) return 0;
         ImGui::PushID(id);
         int open = openTab(names);
+        auto asked = tabsToOpen.find(id);
+        if (asked != tabsToOpen.end()) {
+            auto named = std::find(names.begin(), names.end(), asked->second);
+            if (named != names.end()) open = (int)(named - names.begin());
+            tabsToOpen.erase(asked);
+        }
         if (isMaterial()) {
             open = materialTabs(names, dotted, open);
             keepTab(names, open);
@@ -1548,11 +1892,15 @@ namespace Controls {
     // Apple's segmented control: each row of pieces on a grey track, the
     // open piece raised on it, a thin line between the others
     static void appleSegments(ImDrawList* draw, const std::vector<std::string>& names, const std::vector<bool>& dotted,
-        const std::vector<ImRect>& boxes, const std::vector<bool>& hovers, int open, float pad, float height) {
+        const std::vector<ImRect>& boxes, const std::vector<bool>& hovers, int open, float pad, float height, bool pill) {
         Theme theme = GetTheme();
         float font = ImGui::GetFontSize();
         float inset = std::max(1.0f, std::floor(font * 2 / 14));
         float outer = font * 8 / 14, inner = font * 6 / 14;
+        if (pill) {
+            outer = height / 2;
+            inner = std::max(0.0f, height / 2 - inset);
+        }
         // the tracks, one per row
         for (int i = 0; i < (int)boxes.size();) {
             int end = i;
@@ -1577,7 +1925,8 @@ namespace Controls {
                 draw->AddLine(ImVec2(box.Min.x, min.y + h), ImVec2(box.Min.x, max.y - h), Color(Faded(theme.muted, 0.4f)));
             }
             ImVec2 size = ImGui::CalcTextSize(names[i].c_str());
-            draw->AddText(ImVec2(box.Min.x + pad, box.Min.y + (height - size.y) / 2), Color(theme.text), names[i].c_str());
+            // in the piece's middle; the dot room is at its corner, clear of the name
+            draw->AddText(ImVec2(std::floor((box.Min.x + box.Max.x - size.x) / 2), box.Min.y + (height - size.y) / 2), Color(theme.text), names[i].c_str());
             if (i < (int)dotted.size() && dotted[i]) {
                 float in = dotRadius() * 1.5f;
                 drawDot(ImVec2(box.Max.x - in, box.Min.y + in));
@@ -1585,7 +1934,8 @@ namespace Controls {
         }
     }
 
-    int Segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted) {
+    // pill: ends as round as a pill, to match the search bar it sits beside
+    static int segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted, bool pill) {
         if (names.empty()) return 0;
         ImGui::PushID(id);
         int open = openTab(names);
@@ -1598,7 +1948,7 @@ namespace Controls {
         float font = ImGui::GetFontSize();
         float pad = material ? 12 * dp() : font * 0.9f;
         float tick = material ? 26 * dp() : 0;
-        float rounding = material ? height / 2 : ImGui::GetStyle().FrameRounding;
+        float rounding = material || pill ? height / 2 : ImGui::GetStyle().FrameRounding;
         float rowStart = ImGui::GetCursorScreenPos().x;
         float rowEnd = rowStart + ImGui::GetContentRegionAvail().x;
         ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -1622,7 +1972,7 @@ namespace Controls {
             hovers.push_back(ImGui::IsItemHovered());
         }
         if (theme.look == Look::Apple) {
-            appleSegments(draw, names, dotted, boxes, hovers, open, pad, height);
+            appleSegments(draw, names, dotted, boxes, hovers, open, pad, height, pill);
             ImGui::ItemSize(ImVec2(0, theme.gap * 0.25f));
             keepTab(names, open);
             ImGui::PopID();
@@ -1643,11 +1993,12 @@ namespace Controls {
             draw->AddRect(box.Min, box.Max, Color(theme.buttonLine), rounding, 1.0f, corners);
             unsigned int text = shown ? (material ? theme.pickedText : theme.onAccent) : theme.text;
             ImVec2 size = ImGui::CalcTextSize(names[i].c_str());
-            float textX = box.Min.x + pad;
+            // in the piece's middle; the dot room is at its corner, clear of the name
+            float textX = std::floor((box.Min.x + box.Max.x - size.x) / 2);
             if (material) {
                 // the name, and the open one's tick before it, in the piece's middle
                 float content = size.x + (shown ? tick : 0);
-                float x = std::floor((box.Min.x + box.Max.x - DotRoom() - content) / 2);
+                float x = std::floor((box.Min.x + box.Max.x - content) / 2);
                 if (shown) {
                     float d = dp();
                     ImGui::RenderCheckMark(draw, ImVec2(x + 2 * d, box.Min.y + (height - 14 * d) / 2), Color(text), 14 * d);
@@ -1666,18 +2017,71 @@ namespace Controls {
         return open;
     }
 
+    int Segments(const char* id, const std::vector<std::string>& names, const std::vector<bool>& dotted) {
+        return segments(id, names, dotted, false);
+    }
+
     // the label up to "##"
     static std::string shownLabel(const char* label) {
         return std::string(label, ImGui::FindRenderedTextEnd(label));
     }
 
+    // A summary's lines at a width, in Windows' Caption (12) or Material's
+    // Body Medium (14) under a head and Body Small (12) under a page's name
+    struct SummaryLines {
+        std::vector<std::string> lines;
+        float lineHeight = 0;
+        float size = 0;
+        float height() const { return lineHeight * lines.size(); }
+    };
+
+    static float summarySize(bool head) {
+        return isMaterial() ? (head ? 14.0f : 12.0f) : ImGui::GetCurrentContext()->FontSizeBase * 12 / 14;
+    }
+
+    // summaries are in the regular font, also under a medium or bold name
+    static void pushSummaryFont(float size) {
+        ImGui::PushFont(ImGui::GetIO().FontDefault, size);
+    }
+
+    static SummaryLines summaryLines(const Summary& summary, float width, bool head) {
+        SummaryLines out;
+        if (summary.text.empty()) return out;
+        out.size = summarySize(head);
+        pushSummaryFont(out.size);
+        bool cut = false;
+        out.lines = FitLines(summary.text, std::max(width, ImGui::GetFontSize()), 64, cut);
+        out.lineHeight = ImGui::GetTextLineHeight();
+        ImGui::PopFont();
+        return out;
+    }
+
+    static unsigned int summaryInk(const Summary& summary, const Theme& theme, bool picked) {
+        // Apple's picked page is filled with the accent, the warning colour doesn't read on it
+        if (summary.kind == Summary::Kind::Warning && !(picked && theme.look == Look::Apple)) return theme.warning;
+        if (picked) return Faded(theme.pickedText, 0.8f);
+        if (summary.kind == Summary::Kind::Strong) return theme.text;
+        if (summary.kind == Summary::Kind::On) return theme.accent;
+        return theme.muted;
+    }
+
+    static void drawSummary(ImDrawList* draw, ImVec2 at, const SummaryLines& lines, unsigned int ink) {
+        if (lines.lines.empty()) return;
+        pushSummaryFont(lines.size);
+        for (const std::string& line : lines.lines) {
+            draw->AddText(at, Color(ink), line.c_str());
+            at.y += lines.lineHeight;
+        }
+        ImGui::PopFont();
+    }
+
     // A card row with the name and a chevron at its end, pointing down while
     // closed. joined: the part under it is a card that meets it. True when clicked.
-    static bool appleHead(const char* label, bool open, bool dotted);
-    static bool headerRow(const char* label, bool open, bool dotted, bool joined) {
+    static bool appleHead(const char* label, bool open, bool dotted, const Summary& summary);
+    static bool headerRow(const char* label, bool open, bool dotted, bool joined, const Summary& summary) {
         Theme theme = GetTheme();
-        if (theme.look == Look::Apple) return appleHead(label, open, dotted);
-        // Material's: 56 dp tall, 16 dp in, its name Title Medium (16 medium)
+        if (theme.look == Look::Apple) return appleHead(label, open, dotted, summary);
+        // Material's: 56 dp tall, 72 with a summary, 16 dp in, its name Title Medium (16 medium)
         bool material = theme.look == Look::Material;
         float rowHeight = material ? 56 * dp() : ImGui::GetFontSize() * 2.9f;
         if (material) pushType(16, true);
@@ -1690,7 +2094,11 @@ namespace Controls {
         bool cut = false;
         std::vector<std::string> lines = FitLines(shown, width - pad * 3 - chevron * 2 - DotRoom(), 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
-        float height = std::max(rowHeight, lineHeight * lines.size() + font * 1.2f);
+        SummaryLines below = summaryLines(summary, width - pad * 3 - chevron * 2 - DotRoom(), true);
+        // Material's two-line list item is 72 dp
+        if (material && !below.lines.empty()) rowHeight = 72 * dp();
+        float block = lineHeight * lines.size() + below.height();
+        float height = std::max(rowHeight, block + font * 1.2f);
         bool clicked = ImGui::InvisibleButton(label, ImVec2(width, height));
         bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         if (cut) Tooltip(shown.c_str());
@@ -1701,11 +2109,12 @@ namespace Controls {
         draw->AddRectFilled(min, max, Color(theme.inside), rounding, corners);
         if (hovered) draw->AddRectFilled(min, max, Color(Faded(theme.text, held ? 0.08f : 0.04f)), rounding, corners);
         cardOutline(draw, min, max, theme, rounding, corners);
-        float y = min.y + (height - lineHeight * lines.size()) / 2;
+        float y = min.y + (height - block) / 2;
         for (const std::string& line : lines) {
             draw->AddText(ImVec2(min.x + pad, y), Color(theme.text), line.c_str());
             y += lineHeight;
         }
+        drawSummary(draw, ImVec2(min.x + pad, y), below, summaryInk(summary, theme, false));
         ImVec2 center(max.x - pad - chevron, (min.y + max.y) / 2);
         float rise = open ? chevron * 0.5f : -chevron * 0.5f;
         ImVec2 points[3] = {
@@ -1719,8 +2128,9 @@ namespace Controls {
     }
 
     // Apple's section head: the name small, muted and in capitals over its
-    // group, no card, a small chevron after it to open and close it
-    static bool appleHead(const char* label, bool open, bool dotted) {
+    // group, no card, a small chevron after it to open and close it, the
+    // summary under it in the faint colour
+    static bool appleHead(const char* label, bool open, bool dotted, const Summary& summary) {
         Theme theme = GetTheme();
         float width = ImGui::GetContentRegionAvail().x;
         std::string shown = shownLabel(label);
@@ -1732,15 +2142,16 @@ namespace Controls {
         bool cut = false;
         std::vector<std::string> lines = FitLines(shown, width - pad * 2 - chevron * 3 - DotRoom(), 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
+        SummaryLines below = summaryLines(summary, width - pad * 2, true);
         // room above, so a head reads as the start of a new group
-        float height = lineHeight * lines.size() + font * 1.1f;
+        float height = lineHeight * lines.size() + below.height() + font * 1.1f;
         bool clicked = ImGui::InvisibleButton(label, ImVec2(width, height));
         bool hovered = ImGui::IsItemHovered();
         if (cut) Tooltip(shownLabel(label).c_str());
         ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
         ImDrawList* draw = ImGui::GetWindowDrawList();
         unsigned int ink = hovered ? theme.text : theme.muted;
-        float y = max.y - lineHeight * lines.size() - font * 0.3f;
+        float y = max.y - below.height() - lineHeight * lines.size() - font * 0.3f;
         float right = min.x + pad;
         for (const std::string& line : lines) {
             draw->AddText(ImVec2(min.x + pad, y), Color(ink), line.c_str());
@@ -1763,13 +2174,15 @@ namespace Controls {
         }
         draw->AddPolyline(points, 3, Color(ink), ImDrawFlags_None, std::max(1.0f, font * 0.1f));
         ImGui::PopFont();
+        unsigned int faint = summary.kind == Summary::Kind::Plain ? theme.faint : summaryInk(summary, theme, false);
+        drawSummary(draw, ImVec2(min.x + pad, y), below, faint);
         if (dotted) CornerDot(ImVec2(min.x + pad, y - lineHeight * lines.size()), ImVec2(center.x + chevron, y), 0);
         return clicked;
     }
 
-    Result Header(const char* label, bool& open, bool dotted) {
+    Result Header(const char* label, bool& open, bool dotted, const Summary& summary) {
         Result result;
-        if (headerRow(label, open, dotted, false)) {
+        if (headerRow(label, open, dotted, false, summary)) {
             open = !open;
             result.changed = result.done = true;
         }
@@ -1785,7 +2198,7 @@ namespace Controls {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(font * 1.1f, font * 0.8f));
         ImGui::BeginChild(ImHashStr("##part", 0, id), ImVec2(0, 0),
             ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-            ImGuiWindowFlags_NoScrollbar);
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleVar();
         openParts.push_back(ImGui::GetCurrentWindow());
         // the card behind the part, at its size of the last frame
@@ -1802,11 +2215,11 @@ namespace Controls {
         under->AddRect(min, max, Color(theme.cardLine), rounding, 1.0f, ImDrawFlags_RoundCornersBottom);
     }
 
-    bool BeginSection(const char* label, bool defaultOpen, bool dotted) {
+    bool BeginSection(const char* label, bool defaultOpen, bool dotted, const Summary& summary) {
         ImGuiStorage* storage = ImGui::GetStateStorage();
         ImGuiID id = ImGui::GetID(label);
         bool open = storage->GetBool(id, defaultOpen);
-        if (headerRow(label, open, dotted, true)) {
+        if (headerRow(label, open, dotted, true, summary)) {
             open = !open;
             storage->SetBool(id, open);
         }
@@ -1815,10 +2228,10 @@ namespace Controls {
         return true;
     }
 
-    Result BeginHeader(const char* label, bool& open, bool dotted) {
+    Result BeginHeader(const char* label, bool& open, bool dotted, const Summary& summary) {
         Result result;
         ImGuiID id = ImGui::GetID(label);
-        if (headerRow(label, open, dotted, true)) {
+        if (headerRow(label, open, dotted, true, summary)) {
             open = !open;
             result.changed = result.done = true;
         }
@@ -1843,6 +2256,14 @@ namespace Controls {
         ImGui::PopFont();
     }
 
+    void PartTitle(const char* text) {
+        // Material's Title Medium, 16 medium; the others the title font a step up
+        if (isMaterial()) pushType(16, true);
+        else ImGui::PushFont(titleFont, ImGui::GetCurrentContext()->FontSizeBase * 1.15f);
+        ImGui::TextWrapped("%s", text);
+        ImGui::PopFont();
+    }
+
     // the text's first character, a capital when it's a plain letter
     static std::string firstLetter(const char* text) {
         unsigned char lead = text[0];
@@ -1857,18 +2278,278 @@ namespace Controls {
     static const unsigned int appleTiles[] = { 0x0A84FFFF, 0x30D158FF, 0xFF9F0AFF, 0xBF5AF2FF, 0xFF375FFF, 0x64D2FFFF, 0x5E5CE6FF, 0xFF453AFF };
 
     // Apple's sidebar row: filled blue while picked, the icon on a coloured tile
-    static bool applePageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile) {
+    // a page button's room at each side, and where its name starts after the icon
+    static void pageRoom(float& pad, float& textX) {
+        float font = ImGui::GetFontSize();
+        switch (GetTheme().look) {
+        case Look::Apple:
+            pad = font * 0.5f;
+            textX = pad + std::floor(font * 22 / 14) + font * 0.6f;
+            return;
+        case Look::Material:
+            pad = 16 * dp();
+            textX = pad + 24 * dp() + 12 * dp();
+            return;
+        default:
+            pad = font * 0.75f;
+            textX = pad + font * 1.15f + font * 0.8f;
+        }
+    }
+
+    // Drawn on a 24 unit square with 2 unit lines and 3 units clear all round.
+    // ImGui ends thick lines flat, so open lines get round dots on their ends.
+    void DrawPageIcon(ImDrawList* draw, PageIcon icon, ImVec2 at, float size, ImU32 color) {
+        float u = size / 24;
+        float width = std::max(1.0f, 2 * u);
+        auto p = [&](float x, float y) { return ImVec2(at.x + x * u, at.y + y * u); };
+        auto cap = [&](float x, float y) { draw->AddCircleFilled(p(x, y), width / 2, color, 8); };
+        auto line = [&](float x0, float y0, float x1, float y1) {
+            draw->AddLine(p(x0, y0), p(x1, y1), color, width);
+            cap(x0, y0);
+            cap(x1, y1);
+        };
+        auto shape = [&](std::initializer_list<ImVec2> points) {
+            for (ImVec2 point : points) draw->PathLineTo(p(point.x, point.y));
+            draw->PathStroke(color, ImDrawFlags_Closed, width);
+        };
+        const float half = IM_PI / 2;
+        switch (icon) {
+        case PageIcon::Home:
+            // a house with a door, its bottom corners round
+            draw->PathLineTo(p(4, 10.4f));
+            draw->PathLineTo(p(12, 3.6f));
+            draw->PathLineTo(p(20, 10.4f));
+            draw->PathArcTo(p(19, 19), u, 0, half);
+            draw->PathLineTo(p(15, 20));
+            draw->PathArcTo(p(14, 14.8f), u, 0, -half);
+            draw->PathArcTo(p(10, 14.8f), u, -half, -IM_PI);
+            draw->PathLineTo(p(9, 20));
+            draw->PathArcTo(p(5, 19), u, half, IM_PI);
+            draw->PathStroke(color, ImDrawFlags_Closed, width);
+            break;
+        case PageIcon::Usage:
+            line(3.5f, 20, 20.5f, 20);
+            line(6, 20, 6, 14);
+            line(9.5f, 20, 9.5f, 11);
+            line(13, 20, 13, 4);
+            line(16.5f, 20, 16.5f, 14.5f);
+            line(20, 20, 20, 9);
+            break;
+        case PageIcon::Accounts:
+            // a head and open shoulders
+            draw->AddCircle(p(12, 7.8f), 4.4f * u, color, 0, width);
+            draw->PathEllipticalArcTo(p(12, 21), ImVec2(8.5f * u, 7 * u), 0, IM_PI, IM_PI * 2);
+            draw->PathStroke(color, 0, width);
+            cap(3.5f, 21);
+            cap(20.5f, 21);
+            break;
+        case PageIcon::Map:
+            // a map folded in three
+            shape({ { 3, 6.4f }, { 9, 4 }, { 15, 6.4f }, { 21, 4 }, { 21, 17.6f }, { 15, 20 }, { 9, 17.6f }, { 3, 20 } });
+            draw->AddLine(p(9, 4), p(9, 17.6f), color, width);
+            draw->AddLine(p(15, 6.4f), p(15, 20), color, width);
+            break;
+        case PageIcon::Minimap: {
+            // an arrow pointing down into two rings, the outer one open where the arrow goes through
+            float from = std::atan2(-0.911f, 0.4f), to = std::atan2(-0.911f, -0.4f) + IM_PI * 2;
+            draw->PathEllipticalArcTo(p(12, 16), ImVec2(9 * u, 4.5f * u), 0, from, to);
+            draw->PathStroke(color, 0, width);
+            cap(15.6f, 11.9f);
+            cap(8.4f, 11.9f);
+            draw->AddEllipse(p(12, 16), ImVec2(4.5f * u, 2.1f * u), color, 0, 0, width);
+            shape({ { 12, 16 }, { 7.8f, 6 }, { 12, 7.6f }, { 16.2f, 6 } });
+            break;
+        }
+        case PageIcon::Markers:
+            // a flag on a pole, its free edge cut in
+            line(5.5f, 3.5f, 5.5f, 21);
+            shape({ { 5.5f, 4 }, { 17.5f, 4 }, { 15, 8.5f }, { 17.5f, 13 }, { 5.5f, 13 } });
+            break;
+        case PageIcon::Sets:
+            // three cards stacked, the front one whole
+            shape({ { 4, 9 }, { 16, 9 }, { 16, 20 }, { 4, 20 } });
+            line(7, 6, 19, 6);
+            line(19, 6, 19, 16.5f);
+            line(10, 3, 22, 3);
+            line(22, 3, 22, 13.5f);
+            break;
+        case PageIcon::Collected:
+            // a tick in a ring
+            draw->AddCircle(p(12, 12), 8.5f * u, color, 0, width);
+            draw->PathLineTo(p(8, 12.3f));
+            draw->PathLineTo(p(10.8f, 15));
+            draw->PathLineTo(p(16, 9.3f));
+            draw->PathStroke(color, 0, width);
+            cap(8, 12.3f);
+            cap(16, 9.3f);
+            break;
+        case PageIcon::None:
+            break;
+        }
+    }
+
+    struct PageRow {
+        const char* label;
+        bool picked = false;
+        ImTextureID icon = 0;
+        bool dotted = false;
+        unsigned int tile = 0;
+        Summary summary;
+        PageIcon glyph = PageIcon::None;
+        // set for a folder's row
+        const std::vector<PageMark>* folder = nullptr;
+        bool open = false;
+        bool menu = false;
+        // the icon is a map item's picture: drawn on a tile
+        bool framed = false;
+    };
+
+    static float folderArrowRoom();
+    static bool pageMenuAsked = false;
+
+    static float pageMenuSize() {
+        return ImGui::GetFontSize() * 1.4f;
+    }
+
+    static float pageMenuRoom() {
+        return pageMenuSize() + ImGui::GetFontSize() * 0.2f;
+    }
+
+    // The ⋯ while the row is under the mouse, before a folder's arrow. A
+    // click on it asks for the menu instead of the row's click, so does a
+    // right-click anywhere on the row.
+    static bool pageMenuDots(ImDrawList* draw, const PageRow& row, ImVec2 max, float pad, float middle, bool hovered, bool clicked, ImU32 color) {
+        float font = ImGui::GetFontSize();
+        float size = pageMenuSize();
+        float right = max.x - pad + size * 0.25f - (row.folder ? folderArrowRoom() : 0);
+        ImVec2 boxMin(right - size, middle - size / 2), boxMax(right, middle + size / 2);
+        bool overDots = ImGui::IsMouseHoveringRect(boxMin, boxMax);
+        pageMenuAsked = (clicked && overDots) || ImGui::IsItemClicked(ImGuiMouseButton_Right);
+        if (hovered) {
+            ImVec2 center((boxMin.x + boxMax.x) / 2, middle);
+            if (overDots) draw->AddCircleFilled(center, size / 2, Color(Faded(GetTheme().text, 0.1f)));
+            float radius = std::max(1.0f, font * 0.09f), gap = font * 0.3f;
+            for (int i = -1; i <= 1; i++) draw->AddCircleFilled(ImVec2(center.x + gap * i, center.y), radius, color);
+        }
+        return clicked && !pageMenuAsked;
+    }
+
+    bool PageMenuAsked() {
+        bool asked = pageMenuAsked;
+        pageMenuAsked = false;
+        return asked;
+    }
+
+    static float folderArrowSize() {
+        return ImGui::GetFontSize() * 0.3f;
+    }
+
+    // the room the folder's arrow takes at the row's end
+    static float folderArrowRoom() {
+        return folderArrowSize() * 2 + ImGui::GetFontSize() * 0.5f;
+    }
+
+    // pointing right while closed, down while open
+    static void drawFolderArrow(ImDrawList* draw, ImVec2 center, bool open, ImU32 color) {
+        float size = folderArrowSize();
+        float half = size * 0.5f;
+        ImVec2 points[3];
+        if (open) {
+            points[0] = ImVec2(center.x - size, center.y - half);
+            points[1] = ImVec2(center.x, center.y + half);
+            points[2] = ImVec2(center.x + size, center.y - half);
+        }
+        else {
+            points[0] = ImVec2(center.x - half, center.y - size);
+            points[1] = ImVec2(center.x + half, center.y);
+            points[2] = ImVec2(center.x - half, center.y + size);
+        }
+        draw->AddPolyline(points, 3, color, ImDrawFlags_None, std::max(1.0f, ImGui::GetFontSize() * 0.09f));
+    }
+
+    static unsigned int appleTile(const char* label, unsigned int tile) {
+        return tile ? tile : appleTiles[ImHashStr(label) % (sizeof(appleTiles) / sizeof(appleTiles[0]))];
+    }
+
+    // a folder's icon: its first four pages' icons in two rows of two
+    static void drawPageMarks(ImDrawList* draw, ImVec2 at, float size, const std::vector<PageMark>& marks, ImU32 ink) {
+        Theme theme = GetTheme();
+        bool apple = theme.look == Look::Apple;
+        ImVec2 to(at.x + size, at.y + size);
+        if (apple) draw->AddRectFilled(at, to, Color(0x8E8E9359), size * 6 / 22);
+        else {
+            draw->AddRectFilled(at, to, Color(theme.inside), size * 0.2f);
+            draw->AddRect(at, to, Color(theme.cardLine), size * 0.2f);
+        }
+        float gap = std::max(1.0f, std::floor(size * 0.08f));
+        float cell = (size - gap * 3) / 2;
+        for (size_t i = 0; i < marks.size() && i < 4; i++) {
+            const PageMark& mark = marks[i];
+            ImVec2 min(at.x + gap + (i % 2) * (cell + gap), at.y + gap + (i / 2) * (cell + gap));
+            ImVec2 max(min.x + cell, min.y + cell);
+            float rounding = cell * 0.25f;
+            if (mark.icon) {
+                draw->AddImageRounded(mark.icon, min, max, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, rounding);
+                continue;
+            }
+            ImU32 color = ink;
+            if (apple) {
+                draw->AddRectFilled(min, max, Color(appleTile(mark.label.c_str(), mark.tile)), rounding);
+                color = IM_COL32_WHITE;
+            }
+            if (mark.glyph != PageIcon::None) {
+                float inner = apple ? cell * 0.8f : cell;
+                float in = (cell - inner) / 2;
+                DrawPageIcon(draw, mark.glyph, ImVec2(min.x + in, min.y + in), inner, color);
+                continue;
+            }
+            std::string letter = firstLetter(mark.label.c_str());
+            ImGui::PushFont(nullptr, std::max(1.0f, cell * 0.8f));
+            ImVec2 text = ImGui::CalcTextSize(letter.c_str());
+            draw->AddText(ImVec2(std::floor(min.x + (cell - text.x) / 2), std::floor(min.y + (cell - text.y) / 2)), color, letter.c_str());
+            ImGui::PopFont();
+        }
+    }
+
+    float PageButtonWidth(const char* label, const Summary& summary, bool menu) {
+        float pad, textX, text;
+        {
+            LabelType type;
+            pageRoom(pad, textX);
+            text = ImGui::CalcTextSize(label).x;
+        }
+        pushSummaryFont(summarySize(false));
+        size_t at = 0;
+        while (at < summary.text.size()) {
+            size_t end = summary.text.find(' ', at);
+            if (end == std::string::npos) end = summary.text.size();
+            text = std::max(text, ImGui::CalcTextSize(summary.text.c_str() + at, summary.text.c_str() + end).x);
+            at = end + 1;
+        }
+        ImGui::PopFont();
+        return text + textX + pad + DotRoom() + (menu ? pageMenuRoom() : 0);
+    }
+
+    static bool applePageButton(const PageRow& row) {
+        const char* label = row.label;
+        bool picked = row.picked, dotted = row.dotted;
+        ImTextureID icon = row.icon;
+        const Summary& summary = row.summary;
+        PageIcon glyph = row.glyph;
         Theme theme = GetTheme();
         float font = ImGui::GetFontSize();
         float width = ImGui::GetContentRegionAvail().x;
-        float pad = font * 0.5f;
+        float pad, textX;
+        pageRoom(pad, textX);
         float iconSize = std::floor(font * 22 / 14);
-        float textX = pad + iconSize + font * 0.6f;
+        float arrow = (row.folder ? folderArrowRoom() : 0) + (row.menu ? pageMenuRoom() : 0);
         bool cut = false;
-        std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom(), 2, cut);
+        std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom() - arrow, 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
+        SummaryLines below = summaryLines(summary, width - textX - pad - DotRoom() - arrow, false);
+        float block = lineHeight * lines.size() + below.height();
         // Apple's 32 px row at 14 px text
-        float height = std::max(font * 32 / 14, lineHeight * lines.size() + font * 0.6f);
+        float height = std::max(font * 32 / 14, block + font * 0.6f);
         bool clicked = ImGui::InvisibleButton("##page", ImVec2(width, height));
         bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         if (cut) Tooltip(label);
@@ -1880,21 +2561,32 @@ namespace Controls {
         float middle = (min.y + max.y) / 2;
         ImVec2 at(min.x + pad, std::floor(middle - iconSize / 2)), to(at.x + iconSize, at.y + iconSize);
         float tileRound = font * 6 / 14;
-        if (icon) draw->AddImageRounded(icon, at, to, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, tileRound);
+        if (row.folder) drawPageMarks(draw, at, iconSize, *row.folder, IM_COL32_WHITE);
+        else if (icon && row.framed) itemTile(draw, icon, at, iconSize);
+        else if (icon) draw->AddImageRounded(icon, at, to, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, tileRound);
+        else draw->AddRectFilled(at, to, Color(appleTile(label, row.tile)), tileRound);
+        if (row.folder || icon) {}
+        else if (glyph != PageIcon::None) {
+            // Apple's 22 px tiles hold a 14 px glyph
+            float inner = iconSize * 14 / 22;
+            float in = std::floor((iconSize - inner) / 2);
+            DrawPageIcon(draw, glyph, ImVec2(at.x + in, at.y + in), inner, IM_COL32_WHITE);
+        }
         else {
-            if (!tile) tile = appleTiles[ImHashStr(label) % (sizeof(appleTiles) / sizeof(appleTiles[0]))];
-            draw->AddRectFilled(at, to, Color(tile), tileRound);
             std::string letter = firstLetter(label);
             ImGui::PushFont(nullptr, ImGui::GetCurrentContext()->FontSizeBase * 0.85f);
             ImVec2 size = ImGui::CalcTextSize(letter.c_str());
             draw->AddText(ImVec2(std::floor(at.x + (iconSize - size.x) / 2), std::floor(at.y + (iconSize - size.y) / 2)), IM_COL32_WHITE, letter.c_str());
             ImGui::PopFont();
         }
-        float y = min.y + (height - lineHeight * lines.size()) / 2;
+        float y = min.y + (height - block) / 2;
         for (const std::string& line : lines) {
             draw->AddText(ImVec2(min.x + textX, y), Color(picked ? theme.pickedText : theme.text), line.c_str());
             y += lineHeight;
         }
+        drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
+        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : theme.text));
+        if (row.menu) clicked = pageMenuDots(draw, row, max, pad, middle, hovered, clicked, Color(picked ? theme.pickedText : theme.text));
         if (dotted) CornerDot(min, max, rounding);
         return clicked;
     }
@@ -1903,29 +2595,42 @@ namespace Controls {
     // colour while picked, a 24 dp icon 16 dp in and the name 12 dp after it
     // in Label Large (14 medium). Without an icon, the name's first letter on
     // a round tile, as Material's avatars have it.
-    static bool materialPageButton(const char* label, bool picked, ImTextureID icon, bool dotted) {
+    static bool materialPageButton(const PageRow& row) {
+        const char* label = row.label;
+        bool picked = row.picked, dotted = row.dotted;
+        ImTextureID icon = row.icon;
+        const Summary& summary = row.summary;
+        PageIcon glyph = row.glyph;
         Theme theme = GetTheme();
         const MaterialRoles& roles = materialRoles[theme.dark ? 1 : 0];
         LabelType type;
         float d = dp();
         float width = ImGui::GetContentRegionAvail().x;
-        float pad = 16 * d, iconSize = 24 * d;
-        float textX = pad + iconSize + 12 * d;
+        float pad, textX;
+        pageRoom(pad, textX);
+        float iconSize = 24 * d;
+        float arrow = (row.folder ? folderArrowRoom() : 0) + (row.menu ? pageMenuRoom() : 0);
         bool cut = false;
-        std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom(), 2, cut);
+        std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom() - arrow, 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
-        float height = std::max(56 * d, lineHeight * lines.size() + 16 * d);
+        SummaryLines below = summaryLines(summary, width - textX - pad - DotRoom() - arrow, false);
+        float block = lineHeight * lines.size() + below.height();
+        float height = std::max(56 * d, block + 16 * d);
         bool clicked = ImGui::InvisibleButton("##page", ImVec2(width, height));
         bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         if (cut) Tooltip(label);
         ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
-        float rounding = height / 2;
+        // a pill while it's one row, a card's corners once a summary makes it taller
+        float rounding = below.lines.empty() ? height / 2 : 28 * d;
         ImDrawList* draw = ImGui::GetWindowDrawList();
         if (picked) draw->AddRectFilled(min, max, Color(theme.picked), rounding);
         if (hovered) draw->AddRectFilled(min, max, Color(Faded(picked ? theme.pickedText : theme.text, held ? 0.1f : 0.08f)), rounding);
         float middle = std::floor((min.y + max.y) / 2);
         ImVec2 at(min.x + pad, middle - iconSize / 2), to(at.x + iconSize, at.y + iconSize);
-        if (icon) draw->AddImage(icon, at, to);
+        if (row.folder) drawPageMarks(draw, at, iconSize, *row.folder, Color(roles.onSurfaceVariant));
+        else if (icon && row.framed) itemTile(draw, icon, at, iconSize);
+        else if (icon) draw->AddImage(icon, at, to);
+        else if (glyph != PageIcon::None) DrawPageIcon(draw, glyph, at, iconSize, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
         else {
             ImVec2 center(at.x + iconSize / 2, middle);
             draw->AddCircleFilled(center, iconSize / 2, Color(theme.accentSoft));
@@ -1935,28 +2640,40 @@ namespace Controls {
             draw->AddText(ImVec2(std::floor(center.x - size.x / 2), std::floor(center.y - size.y / 2)), Color(roles.onPrimaryContainer), letter.c_str());
             ImGui::PopFont();
         }
-        float y = min.y + (height - lineHeight * lines.size()) / 2;
+        float y = min.y + (height - block) / 2;
         for (const std::string& line : lines) {
             draw->AddText(ImVec2(min.x + textX, y), Color(picked ? theme.pickedText : roles.onSurfaceVariant), line.c_str());
             y += lineHeight;
         }
+        drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
+        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
+        if (row.menu) clicked = pageMenuDots(draw, row, max, pad, middle, hovered, clicked, Color(picked ? theme.pickedText : roles.onSurfaceVariant));
         if (dotted) CornerDot(min, max, rounding);
         return clicked;
     }
 
-    bool PageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile) {
+    static bool pageRow(const PageRow& row) {
+        const char* label = row.label;
+        bool picked = row.picked, dotted = row.dotted;
+        ImTextureID icon = row.icon;
+        const Summary& summary = row.summary;
+        PageIcon glyph = row.glyph;
         Theme theme = GetTheme();
-        if (theme.look == Look::Apple) return applePageButton(label, picked, icon, dotted, tile);
-        if (theme.look == Look::Material) return materialPageButton(label, picked, icon, dotted);
+        pageMenuAsked = false;
+        if (theme.look == Look::Apple) return applePageButton(row);
+        if (theme.look == Look::Material) return materialPageButton(row);
         float font = ImGui::GetFontSize();
         float width = ImGui::GetContentRegionAvail().x;
-        float pad = font * 0.75f;
+        float pad, textX;
+        pageRoom(pad, textX);
         float iconSize = font * 1.15f;
-        float textX = pad + iconSize + font * 0.8f;
+        float arrow = (row.folder ? folderArrowRoom() : 0) + (row.menu ? pageMenuRoom() : 0);
         bool cut = false;
-        std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom(), 2, cut);
+        std::vector<std::string> lines = FitLines(label, width - textX - pad - DotRoom() - arrow, 2, cut);
         float lineHeight = ImGui::GetTextLineHeight();
-        float height = std::max(font * 2.6f, lineHeight * lines.size() + font * 0.9f);
+        SummaryLines below = summaryLines(summary, width - textX - pad - DotRoom() - arrow, false);
+        float block = lineHeight * lines.size() + below.height();
+        float height = std::max(font * 2.6f, block + font * 0.9f);
         bool clicked = ImGui::InvisibleButton("##page", ImVec2(width, height));
         bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         if (cut) Tooltip(label);
@@ -1971,7 +2688,13 @@ namespace Controls {
             draw->AddRectFilled(ImVec2(min.x, middle - iconSize / 2), ImVec2(min.x + bar, middle + iconSize / 2), Color(theme.gold), bar / 2);
         }
         ImVec2 at(min.x + pad, middle - iconSize / 2), to(at.x + iconSize, at.y + iconSize);
-        if (icon) draw->AddImage(icon, at, to);
+        if (row.folder) drawPageMarks(draw, at, iconSize, *row.folder, Color(theme.text));
+        else if (icon && row.framed) {
+            float side = std::floor(textX - pad - font * 0.45f);
+            itemTile(draw, icon, ImVec2(at.x, std::floor(middle - side / 2)), side);
+        }
+        else if (icon) draw->AddImage(icon, at, to);
+        else if (glyph != PageIcon::None) DrawPageIcon(draw, glyph, at, iconSize, Color(picked ? theme.pickedText : theme.text));
         else {
             std::string letter = firstLetter(label);
             draw->AddRectFilled(at, to, Color(theme.inside), font * 0.25f);
@@ -1981,13 +2704,41 @@ namespace Controls {
             draw->AddText(ImVec2(at.x + (iconSize - size.x) / 2, at.y + (iconSize - size.y) / 2), Color(theme.text), letter.c_str());
             ImGui::PopFont();
         }
-        float y = min.y + (height - lineHeight * lines.size()) / 2;
+        float y = min.y + (height - block) / 2;
         for (const std::string& line : lines) {
             draw->AddText(ImVec2(min.x + textX, y), Color(picked ? theme.pickedText : theme.text), line.c_str());
             y += lineHeight;
         }
+        drawSummary(draw, ImVec2(min.x + textX, y), below, summaryInk(summary, theme, picked));
+        if (row.folder) drawFolderArrow(draw, ImVec2(max.x - pad - folderArrowSize(), middle), row.open, Color(picked ? theme.pickedText : theme.text));
+        if (row.menu) clicked = pageMenuDots(draw, row, max, pad, middle, hovered, clicked, Color(picked ? theme.pickedText : theme.text));
         if (dotted) Dot();
         return clicked;
+    }
+
+    bool PageButton(const char* label, bool picked, ImTextureID icon, bool dotted, unsigned int tile, const Summary& summary, PageIcon glyph,
+        bool menu, bool framed) {
+        PageRow row{ label, picked, icon, dotted, tile, summary, glyph };
+        row.menu = menu;
+        row.framed = framed;
+        return pageRow(row);
+    }
+
+    bool FolderButton(const char* label, bool open, const std::vector<PageMark>& inside, bool dotted, bool picked) {
+        PageRow row{ label, picked };
+        row.dotted = dotted;
+        row.menu = true;
+        row.folder = &inside;
+        row.open = open;
+        return pageRow(row);
+    }
+
+    float FolderButtonWidth(const char* label) {
+        return PageButtonWidth(label, {}, true) + folderArrowRoom();
+    }
+
+    float PageIndent() {
+        return GetTheme().look == Look::Material ? 20 * dp() : ImGui::GetFontSize() * 1.3f;
     }
 
     void Tag(const char* text) {
@@ -2060,7 +2811,7 @@ namespace Controls {
     void Progress(const char* text, float fraction) {
         bool known = fraction >= 0;
         if (!known) spinner();
-        ImGui::TextWrapped("%s", text);
+        if (*text) ImGui::TextWrapped("%s", text);
         if (isMaterial() && known) {
             // Material 3's bar: 4 dp, the accent up to where it is, 4 dp of
             // room, the rest in its tonal colour with a dot at its end
@@ -2084,26 +2835,67 @@ namespace Controls {
         ImGui::ProgressBar(shown, ImVec2(-FLT_MIN, height), "");
     }
 
+    // the Game look's colours, made once a frame for the many badges drawn
+    static const Theme& gameColours() {
+        static Theme theme;
+        static int frame = -1;
+        if (frame != ImGui::GetFrameCount()) {
+            frame = ImGui::GetFrameCount();
+            theme = GetTheme(Look::Game, true);
+        }
+        return theme;
+    }
+
+    static ImTextureID discTexture = 0;
+
+    void SetDiscTexture(ImTextureID disc) { discTexture = disc; }
+
+    // a filled circle, from the disc texture when there is one
+    static void disc(ImDrawList* draw, ImVec2 center, float radius, ImU32 color) {
+        if (!discTexture) {
+            draw->AddCircleFilled(center, radius, color);
+            return;
+        }
+        draw->AddImage(discTexture, ImVec2(center.x - radius, center.y - radius), ImVec2(center.x + radius, center.y + radius),
+            ImVec2(0, 0), ImVec2(1, 1), color);
+    }
+
     void Badge(ImDrawList* draw, ImVec2 center, float radius, ImTextureID icon, const BadgeOptions& options) {
         if (radius <= 0) return;
-        Theme theme = GetTheme(Look::Game, true);
+        const Theme& theme = gameColours();
         float amount = options.faded ? theme.faded : 1.0f;
         unsigned int ring = options.ring.value_or(options.faded ? theme.done : theme.text);
-        draw->AddCircleFilled(ImVec2(center.x, center.y + radius * 0.08f), radius, Color(Faded(theme.shadow, amount)));
-        draw->AddCircleFilled(center, radius * 0.94f, Color(Faded(ring, amount)));
-        draw->AddCircleFilled(center, radius * 0.8f, Color(Faded(theme.inside, amount)));
+        disc(draw, ImVec2(center.x, center.y + radius * 0.08f), radius, Color(Faded(theme.shadow, amount)));
+        disc(draw, center, radius * 0.94f, Color(Faded(ring, amount)));
+        disc(draw, center, radius * 0.8f, Color(Faded(theme.inside, amount)));
         if (icon) {
             float half = radius * 0.6f;
             draw->AddImage(icon, ImVec2(center.x - half, center.y - half), ImVec2(center.x + half, center.y + half),
                 ImVec2(0, 0), ImVec2(1, 1), Color(Faded(0xFFFFFFFF, amount)));
         }
+        if (options.layer != 0) {
+            // the floor picker's two stacked diamonds on a dark disc at the
+            // lower corner, the top one lit for a layer above, the lower one
+            // for a layer below; never faded, so it reads on a faded badge
+            ImVec2 at(center.x + radius * 0.68f, center.y + radius * 0.68f);
+            float r = radius * 0.5f;
+            disc(draw, at, r, Color(theme.shadow));
+            disc(draw, at, r * 0.88f, Color(theme.inside));
+            auto diamond = [&](ImVec2 c, float w, float h, ImU32 colour) {
+                draw->AddQuadFilled(ImVec2(c.x, c.y - h), ImVec2(c.x + w, c.y), ImVec2(c.x, c.y + h), ImVec2(c.x - w, c.y), colour);
+            };
+            float w = r * 0.55f, h = r * 0.33f;
+            bool up = options.layer > 0;
+            diamond(ImVec2(at.x, at.y + h * 0.45f), w, h, up ? IM_COL32(140, 146, 158, 255) : IM_COL32(30, 160, 210, 255));
+            diamond(ImVec2(at.x, at.y - h * 0.3f), w, h, up ? IM_COL32(110, 230, 250, 255) : IM_COL32(232, 232, 232, 255));
+        }
     }
 
     void Bubble(ImDrawList* draw, ImVec2 center, float radius, const char* text, std::optional<unsigned int> fill) {
         if (radius <= 0) return;
-        Theme theme = GetTheme(Look::Game, true);
-        draw->AddCircleFilled(center, radius, Color(theme.inside));
-        draw->AddCircleFilled(center, radius * 0.86f, Color(fill.value_or(theme.gold)));
+        const Theme& theme = gameColours();
+        disc(draw, center, radius, Color(theme.inside));
+        disc(draw, center, radius * 0.86f, Color(fill.value_or(theme.gold)));
         if (!text || !*text) return;
         float size = radius * 1.3f;
         ImVec2 measured = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0, text);
