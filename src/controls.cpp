@@ -830,7 +830,7 @@ namespace Controls {
         if (slider) {
             double min = *options.min, max = *options.max;
             ImGui::SetNextItemWidth(place.field);
-            bool ownSlider = GetTheme().look == Look::Apple || isMaterial();
+            bool ownSlider = GetTheme().look == Look::Apple || isMaterial() || GetTheme().look == Look::Game;
             if (ownSlider) {
                 // ImGui's slider kept for the dragging, drawn as macOS's or Material's below
                 ImVec4 none(0, 0, 0, 0);
@@ -2415,10 +2415,12 @@ namespace Controls {
                 IM_PI * 1.75f, IM_PI * 3.25f, 24);
             draw->PathStroke(color, 0, width);
 
-            line(12, 3, 12, 12);
+            draw->PathLineTo(p(12, 3));
+            draw->PathLineTo(p(12, 12));
+            draw->PathStroke(color, 0, width);
 
-            cap(12, 3);
-            cap(12, 12);
+            draw->AddCircleFilled(p(12, 3), width * 0.5f, color);
+            draw->AddCircleFilled(p(12, 12), width * 0.5f, color);
             break;
         case PageIcon::None:
             break;

@@ -1523,8 +1523,8 @@ namespace Overlay {
 
         ImGui::Separator();
 
-        ImGui::PushID("Quit");
-        if (Controls::PageButton("Quit", false, 0, false, 0xD94A4AFF, {}, Controls::PageIcon::Shutdown)) {
+        ImGui::PushID("Shutdown");
+        if (Controls::PageButton("Shutdown", false, 0, false, 0xD94A4AFF, {}, Controls::PageIcon::Shutdown)) {
             // There might already be a function to close the window, but I can't remember it. T.T
             glfwSetWindowShouldClose(Overlay::Window, GLFW_TRUE);
         }
