@@ -991,7 +991,6 @@ namespace Controls {
 
         ImDrawList* draw = window->DrawList;
         ImVec2 cardMax(cardMin.x + cardSize.x, cardMin.y + cardSize.y);
-        // on: the card tinted with the accent and edged with it, told apart at a glance
         if (*value) {
             draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.accent, 0.14f)), cardRounding(theme));
             draw->AddRect(cardMin, cardMax, Color(Faded(theme.accent, 0.6f)), cardRounding(theme));
@@ -1016,7 +1015,6 @@ namespace Controls {
         }
         if (noteWidth) draw->AddText(ImVec2(noteX, std::floor(middle - ImGui::GetTextLineHeight() / 2)), Color(theme.muted), options.note.c_str());
 
-        // the look's checkbox, drawn as its own Checkbox draws it
         ImVec2 boxMin(boxX, std::floor(middle - side / 2)), boxMax(boxX + side, boxMin.y + side);
         if (isMaterial()) {
             const MaterialRoles& roles = materialRoles[theme.dark ? 1 : 0];
@@ -1033,7 +1031,6 @@ namespace Controls {
         else {
             float boxRounding = ImGui::GetStyle().FrameRounding;
             if (*value) {
-                // ticked: filled with the accent, the tick on it
                 draw->AddRectFilled(boxMin, boxMax, Color(theme.accent), boxRounding);
                 if (hovered) draw->AddRectFilled(boxMin, boxMax, Color(Faded(theme.onAccent, held ? 0.15f : 0.08f)), boxRounding);
                 float pad = std::max(1.0f, std::floor(side / 6));
@@ -2412,6 +2409,16 @@ namespace Controls {
             draw->PathStroke(color, 0, width);
             cap(8, 12.3f);
             cap(16, 9.3f);
+            break;
+        case PageIcon::Shutdown:
+            draw->PathArcTo(p(12, 12), 7.5f * u,
+                IM_PI * 1.75f, IM_PI * 3.25f, 24);
+            draw->PathStroke(color, 0, width);
+
+            line(12, 3, 12, 12);
+
+            cap(12, 3);
+            cap(12, 12);
             break;
         case PageIcon::None:
             break;
