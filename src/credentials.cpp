@@ -3,7 +3,7 @@
 #include <wincred.h>
 
 namespace Credentials {
-    std::wstring prefix = L"genshin-overlay/";
+    std::wstring prefix = L"PocketEsoptron/";
 
     static std::wstring widen(const std::string& text) {
         if (text.empty()) return L"";
@@ -60,8 +60,39 @@ namespace Credentials {
         return saved;
     }
 
+    bool MoveFrom(const std::wstring& oldPrefix, const std::string& site, const std::wstring& comment) {
+        if (site.empty() || oldPrefix == prefix) return false;
+        std::wstring old = oldPrefix + widen(site);
+        PCREDENTIALW credential = nullptr;
+        if (!CredReadW(old.c_str(), CRED_TYPE_GENERIC, 0, &credential)) return false;
+        Saved saved;
+        saved.account = narrow(credential->UserName);
+        saved.secret.assign((const char*)credential->CredentialBlob, credential->CredentialBlobSize);
+        SecureZeroMemory(credential->CredentialBlob, credential->CredentialBlobSize);
+        CredFree(credential);
+        std::optional<Saved> current = Read(site);
+        bool moved = !current && Write(site, saved, comment);
+        if (current) Wipe(current->secret);
+        Wipe(saved.secret);
+        if (moved || current) CredDeleteW(old.c_str(), CRED_TYPE_GENERIC, 0);
+        return moved;
+    }
+
     bool Delete(const std::string& site) {
         if (site.empty()) return false;
         return CredDeleteW(target(site).c_str(), CRED_TYPE_GENERIC, 0) || GetLastError() == ERROR_NOT_FOUND;
+    }
+
+    int DeleteAll(const std::wstring& under) {
+        DWORD count = 0;
+        PCREDENTIALW* found = nullptr;
+        std::wstring filter = under + L"*";
+        if (!CredEnumerateW(filter.c_str(), 0, &count, &found)) return 0;
+        int deleted = 0;
+        for (DWORD i = 0; i < count; i++) {
+            if (found[i]->Type == CRED_TYPE_GENERIC && CredDeleteW(found[i]->TargetName, CRED_TYPE_GENERIC, 0)) deleted++;
+        }
+        CredFree(found);
+        return deleted;
     }
 }

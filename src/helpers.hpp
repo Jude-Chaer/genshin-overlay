@@ -23,6 +23,17 @@ namespace Helpers {
     extern std::string utf8(const std::filesystem::path& path);
     extern std::filesystem::path fromUtf8(const std::string& text);
     extern std::filesystem::path exeDirectory();
+    // %LOCALAPPDATA%, empty when Windows doesn't say
+    extern std::filesystem::path localAppData();
+    // Where the overlay keeps what it writes: settings, the window layout,
+    // downloads. %LOCALAPPDATA%\PocketEsoptron, or the exe's folder when a file
+    // named "portable" is next to the exe.
+    extern std::filesystem::path dataDirectory();
+    // Moves settings.json, imgui.ini, backups, map_data and items from an older
+    // overlay's folder, each only when to has none yet. The names moved.
+    extern std::vector<std::string> moveOldData(const std::filesystem::path& from, const std::filesystem::path& to);
+    // the release it was built for, like "v0.3.0", or "dev"
+    extern std::string appVersion();
     // "a, b, c"
     extern std::string joined(const std::vector<std::string>& list);
     extern bool isElevated();
@@ -38,7 +49,7 @@ namespace Helpers {
     // the system's own font file for the menu, empty when it has none
     extern std::filesystem::path systemFont();
     // starts this exe again as admin (UAC prompt), false if that was declined
-    extern bool relaunchAsAdmin();
+    extern bool relaunchAsAdmin(const std::wstring& arguments = L"");
     extern std::string GenerateUUID();
     extern std::string hashFile(const std::filesystem::path& filePath);
     extern std::string hashString(const std::string& input);

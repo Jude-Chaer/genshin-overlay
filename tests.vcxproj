@@ -154,6 +154,7 @@
     <ClCompile Include="src\file_dialogs.cpp" />
     <ClCompile Include="src\game_ui.cpp" />
     <ClCompile Include="src\helpers.cpp" />
+    <ClCompile Include="src\taskbar.cpp" />
     <ClCompile Include="src\item_catalog.cpp" />
     <ClCompile Include="src\item_icons.cpp" />
     <ClCompile Include="src\item_files.cpp" />
@@ -173,6 +174,7 @@
     <ClCompile Include="src\minimap.cpp" />
     <ClCompile Include="src\net.cpp" />
     <ClCompile Include="src\npcap_download.cpp" />
+    <ClCompile Include="src\update_check.cpp" />
     <ClCompile Include="src\overlay.cpp" />
     <ClCompile Include="src\point_guides.cpp" />
     <ClCompile Include="src\packets\frames.cpp" />
@@ -196,6 +198,7 @@
     <ClCompile Include="tests\controls_tests.cpp" />
     <ClCompile Include="tests\credentials_tests.cpp" />
     <ClCompile Include="tests\notices_tests.cpp" />
+    <ClCompile Include="tests\update_check_tests.cpp" />
     <ClCompile Include="tests\appsample_tests.cpp" />
     <ClCompile Include="tests\extension_tests.cpp" />
     <ClCompile Include="tests\file_dialog_tests.cpp" />
@@ -278,6 +281,7 @@
     <ClInclude Include="src\packets\frames.hpp" />
     <ClInclude Include="src\game_traffic_text.hpp" />
     <ClInclude Include="src\npcap_download.hpp" />
+    <ClInclude Include="src\update_check.hpp" />
     <ClInclude Include="src\packets\game_traffic.hpp" />
     <ClInclude Include="src\packets\kcp.hpp" />
     <ClInclude Include="src\packets\messages.hpp" />

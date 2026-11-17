@@ -2,7 +2,7 @@ metadata = {
     name = "Markers",
     description = "Draws HoYoLAB's markers on the in-game map and minimap.",
     about = "Pick the types and regions on its page. Tap a marker on the map for its comments and to mark it as collected.",
-    author = "genshin-overlay",
+    author = "Pocket Esoptron",
     version = "1.0.0",
     permissions = {
         take_clicks = { reason = "So you can tap a marker for its comments, and the bar on the map." },

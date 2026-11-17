@@ -27,12 +27,16 @@
 #include "accounts.hpp"
 #include "marks.hpp"
 #include "web_images.hpp"
+#include "log_file.hpp"
+#include "taskbar.hpp"
+#include "update_check.hpp"
+#include "credentials.hpp"
 
-// genshin-overlay.exe --locate <screenshot>
+// PocketEsoptron.exe --locate <screenshot>
 // runs the map matching on one image and prints where it is
 static int locateImage(const std::string& imagePath) {
     MapLocator::Index index;
-    std::filesystem::path manifest = Helpers::exeDirectory() / "map_data" / "manifest.tsv";
+    std::filesystem::path manifest = Helpers::dataDirectory() / "map_data" / "manifest.tsv";
     if (!index.Load(manifest)) {
         std::cerr << "Could not load map data from " << manifest << std::endl;
         return 1;
@@ -58,11 +62,11 @@ static int locateImage(const std::string& imagePath) {
 
 // the map matching for the minimap commands, like the live thread has it
 static MiniMap::Locate locateWith(MapLocator::Index& index) {
-    index.Load(Helpers::exeDirectory() / "map_data" / "manifest.tsv");
+    index.Load(Helpers::dataDirectory() / "map_data" / "manifest.tsv");
     return [&index](const cv::Mat& grab) { return index.Match(grab, grab.cols / 2.0, grab.rows / 2.0, false, false); };
 }
 
-// genshin-overlay.exe --minimap <screenshot>
+// PocketEsoptron.exe --minimap <screenshot>
 // finds the player from the minimap on one image of the whole game, map closed
 static int locatePlayer(const std::string& imagePath) {
     cv::Mat image = cv::imread(imagePath, cv::IMREAD_COLOR);
@@ -70,7 +74,7 @@ static int locatePlayer(const std::string& imagePath) {
         std::cerr << "Could not read " << imagePath << std::endl;
         return 1;
     }
-    MiniMap::Load(Helpers::exeDirectory() / "map_data");
+    MiniMap::Load(Helpers::dataDirectory() / "map_data");
 
     RECT rect = MiniMap::rect({ 0, 0, image.cols, image.rows });
     cv::Mat grab = image(cv::Rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top));
@@ -103,7 +107,7 @@ static int locatePlayer(const std::string& imagePath) {
     return 0;
 }
 
-// genshin-overlay.exe --minimap-replay <folder> <out.tsv> [pictures per second] [timed]
+// PocketEsoptron.exe --minimap-replay <folder> <out.tsv> [pictures per second] [timed]
 // Follows the player through a folder of minimap pictures (the square
 // MiniMap::rect gives, in name order) like the live thread would, and writes
 // one line per look.
@@ -118,7 +122,7 @@ static int replayMinimap(const std::string& folder, const std::string& outPath, 
     std::vector<std::filesystem::path> pictures;
     for (const auto& entry : std::filesystem::directory_iterator(folder)) pictures.push_back(entry.path());
     std::sort(pictures.begin(), pictures.end());
-    MiniMap::Load(Helpers::exeDirectory() / "map_data");
+    MiniMap::Load(Helpers::dataDirectory() / "map_data");
     MiniMap::OneThread alone;
 
     struct Open {
@@ -189,7 +193,54 @@ static int saysWhy(const std::function<int()>& run) {
     return 1;
 }
 
+static bool hasFlag(int argc, char** argv, const std::string& flag) {
+    for (int i = 1; i < argc; i++) {
+        if (flag == argv[i]) return true;
+    }
+    return false;
+}
+
+static const char* flagValue(int argc, char** argv, const std::string& flag) {
+    for (int i = 1; i + 1 < argc; i++) {
+        if (flag == argv[i]) return argv[i + 1];
+    }
+    return nullptr;
+}
+
 int main(int argc, char** argv) {
+    bool withWindows = hasFlag(argc, argv, Taskbar::WithWindowsFlag);
+    std::vector<std::string> tools = { "--minimap-replay", "--locate", "--minimap", "--make-index", "--make-items" };
+    if (argc >= 2 && std::find(tools.begin(), tools.end(), argv[1]) != tools.end()) {
+        LogFile::StartTool();
+    }
+    // for the installer and the uninstaller
+    else if (hasFlag(argc, argv, "--quit")) {
+        Taskbar::QuitRunningCopy();
+        return 0;
+    }
+    else if (hasFlag(argc, argv, "--forget-logins")) {
+        Credentials::DeleteAll(Credentials::prefix);
+        Credentials::DeleteAll(Credentials::OLD_PREFIX);
+        return 0;
+    }
+    else {
+        // files next to the exe load by relative path, also when Windows starts it from System32
+        std::error_code ignored;
+        std::filesystem::current_path(Helpers::exeDirectory(), ignored);
+        // a restart as admin waits for the copy that started it
+        if (const char* after = flagValue(argc, argv, "--after")) Taskbar::WaitForCopy(std::strtoul(after, nullptr, 10));
+        bool restart = hasFlag(argc, argv, "--restart-as-admin");
+        // before the log, which the running copy has open
+        Taskbar::Ask request = restart ? Taskbar::Ask::RestartAsAdmin : withWindows ? Taskbar::Ask::None : Taskbar::Ask::OpenMenu;
+        if (Taskbar::AnotherCopyRuns(request)) return 0;
+        UpdateCheck::RemoveOld();
+        if (restart && !Helpers::isElevated() && Taskbar::RestartAsAdmin()) return 0;
+        std::vector<std::string> moved;
+        if (Helpers::dataDirectory() != Helpers::exeDirectory()) moved = Helpers::moveOldData(Helpers::exeDirectory(), Helpers::dataDirectory());
+        LogFile::StartOverlay(Helpers::dataDirectory(), hasFlag(argc, argv, "--console"));
+        if (!moved.empty()) std::cout << "Moved " << Helpers::joined(moved) << " to " << Helpers::utf8(Helpers::dataDirectory()) << std::endl;
+    }
+
     if (argc >= 4 && std::string(argv[1]) == "--minimap-replay") {
         return replayMinimap(argv[2], argv[3], argc >= 5 ? std::stod(argv[4]) : 5.0, argc >= 6 && std::string(argv[5]) == "timed");
     }
@@ -199,18 +250,18 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--minimap") {
         return locatePlayer(argv[2]);
     }
-    // genshin-overlay.exe --make-index <folder>, used by the map-index workflow
+    // PocketEsoptron.exe --make-index <folder>, used by the map-index workflow
     if (argc >= 3 && std::string(argv[1]) == "--make-index") {
         return saysWhy([&]() { return MapData::makeIndex(argv[2]); });
     }
-    // genshin-overlay.exe --make-items <folder> [--allow-drop], used by the map-index workflow too
+    // PocketEsoptron.exe --make-items <folder> [--allow-drop], used by the map-index workflow too
     if (argc >= 3 && std::string(argv[1]) == "--make-items") {
         bool allowDrop = argc >= 4 && std::string(argv[3]) == "--allow-drop";
         return saysWhy([&]() { return ItemFiles::make(argv[2], allowDrop); });
     }
 
     // acts as if Npcap isn't installed, to see what the menu says then
-    if (argc >= 2 && std::string(argv[1]) == "--skip-npcap") {
+    if (hasFlag(argc, argv, "--skip-npcap")) {
         PacketCapture::skipNpcap = true;
     }
 
@@ -223,17 +274,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (!Overlay::Init()) {
+    if (!Overlay::Init(withWindows)) {
         glfwTerminate();
         return 1;
     }
+    Taskbar::Start();
+    if (withWindows && Settings::startIn == "tray") Taskbar::ShowButton(false);
+    // the Run value follows the exe when it's moved
+    if (Taskbar::StartsWithWindows()) Taskbar::StartWithWindows(true);
+    if (Settings::checkUpdates) UpdateCheck::Start();
+    else UpdateCheck::Stop();
 
     Marks::Init();
-    MapTracking::Start(Helpers::exeDirectory() / "map_data");
-    ItemFiles::Start(Helpers::exeDirectory() / "items", Settings::downloadItems);
-    MapTiles::Init(Helpers::exeDirectory() / "map_data");
-    MapCheck::Start(Helpers::exeDirectory() / "map_data");
-    MiniMap::Start(Helpers::exeDirectory() / "map_data");
+    MapTracking::Start(Helpers::dataDirectory() / "map_data");
+    ItemFiles::Start(Helpers::dataDirectory() / "items", Settings::downloadItems);
+    MapTiles::Init(Helpers::dataDirectory() / "map_data");
+    MapCheck::Start(Helpers::dataDirectory() / "map_data");
+    MiniMap::Start(Helpers::dataDirectory() / "map_data");
     // off until the player turns it on in the menu
     if (Settings::readGameTraffic) GameTraffic::Start();
     Extensions::initExtensions();
@@ -252,6 +309,8 @@ int main(int argc, char** argv) {
     MapCheck::Stop();
     MapTiles::Shutdown();
     ScreenPictures::clear();
+    UpdateCheck::Shutdown();
+    Taskbar::Stop();
     Overlay::Shutdown();
     Marks::Shutdown();
     Accounts::Shutdown();

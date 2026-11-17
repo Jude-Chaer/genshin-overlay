@@ -26,12 +26,17 @@ namespace Settings {
     const std::vector<int> Sizes = { 80, 90, 100, 110, 125, 150 };
     bool readGameTraffic = false;
     bool usageInList = true;
+    bool checkUpdates = true;
+    bool keepInTray = true;
+    bool keepInTrayAsked = false;
+    std::string startPage;
+    std::string startIn = "menu";
 
     std::filesystem::path file;
 
     static std::filesystem::path settingsPath() {
         if (!file.empty()) return file;
-        return Helpers::exeDirectory() / "settings.json";
+        return Helpers::dataDirectory() / "settings.json";
     }
 
     // The whole file, or {} when there's none. One that isn't a JSON object is
@@ -107,6 +112,11 @@ namespace Settings {
         }
         readGameTraffic = settings.value("readGameTraffic", false);
         usageInList = settings.value("usageInList", true);
+        checkUpdates = settings.value("checkUpdates", true);
+        keepInTray = settings.value("keepInTray", true);
+        keepInTrayAsked = settings.value("keepInTrayAsked", false);
+        startPage = settings.value("startPage", std::string());
+        startIn = settings.value("startIn", std::string("menu"));
     }
 
     // extension settings are in the same file, don't wipe them
@@ -130,6 +140,11 @@ namespace Settings {
         settings["size"] = size;
         settings["readGameTraffic"] = readGameTraffic;
         settings["usageInList"] = usageInList;
+        settings["checkUpdates"] = checkUpdates;
+        settings["keepInTray"] = keepInTray;
+        settings["keepInTrayAsked"] = keepInTrayAsked;
+        settings["startPage"] = startPage;
+        settings["startIn"] = startIn;
         write(settings);
     }
 

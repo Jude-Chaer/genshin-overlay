@@ -17,7 +17,7 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace Files {
-	const std::string RELEASE = "https://github.com/Jude-Chaer/genshin-overlay/releases/download/map-index/";
+	const std::string RELEASE = "https://github.com/PocketEsoptron/PocketEsoptron/releases/download/map-index/";
 	static const std::string API = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc";
 	static const std::string STATIC_API = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc";
 

@@ -60,16 +60,16 @@ namespace TrafficKeys {
         }
     }
 
-    bool Load(const std::filesystem::path& folder, SessionKey::Keys& out) {
-        bool shipped = SessionKey::LoadKeys(folder, out);
-        std::string saved = Files::readText(folder / FILE);
-        if (saved.empty())
-            return shipped;
+    bool Load(const std::filesystem::path& shipped, const std::filesystem::path& saved, SessionKey::Keys& out) {
+        bool loaded = SessionKey::LoadKeys(shipped, out);
+        std::string file = Files::readText(saved / FILE);
+        if (file.empty())
+            return loaded;
         SessionKey::Keys got;
         std::string problem;
-        if (!Read(saved, got, problem)) {
+        if (!Read(file, got, problem)) {
             std::cerr << "Game traffic: the saved " << FILE << " is left out, " << problem << std::endl;
-            return shipped;
+            return loaded;
         }
         Merge(out, got);
         return !out.dispatch.empty() && !out.rsaPem.empty();
@@ -86,7 +86,8 @@ namespace TrafficKeys {
         return "";
     }
 
-    Got Take(const std::filesystem::path& folder, int status, const std::string& body, SessionKey::Keys& out) {
+    Got Take(const std::filesystem::path& shipped, const std::filesystem::path& saved, int status, const std::string& body,
+        SessionKey::Keys& out) {
         if (status == 404)
             return Got::Missing;
         if (status != 200)
@@ -97,22 +98,22 @@ namespace TrafficKeys {
             std::cerr << "Game traffic: the release's " << FILE << " is left out, " << problem << std::endl;
             return Got::Broken;
         }
-        if (Files::readText(folder / FILE) == body)
+        if (Files::readText(saved / FILE) == body)
             return Got::Same;
         // still used when it can't be saved, it's downloaded again next time
-        if (!Files::writeFile(folder / FILE, body))
-            std::cerr << "Game traffic: couldn't save " << (folder / FILE).string() << std::endl;
+        if (!Files::writeFile(saved / FILE, body))
+            std::cerr << "Game traffic: couldn't save " << (saved / FILE).string() << std::endl;
         SessionKey::Keys keys;
-        SessionKey::LoadKeys(folder, keys);
+        SessionKey::LoadKeys(shipped, keys);
         Merge(keys, got);
         out = std::move(keys);
         return Got::New;
     }
 
-    Got Download(const std::filesystem::path& folder, SessionKey::Keys& out, Net::Stopper* stopper) {
+    Got Download(const std::filesystem::path& shipped, const std::filesystem::path& saved, SessionKey::Keys& out, Net::Stopper* stopper) {
         Net::Response response;
         if (!Net::get(Files::RELEASE + FILE, response, false, nullptr, stopper))
             return Got::Unreached;
-        return Take(folder, response.status, response.body, out);
+        return Take(shipped, saved, response.status, response.body, out);
     }
 }

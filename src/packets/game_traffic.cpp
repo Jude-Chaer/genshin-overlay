@@ -134,13 +134,14 @@ namespace GameTraffic {
     static void listen() {
         SessionKey::Keys keys;
         std::filesystem::path folder = Helpers::exeDirectory() / "packets";
+        std::filesystem::path saved = Helpers::dataDirectory() / "packets";
         std::error_code error;
         if (!std::filesystem::exists(folder / "dispatch-keys.json", error)) {
             setStatus(cantListen(PacketCapture::Problem::None, true));
             return;
         }
         // without them every login would end in not_found
-        if (!TrafficKeys::Load(folder, keys) || keys.dispatch.empty() || !SessionKey::Rsa(keys.rsaPem).AllLoaded()) {
+        if (!TrafficKeys::Load(folder, saved, keys) || keys.dispatch.empty() || !SessionKey::Rsa(keys.rsaPem).AllLoaded()) {
             setStatus(cantListen(PacketCapture::Problem::None, false, true));
             return;
         }
@@ -161,7 +162,7 @@ namespace GameTraffic {
             }
             keysDone = false;
             keysThread = std::thread([&] {
-                keysGot = TrafficKeys::Download(folder, newKeys, &keysStop);
+                keysGot = TrafficKeys::Download(folder, saved, newKeys, &keysStop);
                 keysDone = true;
             });
         };

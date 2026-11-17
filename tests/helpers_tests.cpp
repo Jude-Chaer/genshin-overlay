@@ -71,3 +71,37 @@ TEST_CASE("a picture too big is refused before it's unpacked") {
     std::ofstream(text, std::ios::binary | std::ios::trunc) << "not a picture";
     CHECK(Helpers::loadTextureFromFile(text, width, height) == 0);
 }
+
+TEST_CASE("moveOldData moves an older overlay's files once, never over newer ones") {
+    namespace fs = std::filesystem;
+    fs::path from = folder() / "old", to = folder() / "data";
+    fs::remove_all(from);
+    fs::remove_all(to);
+    fs::create_directories(from / "backups");
+    fs::create_directories(from / "map_data");
+    fs::create_directories(to);
+    std::ofstream(from / "settings.json", std::ios::binary) << "{\"size\":110}";
+    std::ofstream(from / "backups" / "marks-1.json", std::ios::binary) << "[]";
+    std::ofstream(from / "map_data" / "manifest.tsv", std::ios::binary) << "# map";
+    std::ofstream(from / "log.txt", std::ios::binary) << "old log";
+    // the data folder's own imgui.ini stays, the old one isn't there
+    std::ofstream(to / "imgui.ini", std::ios::binary) << "[Window]";
+
+    std::vector<std::string> moved = Helpers::moveOldData(from, to);
+    CHECK(moved == std::vector<std::string>{ "settings.json", "backups", "map_data" });
+    CHECK(fs::exists(to / "settings.json"));
+    CHECK(fs::exists(to / "backups" / "marks-1.json"));
+    CHECK(fs::exists(to / "map_data" / "manifest.tsv"));
+    CHECK_FALSE(fs::exists(from / "settings.json"));
+    CHECK(fs::exists(from / "log.txt"));
+    CHECK_FALSE(fs::exists(to / "log.txt"));
+
+    // a later start with an old settings.json back in the exe's folder
+    std::ofstream(from / "settings.json", std::ios::binary) << "{\"size\":80}";
+    CHECK(Helpers::moveOldData(from, to).empty());
+    std::ifstream kept(to / "settings.json", std::ios::binary);
+    CHECK(std::string(std::istreambuf_iterator<char>(kept), {}) == "{\"size\":110}");
+    kept.close();
+    fs::remove_all(from);
+    fs::remove_all(to);
+}

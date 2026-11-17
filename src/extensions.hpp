@@ -384,6 +384,11 @@ namespace Extensions {
 	extern void destroyExtensions();
 	extern void frameUpdateExtensions();
 	extern void drawExtensionMenus(int extensionIndex);
+	// extensions/ by the exe (the overlay's own), then the data folder's
+	// (the player's), one folder when they're the same
+	extern std::vector<std::filesystem::path> extensionRoots();
+	// Every extension in extensionRoots. A folder named like one already loaded
+	// is left out, so the overlay's own come first.
 	extern void findAndLoadExtensions();
 	// Folders in root with a main.lua that no loaded extension came from are
 	// loaded and started, once main.lua has gone unwritten for settled. How
@@ -466,7 +471,7 @@ namespace Extensions {
 	// asks for its keys that wait, the ones not refused at this start
 	extern void askWaitingKeys(Extension& ext);
 	extern void loadExtensionPermissions(Extension* ext);
-	// "Official" or "Genshin Overlay" in it, letter case, spaces and signs
+	// "Official", "Pocket Esoptron" or "Genshin Overlay" in it, letter case, spaces and signs
 	// aside: only the overlay's own extensions are named like that
 	extern bool reservedName(const std::string& name);
 	// its name, with the Official badge after it for the overlay's own

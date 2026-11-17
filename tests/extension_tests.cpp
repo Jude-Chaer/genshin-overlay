@@ -564,7 +564,7 @@ TEST_CASE("pathFor keeps an extension in its folder") {
     // with every file permission it has, outside is still outside
     ext.extensionPermissions.insert(Permission::InternalWritefile);
     CHECK_FALSE(pathFor(ext, "../map2/notes.txt", Access::Write));
-    CHECK_FALSE(pathFor(ext, "../genshin-overlay.exe", Access::Write));
+    CHECK_FALSE(pathFor(ext, "../PocketEsoptron.exe", Access::Write));
 
     // not a path at all
     CHECK_FALSE(pathFor(ext, "\xff", Access::Read));
@@ -1025,7 +1025,7 @@ TEST_CASE("ImGui functions work only in their part of the frame") {
     }
 
     SECTION("in Menu both work") {
-        ImGui::Begin("Genshin Overlay");
+        ImGui::Begin("Pocket Esoptron");
         float cursor = ImGui::GetCursorPosY();
         int drawn = list->VtxBuffer.Size;
         {
@@ -1139,7 +1139,7 @@ TEST_CASE("what an extension draws stays under the menu") {
     Extensions::Extension* ext = drawing("under_menu");
     REQUIRE(ext != nullptr);
     Frame frame;
-    ImGui::Begin("Genshin Overlay");
+    ImGui::Begin("Pocket Esoptron");
     ImDrawList* menu = ImGui::GetWindowDrawList();
     ImDrawList* back = ImGui::GetBackgroundDrawList();
     ImDrawList* front = ImGui::GetForegroundDrawList();
@@ -1171,7 +1171,7 @@ TEST_CASE("ClickArea gives nothing over the overlay's windows or with the map an
     auto window = [] {
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2(300, 300));
-        ImGui::Begin("Genshin Overlay");
+        ImGui::Begin("Pocket Esoptron");
         ImGui::End();
     };
     auto next = [&](ImVec2 mouse, bool down) {
@@ -1247,6 +1247,7 @@ TEST_CASE("another extension can't be named or signed like the overlay's own") {
     CHECK(Extensions::reservedName("Official Map"));
     CHECK(Extensions::reservedName("genshin-overlay team"));
     CHECK(Extensions::reservedName("GENSHIN OVERLAY"));
+    CHECK(Extensions::reservedName("Pocket-Esoptron"));
     CHECK_FALSE(Extensions::reservedName("Chest finder"));
 
     CaptureLog log;

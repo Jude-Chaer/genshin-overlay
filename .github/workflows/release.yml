@@ -1,6 +1,7 @@
-# Builds the app and publishes a release with a zip of it.
+# Builds the app and publishes a release with an installer, a portable zip and
+# SHA256SUMS.txt, which the app's update checks its download against.
 # Push a tag like v0.1.0, or run it from the Actions tab and type the version.
-# The map data isn't in the zip, the app downloads it on first start.
+# The map data isn't in either, the app downloads it on first start.
 # A version with a dash in it, like v0.2.0-beta.1, is published as a pre-release
 # with BETA.md as its notes.
 
@@ -33,33 +34,48 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
+          # the update check reads only versions like v0.3.0 or v0.3.0-beta.1
+          if ($version -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { Write-Error "$version isn't like v0.3.0"; exit 1 }
+          msbuild genshin-overlay.sln /p:Configuration=Release /p:Platform=x64 /p:AppVersion=$version /m /v:minimal
 
       - name: Package
         id: package
         shell: pwsh
         run: |
           $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
-          $folder = "genshin-overlay"
+          $folder = "PocketEsoptron"
           New-Item -ItemType Directory $folder | Out-Null
-          Copy-Item build\Release\genshin-overlay.exe $folder
-          # the example is for extension authors, it uses the internet at every start
+          Copy-Item build\Release\PocketEsoptron.exe $folder
+          # example, map and minimap are for extension authors and testing
           New-Item -ItemType Directory "$folder\extensions" | Out-Null
-          Get-ChildItem extensions -Directory | Where-Object Name -ne "example" | Copy-Item -Recurse -Destination "$folder\extensions"
+          Get-ChildItem extensions -Directory | Where-Object Name -notin "example", "map", "minimap" | Copy-Item -Recurse -Destination "$folder\extensions"
           # the game traffic's keys, the ones the overlay falls back on
           Copy-Item -Recurse packets $folder
-          Copy-Item README.md $folder
-          # the zoom bar detector looks for it next to the exe
-          Copy-Item zoombar_template.png $folder
+          Copy-Item README.md, LICENSE $folder
           # Roboto for the Material You look and Inter for Apple, with their licences, and the colour library's licence
           Copy-Item -Recurse fonts $folder
           New-Item -ItemType Directory "$folder\licenses\material-color-utilities" | Out-Null
           Copy-Item third_party\material-color-utilities\LICENSE "$folder\licenses\material-color-utilities"
           $beta = $version -like "*-*"
           if ($beta) { Copy-Item BETA.md $folder }
-          $zip = "genshin-overlay-$version.zip"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          & $iscc /Q "/DAppVersion=$version" "/DSourceDir=$((Resolve-Path $folder).Path)" installer\PocketEsoptron.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $setup = "PocketEsoptron-Setup-$version.exe"
+          Move-Item "installer\output\$setup" $setup
+          # with this file next to the exe the settings and downloads stay in the folder
+          "Settings and downloads are kept in this folder while this file is here." | Set-Content "$folder\portable"
+          $zip = "PocketEsoptron-$version-portable.zip"
           Compress-Archive -Path $folder -DestinationPath $zip
+          $sums = foreach ($file in $setup, $zip) { "$((Get-FileHash $file -Algorithm SHA256).Hash.ToLower())  $file" }
+          $sums | Set-Content SHA256SUMS.txt
           "version=$version" >> $env:GITHUB_OUTPUT
+          "setup=$setup" >> $env:GITHUB_OUTPUT
           "zip=$zip" >> $env:GITHUB_OUTPUT
           "beta=$beta" >> $env:GITHUB_OUTPUT
 
@@ -68,10 +84,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = "Unzip anywhere and run genshin-overlay.exe. Press Alt+`` ` `` in game for the menu. On the first start it downloads the map data (about 26 MB)."
+          $notes = "Run the Setup exe to install, or unzip the portable zip anywhere and run PocketEsoptron.exe. Press Alt+`` ` `` in game for the menu."
           if ("${{ steps.package.outputs.beta }}" -eq "True") {
-            gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes-file BETA.md --prerelease --target "${{ github.sha }}"
+            gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.setup }}" "${{ steps.package.outputs.zip }}" SHA256SUMS.txt --title "${{ steps.package.outputs.version }}" --notes-file BETA.md --prerelease --target "${{ github.sha }}"
           }
           else {
-            gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.zip }}" --title "${{ steps.package.outputs.version }}" --notes $notes --target "${{ github.sha }}"
+            gh release create "${{ steps.package.outputs.version }}" "${{ steps.package.outputs.setup }}" "${{ steps.package.outputs.zip }}" SHA256SUMS.txt --title "${{ steps.package.outputs.version }}" --notes $notes --target "${{ github.sha }}"
           }

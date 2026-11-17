@@ -213,6 +213,9 @@ namespace Controls {
     // A square button showing only the icon, no frame of its own, a soft fill
     // under the mouse. label shows as its tooltip.
     bool IconButton(const char* label, ButtonIcon icon, bool enabled = true);
+    // A "-" in the current window's title bar, left of its X and drawn like it.
+    // Call right after Begin.
+    bool TitleMinimizeButton();
     // how big Button draws the label, for lining it up before it's drawn
     ImVec2 ButtonSize(const char* label);
 

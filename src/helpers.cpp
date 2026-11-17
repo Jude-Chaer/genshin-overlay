@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <iostream>
 #include <bcrypt.h>
 #include <algorithm>
@@ -14,6 +15,11 @@
 #include <sstream>
 #include <vector>
 #include <array>
+
+// release builds get it from the workflow
+#ifndef APP_VERSION
+#define APP_VERSION "dev"
+#endif
 
 // in SOIL2's library, only the size from a picture's header
 extern "C" int stbi_info_from_memory(unsigned char const* buffer, int len, int* x, int* y, int* comp);
@@ -132,6 +138,49 @@ namespace Helpers {
         return std::filesystem::path(buffer).parent_path();
     }
 
+    std::filesystem::path localAppData() {
+        PWSTR local = nullptr;
+        std::filesystem::path folder;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) folder = local;
+        CoTaskMemFree(local);
+        return folder;
+    }
+
+    std::filesystem::path dataDirectory() {
+        static const std::filesystem::path folder = []() {
+            std::filesystem::path exe = exeDirectory();
+            std::error_code ec;
+            if (std::filesystem::exists(exe / "portable", ec)) return exe;
+            std::filesystem::path local = localAppData();
+            if (local.empty()) return exe;
+            std::filesystem::path data = local / "PocketEsoptron";
+            std::filesystem::create_directories(data, ec);
+            return ec ? exe : data;
+        }();
+        return folder;
+    }
+
+    std::vector<std::string> moveOldData(const std::filesystem::path& from, const std::filesystem::path& to) {
+        std::vector<std::string> moved;
+        for (std::string name : { "settings.json", "imgui.ini", "backups", "map_data", "items" }) {
+            std::error_code ec;
+            std::filesystem::path source = from / name, target = to / name;
+            if (!std::filesystem::exists(source, ec) || std::filesystem::exists(target, ec)) continue;
+            std::filesystem::rename(source, target, ec);
+            // on another drive the small ones are copied, map_data and items download again
+            if (ec && name != "map_data" && name != "items") {
+                ec.clear();
+                std::filesystem::copy(source, target, std::filesystem::copy_options::recursive, ec);
+            }
+            if (!ec) moved.push_back(name);
+        }
+        return moved;
+    }
+
+    std::string appVersion() {
+        return APP_VERSION;
+    }
+
     bool isElevated() {
         HANDLE token = nullptr;
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
@@ -142,13 +191,14 @@ namespace Helpers {
         return elevated;
     }
 
-    bool relaunchAsAdmin() {
+    bool relaunchAsAdmin(const std::wstring& arguments) {
         wchar_t path[MAX_PATH];
         GetModuleFileNameW(nullptr, path, MAX_PATH);
         SHELLEXECUTEINFOW info = {};
         info.cbSize = sizeof(info);
         info.lpVerb = L"runas";
         info.lpFile = path;
+        if (!arguments.empty()) info.lpParameters = arguments.c_str();
         info.nShow = SW_SHOWNORMAL;
         return ShellExecuteExW(&info) != FALSE;
     }
