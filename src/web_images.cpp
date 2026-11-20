@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,7 @@ namespace WebImages {
     struct Download {
         const void* owner = nullptr;
         std::string url, function;
+        int side = MaxSide;
         Net::Response response;
         Helpers::Pixels pixels;
         bool ok = false;
@@ -46,7 +48,8 @@ namespace WebImages {
         std::chrono::steady_clock::time_point failedAt;
     };
 
-    typedef std::pair<const void*, std::string> Key;
+    // owner, url, longest side
+    typedef std::tuple<const void*, std::string, int> Key;
 
     // draw thread only
     static std::map<Key, Entry> entries;
@@ -54,10 +57,10 @@ namespace WebImages {
     static std::vector<std::unique_ptr<Download>> downloads;
     static double nextHandle = FirstHandle;
 
-    void shrink(Helpers::Pixels& pixels) {
+    void shrink(Helpers::Pixels& pixels, int side) {
         int longest = (std::max)(pixels.width, pixels.height);
-        if (longest <= MaxSide || pixels.rgba.empty()) return;
-        double scale = (double)MaxSide / longest;
+        if (longest <= side || pixels.rgba.empty()) return;
+        double scale = (double)side / longest;
         int width = (std::max)(1, (int)(pixels.width * scale));
         int height = (std::max)(1, (int)(pixels.height * scale));
         cv::Mat from(pixels.height, pixels.width, CV_8UC4, pixels.rgba.data());
@@ -75,7 +78,7 @@ namespace WebImages {
     size_t kept(const void* owner) {
         size_t count = 0;
         for (const auto& [key, entry] : entries) {
-            if (key.first == owner) count++;
+            if (std::get<0>(key) == owner) count++;
         }
         return count;
     }
@@ -86,10 +89,10 @@ namespace WebImages {
 
     static void drop(std::map<Key, Entry>::iterator it);
 
-    Image get(const void* owner, const std::string& url, const Net::Limits& limits, const std::string& function) {
+    Image get(const void* owner, const std::string& url, const Net::Limits& limits, const std::string& function, int side) {
         Image image;
         if (!owner || url.empty()) return image;
-        auto found = entries.find(Key(owner, url));
+        auto found = entries.find(Key(owner, url, side));
         if (found != entries.end() && found->second.state == State::Failed && now() - found->second.failedAt >= RetryFailed) {
             drop(found);
             entries.erase(found);
@@ -108,16 +111,17 @@ namespace WebImages {
         image.state = State::Loading;
         if (downloading(owner) >= MaxWaiting) return image;
 
-        entries[Key(owner, url)].lastUsed = now();
+        entries[Key(owner, url, side)].lastUsed = now();
         auto download = std::make_unique<Download>();
         download->owner = owner;
         download->url = url;
         download->function = function;
+        download->side = side;
         Download* at = download.get();
         download->thread = std::thread([at, limits]() {
             at->ok = fetch(at->url, at->response, &at->stopper, limits);
             if (at->ok && at->response.status >= 200 && at->response.status < 300 && Helpers::decodePicture(at->response.body, at->url, at->pixels)) {
-                shrink(at->pixels);
+                shrink(at->pixels, at->side);
             }
             else at->pixels = {};
             at->response.body.clear();
@@ -129,7 +133,7 @@ namespace WebImages {
 
     GLuint texture(const void* owner, double handle) {
         auto found = handles.find(handle);
-        if (found == handles.end() || found->second.first != owner) return 0;
+        if (found == handles.end() || std::get<0>(found->second) != owner) return 0;
         Entry& entry = entries[found->second];
         entry.lastUsed = now();
         return entry.texture;
@@ -149,7 +153,7 @@ namespace WebImages {
                 continue;
             }
             download.thread.join();
-            auto found = entries.find(Key(download.owner, download.url));
+            auto found = entries.find(Key(download.owner, download.url, download.side));
             if (found != entries.end()) {
                 Entry& entry = found->second;
                 GLuint texture = download.pixels.rgba.empty() ? 0 : make(download.pixels);
@@ -191,7 +195,7 @@ namespace WebImages {
     void forget(const void* owner) {
         downloads.erase(std::remove_if(downloads.begin(), downloads.end(), [owner](const auto& each) { return each->owner == owner; }), downloads.end());
         for (auto it = entries.begin(); it != entries.end();) {
-            if (it->first.first == owner) {
+            if (std::get<0>(it->first) == owner) {
                 drop(it);
                 it = entries.erase(it);
             }

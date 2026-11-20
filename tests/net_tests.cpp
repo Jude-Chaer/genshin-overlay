@@ -1132,6 +1132,14 @@ TEST_CASE("GetWebImage gives nil, then a handle and the size that ImGUI_Image dr
         CHECK(lua["h"].get_or(0) == 640);
         CHECK(proxy.requests == 1);
 
+        // full size, a download of its own
+        const std::string full = "_G.big, _G.bw, _G.bh = GetWebImage('http://example.com/pin.png', { full = true })";
+        CHECK(framesUntil([&]() { return TestExtension::run(ext, full) && lua["big"] != sol::lua_nil; }));
+        CHECK(lua["bw"].get_or(0) == 640);
+        CHECK(lua["bh"].get_or(0) == 955);
+        CHECK(lua["big"].get<double>() != lua["image"].get<double>());
+        CHECK(proxy.requests == 2);
+
         MenuFrame frame;
         REQUIRE(frame.draw(ext, "ImGUI_Image(_G.image, 21, 32)"));
         CHECK(frame.last.x == 21);

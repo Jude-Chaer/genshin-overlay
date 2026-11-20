@@ -13,7 +13,8 @@
 // and GetWebImage. Each extension has its own, downloaded with its own limits
 // (its sites).
 //
-// A picture is downloaded on its own thread, shrunk to MaxSide, made a texture
+// A picture is downloaded on its own thread, shrunk to MaxSide (FullSide when
+// asked full size, kept apart from the small one), made a texture
 // on the draw thread and freed once nobody asked for it for FreeAfter. A
 // failed one is tried again once asked for RetryFailed after it failed.
 //
@@ -23,6 +24,7 @@
 
 namespace WebImages {
     inline const int MaxSide = 640;
+    inline const int FullSide = 2048;
     inline const std::chrono::seconds FreeAfter{ 30 };
     inline const std::chrono::seconds RetryFailed{ 10 };
     // textures made in one frame at most, the rest wait for the next
@@ -53,7 +55,7 @@ namespace WebImages {
     // The picture at url for owner, started on the first ask (by function).
     // Each ask counts as a use. Refused when owner already keeps MaxKept,
     // Loading while it waits on MaxWaiting.
-    Image get(const void* owner, const std::string& url, const Net::Limits& limits, const std::string& function = "");
+    Image get(const void* owner, const std::string& url, const Net::Limits& limits, const std::string& function = "", int side = MaxSide);
     // the texture behind a handle of owner's, 0 for one that was freed or isn't
     // owner's; counts as a use
     GLuint texture(const void* owner, double handle);
@@ -72,8 +74,8 @@ namespace WebImages {
     size_t kept(const void* owner);
     int downloading(const void* owner);
 
-    // shrinks pixels so the longest side is at most MaxSide
-    void shrink(Helpers::Pixels& pixels);
+    // shrinks pixels so the longest side is at most side
+    void shrink(Helpers::Pixels& pixels, int side = MaxSide);
 
     // how a download is made, a texture made and freed, and the time (the
     // tests run with no GL)

@@ -362,7 +362,7 @@ namespace LuaFunctions {
 		return ScreenPictures::owns(texture) && ext->extensionPermissions.count(Permission::DisplayRead) > 0;
 	}
 
-	static WebImages::Image webImage(const char* function, const std::string& url);
+	static WebImages::Image webImage(const char* function, const std::string& url, int side = WebImages::MaxSide);
 
 	// a number from Lua as a texture to draw: a web image's handle, or a texture
 	// the extension may draw; 0 for anything else
@@ -1411,24 +1411,26 @@ namespace LuaFunctions {
 
 	// The picture at url for the running extension, held to its sites. Logged
 	// once when it has as many as it may keep.
-	static WebImages::Image webImage(const char* function, const std::string& url) {
+	static WebImages::Image webImage(const char* function, const std::string& url, int side) {
 		Extensions::Extension* ext = Extensions::currentExtension;
 		if (!ext) return {};
 		Net::Limits limits = limitsFor(ext, NetStartMs);
 		limits.maxBody = ImageMaxBody;
-		WebImages::Image image = WebImages::get(ext, url, limits, function);
+		WebImages::Image image = WebImages::get(ext, url, limits, function, side);
 		if (image.state == WebImages::State::Refused && WebImages::kept(ext) >= WebImages::MaxKept) {
 			Extensions::logOnce(function, "has " + std::to_string(WebImages::MaxKept) + " web images, no more are loaded");
 		}
 		return image;
 	}
 
-	// GetWebImage(url): the handle for DrawImage and ImGUI_Image, and the size;
-	// nil while it downloads, false when it couldn't be had. Asked every frame
-	// it's drawn, it's freed 30 s after the last ask.
-	sol::variadic_results GetWebImage(const std::string& url, sol::this_state state) {
+	// GetWebImage(url, options): the handle for DrawImage and ImGUI_Image, and
+	// the size; nil while it downloads, false when it couldn't be had. Asked
+	// every frame it's drawn, it's freed 30 s after the last ask. Shrunk to
+	// 640 px, options.full: up to 2048.
+	sol::variadic_results GetWebImage(const std::string& url, sol::optional<sol::table> options, sol::this_state state) {
 		sol::variadic_results out;
-		WebImages::Image image = webImage("GetWebImage", url);
+		bool full = options && options->get_or("full", false);
+		WebImages::Image image = webImage("GetWebImage", url, full ? WebImages::FullSide : WebImages::MaxSide);
 		if (image.state == WebImages::State::Ready) {
 			out.push_back(sol::make_object(state, image.handle));
 			out.push_back(sol::make_object(state, image.width));
