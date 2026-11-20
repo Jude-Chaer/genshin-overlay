@@ -14,6 +14,10 @@ local commentAt = 1
 local rect
 
 local GAP = 10
+-- how far the map can move under the open guide before it closes, past
+-- what a zoom moves it, and the zoom change that starts the count again
+local MOVE_CLOSES = 8
+local ZOOM_RESTARTS = 0.02
 
 function guide.close()
     guide.open, rect = nil, nil
@@ -175,6 +179,30 @@ function guide.draw(view, half)
     local info = GetPointGuide(open.point.id)
     local markerX = view.centerX + (open.point.x - view.lng) / view.unitsPerPixel
     local markerY = view.centerY + (open.point.y - view.lat) / view.unitsPerPixel
+
+    -- a game panel or the game's own list of the markers on a spot opening
+    -- or closing, the gear goes while one is open
+    for _, key in ipairs({ "panel", "gear" }) do
+        if view[key] ~= "unsure" then
+            open[key] = open[key] or view[key]
+            if view[key] ~= open[key] then
+                guide.close()
+                return
+            end
+        end
+    end
+
+    -- the map's centre in pixels from where it was at the open; a zoom round
+    -- a point off the centre moves it too, at most this far
+    local upp = view.unitsPerPixel
+    local zoomed = open.upp and math.abs(math.log(upp / open.upp)) or 0
+    local reach = math.sqrt((view.right - view.left) ^ 2 + (view.bottom - view.top) ^ 2) / 2 * zoomed
+    if not open.upp or zoomed > ZOOM_RESTARTS then
+        open.lng, open.lat, open.upp = view.lng, view.lat, upp
+    elseif math.abs(view.lng - open.lng) / upp > MOVE_CLOSES + reach or math.abs(view.lat - open.lat) / upp > MOVE_CLOSES + reach then
+        guide.close()
+        return
+    end
 
     k = GetSetting("guideScale") / 100
     local right = view.panelLeft or view.right
