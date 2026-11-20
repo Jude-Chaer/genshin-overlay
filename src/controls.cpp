@@ -610,6 +610,9 @@ namespace Controls {
         bool card;
         // Apple: right under the last row's card, so the two are one group
         bool joined = false;
+        // Apple: the next row joined this one last frame, so its bottom corners are square
+        bool joinedBelow = false;
+        ImGuiID key = 0;
         ImVec2 start;
         float width;
         ImVec2 pad;
@@ -618,8 +621,13 @@ namespace Controls {
         ImDrawListSplitter splitter;
     };
     // the last row card drawn, for Apple's groups
-    struct LastCard { ImGuiWindow* window = nullptr; int frame = -1; float x = 0, width = 0, bottom = 0; };
+    struct LastCard { ImGuiWindow* window = nullptr; int frame = -1; float x = 0, width = 0, bottom = 0; ImGuiID key = 0; };
     static LastCard lastCard;
+    // a row card's corners: rounded only where its group's edge is
+    static ImDrawFlags rowCorners(const RowCard& row) {
+        ImDrawFlags corners = (row.joined ? 0 : ImDrawFlags_RoundCornersTop) | (row.joinedBelow ? 0 : ImDrawFlags_RoundCornersBottom);
+        return corners ? corners : ImDrawFlags_RoundCornersNone;
+    }
     static void beginRow(RowCard& row) {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
         row.card = openParts.empty() || openParts.back() != window;
@@ -637,6 +645,13 @@ namespace Controls {
             // the card's edges lined up with the last one's
             row.start = ImVec2(lastCard.x, lastCard.bottom);
             row.width = lastCard.width;
+            window->StateStorage.SetInt(lastCard.key, ImGui::GetFrameCount() + 1);
+        }
+        if (row.card) {
+            // kept by the row's place in the window, frame + 1 so 0 is never
+            row.key = ImHashStr("##joinedBelow", 0, (ImGuiID)std::lround(row.start.y - window->DC.CursorStartPos.y));
+            int seen = window->StateStorage.GetInt(row.key, 0) - 1;
+            row.joinedBelow = GetTheme().look == Look::Apple && seen >= ImGui::GetFrameCount() - 1;
         }
         if (!row.card && row.start.y > window->DC.CursorStartPos.y + 1) {
             float y = std::floor(row.start.y - ImGui::GetStyle().ItemSpacing.y / 2);
@@ -665,18 +680,13 @@ namespace Controls {
             row.splitter.SetCurrentChannel(window->DrawList, 0);
             ImVec2 max(row.start.x + row.width, bottom);
             float rounding = cardRounding(theme);
-            if (row.joined) {
-                // squares off the last card's bottom corners, a line between at the text's start
-                ImDrawList* draw = window->DrawList;
-                draw->AddRectFilled(ImVec2(row.start.x, row.start.y - rounding), ImVec2(row.start.x + rounding, row.start.y), Color(theme.inside));
-                draw->AddRectFilled(ImVec2(max.x - rounding, row.start.y - rounding), ImVec2(max.x, row.start.y), Color(theme.inside));
-                draw->AddRectFilled(row.start, max, Color(theme.inside), rounding, ImDrawFlags_RoundCornersBottom);
-                draw->AddLine(ImVec2(row.start.x + row.pad.x, row.start.y), ImVec2(max.x, row.start.y), Color(theme.cardLine));
-            }
-            else window->DrawList->AddRectFilled(row.start, max, Color(theme.inside), rounding);
+            ImDrawList* draw = window->DrawList;
+            draw->AddRectFilled(row.start, max, Color(theme.inside), rounding, rowCorners(row));
+            // a line between at the text's start
+            if (row.joined) draw->AddLine(ImVec2(row.start.x + row.pad.x, row.start.y), ImVec2(max.x, row.start.y), Color(theme.cardLine));
             cardOutline(window->DrawList, row.start, max, theme, rounding);
             row.splitter.Merge(window->DrawList);
-            lastCard = { window, ImGui::GetFrameCount(), row.start.x, row.width, bottom };
+            lastCard = { window, ImGui::GetFrameCount(), row.start.x, row.width, bottom, row.key };
         }
         // the next piece under the card, the row's last piece kept as the last item
         window->DC.CursorPos.y = bottom + ImGui::GetStyle().ItemSpacing.y;
@@ -991,11 +1001,12 @@ namespace Controls {
 
         ImDrawList* draw = window->DrawList;
         ImVec2 cardMax(cardMin.x + cardSize.x, cardMin.y + cardSize.y);
-        if (*value) {
+        // Apple's grouped lists show a picked row by its box alone
+        if (*value && theme.look != Look::Apple) {
             draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.accent, 0.14f)), cardRounding(theme));
             draw->AddRect(cardMin, cardMax, Color(Faded(theme.accent, 0.6f)), cardRounding(theme));
         }
-        if (hovered) draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.text, held ? 0.08f : 0.04f)), cardRounding(theme));
+        if (hovered) draw->AddRectFilled(cardMin, cardMax, Color(Faded(theme.text, held ? 0.08f : 0.04f)), cardRounding(theme), rowCorners(row));
         float middle = at.y + height / 2;
         float x = at.x;
         if (iconSide) {
