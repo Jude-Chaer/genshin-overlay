@@ -18,9 +18,11 @@ local GAP = 10
 -- what a zoom moves it, and the zoom change that starts the count again
 local MOVE_CLOSES = 8
 local ZOOM_RESTARTS = 0.02
+-- a tapped picture shown over the whole map, until the next tap
+local bigPicture
 
 function guide.close()
-    guide.open, rect = nil, nil
+    guide.open, rect, bigPicture = nil, nil, nil
 end
 
 function guide.covers(x, y)
@@ -78,6 +80,30 @@ local function picture(url, width, maxHeight)
     return image, w * scale, h * scale
 end
 
+local function drawPicture(image, url, x, y, w, h)
+    DrawImage(image, x, y, x + w, y + h)
+    if ClickArea(x, y, x + w, y + h) then bigPicture = url end
+end
+
+-- the tapped picture as big as the map lets it, a tap anywhere closes it
+local function drawBig(view, right, wasBigPicture)
+    local width, height = right - view.left - GAP * 4, view.bottom - view.top - GAP * 4
+    local image, w, h = GetWebImage(bigPicture, { full = true })
+    -- the small one while the full one downloads
+    if not image then image, w, h = GetWebImage(bigPicture) end
+    if not image or not w or w == 0 then
+        if image == false then bigPicture = nil end
+        return
+    end
+    local scale = math.min(width / w, height / h)
+    w, h = w * scale, h * scale
+    local x, y = (view.left + right - w) / 2, (view.top + view.bottom - h) / 2
+    rect = { view.left, view.top, right, view.bottom }
+    DrawRect(view.left, view.top, right, view.bottom, 0x00000099)
+    DrawImage(image, x, y, x + w, y + h)
+    if ClickArea(view.left, view.top, right, view.bottom) and wasBigPicture then bigPicture = nil end
+end
+
 -- top to bottom, gives back how tall it is; with draw off it only measures,
 -- so the pictures can be made smaller when it doesn't fit
 local function layout(info, x0, y0, width, maxPicture, draw)
@@ -125,7 +151,7 @@ local function layout(info, x0, y0, width, maxPicture, draw)
 
     local image, w, h = picture(info.picture, inner, maxPicture)
     if image then
-        if draw then DrawImage(image, x + (inner - w) / 2, y, x + (inner + w) / 2, y + h) end
+        if draw then drawPicture(image, info.picture, x + (inner - w) / 2, y, w, h) end
         y = y + h + px(10)
     end
     if info.text ~= "" then
@@ -159,7 +185,7 @@ local function layout(info, x0, y0, width, maxPicture, draw)
     local comment = comments[commentAt]
     image, w, h = picture(comment.picture, inner, maxPicture)
     if image then
-        if draw then DrawImage(image, x + (inner - w) / 2, y, x + (inner + w) / 2, y + h) end
+        if draw then drawPicture(image, comment.picture, x + (inner - w) / 2, y, w, h) end
         y = y + h + px(8)
     end
     if comment.text ~= "" then
@@ -221,6 +247,7 @@ function guide.draw(view, half)
     y0 = math.max(view.top + GAP, math.min(y0, view.bottom - GAP - height))
     local x1, y1 = x0 + width, y0 + height
 
+    local wasBigPicture = bigPicture ~= nil
     ClickArea(x0, y0, x1, y1)
     rect = { x0, y0, x1, y1 }
     DrawRect(x0, y0, x1, y1, theme.panel, { rounding = px(12) })
@@ -230,6 +257,7 @@ function guide.draw(view, half)
     if nextAt and guide.open then show(nextAt) end
     nextAt = nil
     PopClipRect()
+    if bigPicture then drawBig(view, right, wasBigPicture) end
 end
 
 return guide
