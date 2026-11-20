@@ -1631,6 +1631,18 @@ namespace LuaFunctions {
 		return boxes;
 	}
 
+	// the open panel for GetMapView: none, unsure, or its kind
+	static const char* panelName(const GameUi::Panel& panel) {
+		if (panel.seen == GameUi::Seen::Unsure) return "unsure";
+		if (panel.seen != GameUi::Seen::Read) return "none";
+		switch (panel.kind) {
+			case GameUi::PanelKind::RegionList: return "regions";
+			case GameUi::PanelKind::Info: return "info";
+			case GameUi::PanelKind::Settings: return "settings";
+			default: return "none";
+		}
+	}
+
 	sol::object GetMapView(sol::this_state state) {
 		return mapViewTable(MapTracking::GetView(), state);
 	}
@@ -1669,7 +1681,8 @@ namespace LuaFunctions {
 			"right", right,
 			"bottom", bottom,
 			"moving", view.moving,
-			"ui", ui
+			"ui", ui,
+			"panel", panelName(view.panel)
 		);
 		if (view.panel.seen == GameUi::Seen::Read && view.panel.left >= 0) result["panelLeft"] = left + view.panel.left;
 		if (view.noMapFloor) result["noMapFloor"] = true;
