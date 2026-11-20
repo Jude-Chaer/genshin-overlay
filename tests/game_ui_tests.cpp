@@ -96,6 +96,46 @@ TEST_CASE("Map Settings, dark at the info panels' edge", "[game_ui]") {
     CHECK(seen.panel.left == 1488);
 }
 
+// The bottom corner of a screenshot, 140 wide and tall, back in a 2000x1125 frame
+static cv::Mat gearCorner(const std::string& name) {
+    cv::Mat part = readPicture(MapScreen::DATA / "gear" / (name + ".png"));
+    REQUIRE_FALSE(part.empty());
+    cv::Mat frame(1125, 2000, CV_8UC3, cv::Scalar::all(0));
+    part.copyTo(frame(cv::Rect(0, 1125 - part.rows, part.cols, part.rows)));
+    return frame;
+}
+
+TEST_CASE("the settings gear, gone while a panel or the marker list is open", "[game_ui]") {
+    for (const char* name : { "land", "snow", "dark" }) {
+        INFO(name);
+        cv::Mat frame = gearCorner(name), big;
+        CHECK(ReadGear(frame) == GameUi::Seen::Read);
+        cv::resize(frame, big, cv::Size(3840, 2160), 0, 0, cv::INTER_CUBIC);
+        CHECK(ReadGear(big) == GameUi::Seen::Read);
+    }
+    for (const char* name : { "marker_list", "map_settings", "custom_pin" }) {
+        INFO(name);
+        CHECK(ReadGear(gearCorner(name)) == GameUi::Seen::None);
+    }
+}
+
+TEST_CASE("the follower's parts read the gear as all of the frame does", "[game_ui]") {
+    for (const char* name : { "land", "marker_list" }) {
+        cv::Mat frame = gearCorner(name), big;
+        cv::resize(frame, big, cv::Size(3840, 2160), 0, 0, cv::INTER_CUBIC);
+        for (const cv::Mat* f : { &frame, &big }) {
+            INFO(name << " at " << f->cols);
+            Picture some;
+            some.size = f->size();
+            for (const cv::Rect& rect : PanelParts(f->size())) {
+                some.parts.push_back((*f)(rect).clone());
+                some.at.push_back(rect.tl());
+            }
+            CHECK(ReadGear(some) == ReadGear(*f));
+        }
+    }
+}
+
 TEST_CASE("the region list hides the layer switcher", "[game_ui]") {
     Answer seen = read("region_list");
     CHECK(seen.panel.seen == GameUi::Seen::Read);

@@ -40,7 +40,7 @@ namespace GameUi {
     };
     extern Picture Whole(const cv::Mat& frame);
     // What the readers look at, in the pixels of a picture that big. The
-    // panel needs PanelParts, the switcher both.
+    // panel and the gear need PanelParts, the switcher both.
     extern std::vector<cv::Rect> PanelParts(cv::Size size);
     extern std::vector<cv::Rect> SwitcherParts(cv::Size size);
 
@@ -48,6 +48,12 @@ namespace GameUi {
     extern Switcher ReadSwitcher(const Picture& picture, const Panel& panel);
     inline Panel ReadPanel(const cv::Mat& frame) { return ReadPanel(Whole(frame)); }
     inline Switcher ReadSwitcher(const cv::Mat& frame, const Panel& panel) { return ReadSwitcher(Whole(frame), panel); }
+
+    // The settings gear in the bottom corner: Read when it's there, None when
+    // it's gone. The game hides it while a panel or its own list of the
+    // markers on a spot is open.
+    extern Seen ReadGear(const Picture& picture);
+    inline Seen ReadGear(const cv::Mat& frame) { return ReadGear(Whole(frame)); }
 
     // The game UI on screen, as boxes in the same coords as game. The panel's
     // left is in the game picture's pixels, as ReadPanel gives it. With a

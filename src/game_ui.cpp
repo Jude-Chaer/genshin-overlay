@@ -51,21 +51,23 @@ namespace GameUi {
         return height / 2 + (y - HEIGHT / 2) * s;
     }
 
-    // Where a part given in 2000x1125 units is in a picture that big
-    static cv::Rect place(cv::Size size, double x0, double y0, double x1, double y1, Edge edge) {
+    // Where a part given in 2000x1125 units is in a picture that big, kept
+    // to the right edge or the left
+    static cv::Rect place(cv::Size size, double x0, double y0, double x1, double y1, Edge edge, bool right = true) {
         double s = scaleOf(size.width, size.height);
         int w = (int)std::lround(x1 - x0), h = (int)std::lround(y1 - y0);
-        return { (int)std::floor(toPixels(size.width, s, x0)), (int)std::floor(toPixelsY(size.height, s, y0, edge)),
+        double x = right ? toPixels(size.width, s, x0) : x0 * s;
+        return { (int)std::floor(x), (int)std::floor(toPixelsY(size.height, s, y0, edge)),
             (int)std::lround(w * s), (int)std::lround(h * s) };
     }
 
     // A part of the picture given in 2000x1125 units, scaled to that size,
     // so the numbers below work at any resolution. Black where the picture
     // has nothing.
-    static cv::Mat cut(const Picture& picture, double x0, double y0, double x1, double y1, Edge edge) {
+    static cv::Mat cut(const Picture& picture, double x0, double y0, double x1, double y1, Edge edge, bool right = true) {
         double s = scaleOf(picture.size.width, picture.size.height);
         int w = (int)std::lround(x1 - x0), h = (int)std::lround(y1 - y0);
-        cv::Rect want = place(picture.size, x0, y0, x1, y1, edge);
+        cv::Rect want = place(picture.size, x0, y0, x1, y1, edge, right);
         cv::Mat bgr(want.size(), CV_8UC3, cv::Scalar::all(0));
         for (size_t i = 0; i < picture.parts.size(); i++) {
             const cv::Mat& part = picture.parts[i];
@@ -123,15 +125,59 @@ namespace GameUi {
 
     static cv::Rect switcherArea(cv::Size size, const Panel& panel);
 
-    // the strips, and the switcher where it is with no panel
+    // The settings gear: a cream disc round a dark cog, kept to the left and
+    // bottom edges. Looked at in GEAR_AREA, the disc is the ring from DISC_IN
+    // to DISC_OUT round its middle, the cog's teeth from COG_IN to COG_OUT.
+    static constexpr double GEAR_LEFT = 0, GEAR_TOP = 1015, GEAR_RIGHT = 100, GEAR_BOTTOM = 1115;
+    static constexpr double GEAR_X = 55.7, GEAR_Y = 1062.4;
+    static constexpr double DISC_IN = 16, DISC_OUT = 21, COG_IN = 7, COG_OUT = 11;
+    static const cv::Vec3d CREAM = { 215, 228, 237 };
+    static constexpr double CREAM_OFF = 30;
+    static constexpr int DARK = 130;
+    // Share of each ring in its colour. The gear fills both, its spot with it
+    // gone stays under GONE on the disc.
+    static constexpr double SHOWN = 0.7, GONE = 0.2;
+
+    static cv::Rect gearArea(cv::Size size) {
+        return place(size, GEAR_LEFT, GEAR_TOP, GEAR_RIGHT, GEAR_BOTTOM, Edge::Bottom, false);
+    }
+
+    // the strips, the gear, and the switcher where it is with no panel
     std::vector<cv::Rect> PanelParts(cv::Size size) {
         std::vector<cv::Rect> parts;
         for (const PanelLook& look : PANELS) {
             cv::Rect strip = around(size, place(size, look.edge + STRIP_FROM, 0, look.edge + STRIP_TO, HEIGHT, Edge::Middle), 1);
             if (std::find(parts.begin(), parts.end(), strip) == parts.end()) parts.push_back(strip);
         }
+        parts.push_back(around(size, gearArea(size), 1));
         parts.push_back(around(size, switcherArea(size, {}), 2));
         return parts;
+    }
+
+    Seen ReadGear(const Picture& frame) {
+        if (!readable(frame)) return Seen::Unsure;
+        cv::Mat area = cut(frame, GEAR_LEFT, GEAR_TOP, GEAR_RIGHT, GEAR_BOTTOM, Edge::Bottom, false);
+        int disc = 0, cream = 0, cog = 0, dark = 0;
+        for (int row = 0; row < area.rows; row++) {
+            const cv::Vec3b* p = area.ptr<cv::Vec3b>(row);
+            for (int col = 0; col < area.cols; col++) {
+                double d = std::hypot(col - (GEAR_X - GEAR_LEFT), row - (GEAR_Y - GEAR_TOP));
+                if (d >= DISC_IN && d <= DISC_OUT) {
+                    disc++;
+                    bool close = true;
+                    for (int c = 0; c < 3; c++) close = close && std::abs(p[col][c] - CREAM[c]) < CREAM_OFF;
+                    if (close) cream++;
+                }
+                else if (d >= COG_IN && d <= COG_OUT) {
+                    cog++;
+                    if (std::max({ p[col][0], p[col][1], p[col][2] }) < DARK) dark++;
+                }
+            }
+        }
+        double creamShare = disc ? (double)cream / disc : 0.0, darkShare = cog ? (double)dark / cog : 0.0;
+        if (creamShare >= SHOWN && darkShare >= SHOWN) return Seen::Read;
+        if (creamShare <= GONE) return Seen::None;
+        return Seen::Unsure;
     }
 
     Panel ReadPanel(const Picture& frame) {
