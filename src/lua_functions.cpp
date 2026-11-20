@@ -1643,6 +1643,10 @@ namespace LuaFunctions {
 		}
 	}
 
+	static const char* seenName(GameUi::Seen seen) {
+		return seen == GameUi::Seen::Read ? "shown" : seen == GameUi::Seen::None ? "gone" : "unsure";
+	}
+
 	sol::object GetMapView(sol::this_state state) {
 		return mapViewTable(MapTracking::GetView(), state);
 	}
@@ -1682,7 +1686,8 @@ namespace LuaFunctions {
 			"bottom", bottom,
 			"moving", view.moving,
 			"ui", ui,
-			"panel", panelName(view.panel)
+			"panel", panelName(view.panel),
+			"gear", seenName(view.gear)
 		);
 		if (view.panel.seen == GameUi::Seen::Read && view.panel.left >= 0) result["panelLeft"] = left + view.panel.left;
 		if (view.noMapFloor) result["noMapFloor"] = true;

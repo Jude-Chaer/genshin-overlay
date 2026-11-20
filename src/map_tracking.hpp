@@ -25,6 +25,8 @@ namespace MapTracking {
         bool moving = false;
         // a panel open on the right, its left in the game's pixels from gameRect's left
         GameUi::Panel panel;
+        // the game's settings gear, gone while a panel or its marker list is open
+        GameUi::Seen gear = GameUi::Seen::Unsure;
         // who said the result's layer
         LayerChoice::From layerFrom = LayerChoice::From::Guess;
         // The floor picker's area and its floors from the top, in the order

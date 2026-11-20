@@ -96,6 +96,7 @@ namespace MapTracking {
     // what the game shows besides the map, read off the follower's frames
     static LayerChoice layers;
     static GameUi::Panel panel;
+    static GameUi::Seen gear = GameUi::Seen::Unsure;
     static std::chrono::steady_clock::time_point switcherReadAt;
     // The frame SIFT was given. Session goes up with every reset, a result
     // from before the reset is dropped.
@@ -218,6 +219,7 @@ namespace MapTracking {
         view.result = follower.View();
         view.gameRect = rect;
         view.panel = panel;
+        view.gear = gear;
         view.layerFrom = layers.Why();
         view.pickerGroup = view.visible ? layers.Area(view.result.lng, view.result.lat) : 0;
         view.opening = session;
@@ -300,6 +302,7 @@ namespace MapTracking {
             // a floor picked by hand holds until the map closes
             layers.Reset();
             panel = {};
+            gear = GameUi::Seen::Unsure;
             switcherReadAt = {};
             // Loaded before the first step, which always resets: the game
             // window is new to it.
@@ -377,6 +380,7 @@ namespace MapTracking {
             if (!picture.parts.empty()) {
                 // every frame, so drawing leaves a panel the moment it opens
                 panel = GameUi::ReadPanel(picture);
+                gear = GameUi::ReadGear(picture);
                 if (readSwitcher && follower.Visible()) {
                     switcherReadAt = now;
                     const MapLocator::Result& at = follower.View();

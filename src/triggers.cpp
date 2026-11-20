@@ -128,11 +128,11 @@ namespace Triggers {
 		int panelLeft = view.panel.seen == GameUi::Seen::Read ? view.panel.left : -1;
 		const RECT& picker = now.picker;
 		char text[512];
-		snprintf(text, sizeof(text), "%d %d %d %d %.9g %.9g %.9g %ld %ld %ld %ld %d %d %d %d %ld %ld %ld %ld",
+		snprintf(text, sizeof(text), "%d %d %d %d %.9g %.9g %.9g %ld %ld %ld %ld %d %d %d %d %d %ld %ld %ld %ld",
 			view.result.mapId, view.result.groupId, view.result.floorId, (int)view.layerFrom,
 			view.result.lat, view.result.lng, view.result.unitsPerPixel,
 			view.gameRect.left, view.gameRect.top, view.gameRect.right, view.gameRect.bottom,
-			view.moving ? 1 : 0, (int)view.panel.seen, (int)view.panel.kind, panelLeft,
+			view.moving ? 1 : 0, (int)view.panel.seen, (int)view.panel.kind, panelLeft, (int)view.gear,
 			picker.left, picker.top, picker.right, picker.bottom);
 		return text;
 	}
