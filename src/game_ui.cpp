@@ -88,20 +88,23 @@ namespace GameUi {
         return grown & cv::Rect(0, 0, size.width, size.height);
     }
 
-    // Panels on the right: the region list, and the info panels (a point, a
-    // waypoint, a custom pin). Each has a plain strip of its own colour right
-    // of its left edge.
-    // The region list covers the layer switcher, the info panels push it left.
+    // Panels on the right: the region list, the info panels (a point, a
+    // waypoint, a custom pin) and Map Settings. Each has a plain strip of its
+    // own colour right of its left edge.
+    // The region list covers the layer switcher, the info panels push it
+    // left, Map Settings leaves it where it is, drawn over the panel.
+    enum class SwitcherPlace { Hidden, LeftOfPanel, Stays };
     struct PanelLook {
         PanelKind kind;
         int edge;
         cv::Vec3d colour;
         double off;
-        bool hidesSwitcher;
+        SwitcherPlace switcher;
     };
     static const PanelLook PANELS[] = {
-        { PanelKind::RegionList, 1338, { 62, 50, 42 }, 15, true },
-        { PanelKind::Info, 1488, { 205, 216, 221 }, 30, false },
+        { PanelKind::RegionList, 1338, { 62, 50, 42 }, 15, SwitcherPlace::Hidden },
+        { PanelKind::Info, 1488, { 205, 216, 221 }, 30, SwitcherPlace::LeftOfPanel },
+        { PanelKind::Settings, 1488, { 62, 50, 42 }, 15, SwitcherPlace::Stays },
     };
     // the strip looked at, right of the edge
     static constexpr int STRIP_FROM = 2, STRIP_TO = 8;
@@ -124,7 +127,8 @@ namespace GameUi {
     std::vector<cv::Rect> PanelParts(cv::Size size) {
         std::vector<cv::Rect> parts;
         for (const PanelLook& look : PANELS) {
-            parts.push_back(around(size, place(size, look.edge + STRIP_FROM, 0, look.edge + STRIP_TO, HEIGHT, Edge::Middle), 1));
+            cv::Rect strip = around(size, place(size, look.edge + STRIP_FROM, 0, look.edge + STRIP_TO, HEIGHT, Edge::Middle), 1);
+            if (std::find(parts.begin(), parts.end(), strip) == parts.end()) parts.push_back(strip);
         }
         parts.push_back(around(size, switcherArea(size, {}), 2));
         return parts;
@@ -239,16 +243,22 @@ namespace GameUi {
         return out;
     }
 
-    static bool hidesSwitcher(const Panel& panel) {
+    // where the switcher is with that panel open, Stays with none
+    static SwitcherPlace switcherPlace(const Panel& panel) {
+        if (panel.seen != Seen::Read) return SwitcherPlace::Stays;
         for (const PanelLook& look : PANELS) {
-            if (look.kind == panel.kind) return panel.seen == Seen::Read && look.hidesSwitcher;
+            if (look.kind == panel.kind) return look.switcher;
         }
-        return false;
+        return SwitcherPlace::Stays;
+    }
+    static bool hidesSwitcher(const Panel& panel) {
+        return switcherPlace(panel) == SwitcherPlace::Hidden;
     }
 
     // the switcher's middle in 2000x1125 units, with that panel open
     static double switcherMiddle(cv::Size size, const Panel& panel) {
-        return panel.seen == Seen::Read ? toUnits(size.width, scaleOf(size.width, size.height), panel.left) - FROM_PANEL : WIDTH - FROM_RIGHT;
+        if (switcherPlace(panel) != SwitcherPlace::LeftOfPanel) return WIDTH - FROM_RIGHT;
+        return toUnits(size.width, scaleOf(size.width, size.height), panel.left) - FROM_PANEL;
     }
 
     static cv::Rect switcherArea(cv::Size size, const Panel& panel) {
@@ -256,11 +266,11 @@ namespace GameUi {
         return place(size, left, AREA_TOP, left + 2 * AREA_HALF, AREA_BOTTOM, Edge::Middle);
     }
 
-    // left of each panel that doesn't hide it, PanelParts has it with none
+    // left of each panel that pushes it, PanelParts has it where it stays
     std::vector<cv::Rect> SwitcherParts(cv::Size size) {
         std::vector<cv::Rect> parts;
         for (const PanelLook& look : PANELS) {
-            if (look.hidesSwitcher) continue;
+            if (look.switcher != SwitcherPlace::LeftOfPanel) continue;
             Panel open = { Seen::Read, look.kind, panelLeft(size, look) };
             parts.push_back(around(size, switcherArea(size, open), 2));
         }

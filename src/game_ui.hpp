@@ -11,7 +11,7 @@ namespace GameUi {
     // None: not there. Unsure: can't tell, something covers it or it's unclear.
     enum class Seen { None, Read, Unsure };
 
-    enum class PanelKind { None, RegionList, Info };
+    enum class PanelKind { None, RegionList, Info, Settings };
     struct Panel {
         Seen seen = Seen::None;
         PanelKind kind = PanelKind::None;

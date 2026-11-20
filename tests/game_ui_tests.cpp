@@ -89,6 +89,13 @@ TEST_CASE("an info panel, the layer switcher left of it", "[game_ui]") {
     CHECK(statue.switcher.seen == GameUi::Seen::None);
 }
 
+TEST_CASE("Map Settings, dark at the info panels' edge", "[game_ui]") {
+    Answer seen = read("map_settings");
+    CHECK(seen.panel.seen == GameUi::Seen::Read);
+    CHECK(seen.panel.kind == PanelKind::Settings);
+    CHECK(seen.panel.left == 1488);
+}
+
 TEST_CASE("the region list hides the layer switcher", "[game_ui]") {
     Answer seen = read("region_list");
     CHECK(seen.panel.seen == GameUi::Seen::Read);
@@ -138,7 +145,7 @@ TEST_CASE("the same at the game's size", "[game_ui]") {
 
 static const char* const SHOTS[] = { "custom_pin", "five_floors_bottom_lit", "five_floors_top_lit", "info_panel",
     "info_panel_top_lit", "mouse_on_a_floor", "no_panel", "pier", "region_list", "snow", "statue_panel", "two_floors",
-    "ground_in_the_middle", "dark_underground" };
+    "ground_in_the_middle", "dark_underground", "map_settings" };
 
 // only the parts the follower copies out of the game's frame
 static Picture parts(const cv::Mat& frame) {
